@@ -36,6 +36,7 @@ import {CampaignSchemas, detectUnsubscribeSignal} from '@plunk/shared';
 import {DashboardLayout} from '../../components/DashboardLayout';
 import {EmailSettings} from '../../components/EmailSettings';
 import {EmailEditor} from '../../components/EmailEditor';
+import {TagPicker} from '../../components/TagPicker';
 import {network} from '../../lib/network';
 import {formatFullDateTime, formatUTCDateTime, getUserTimezone, schedulePresets} from '../../lib/dateUtils';
 import {useChangeTracking} from '../../lib/hooks/useChangeTracking';
@@ -259,6 +260,9 @@ export default function CampaignDetailsPage() {
         type: editedCampaign.type,
         audienceType: editedCampaign.audienceType,
         segmentId: editedCampaign.segmentId || undefined,
+        tagIds: editedCampaign.audienceType === CampaignAudienceType.TAG ? editedCampaign.tagIds : undefined,
+        excludeTagIds:
+          editedCampaign.audienceType === CampaignAudienceType.TAG ? editedCampaign.excludeTagIds : undefined,
       });
       // Silent save - no toast notification
       setHasChanges(false);
@@ -276,6 +280,8 @@ export default function CampaignDetailsPage() {
           type: updated.data.type,
           audienceType: updated.data.audienceType,
           segmentId: updated.data.segmentId || undefined,
+          tagIds: updated.data.tagIds || [],
+          excludeTagIds: updated.data.excludeTagIds || [],
         });
       }
     } catch (error) {
@@ -299,6 +305,8 @@ export default function CampaignDetailsPage() {
         type: campaign.data.type,
         audienceType: campaign.data.audienceType,
         segmentId: campaign.data.segmentId || undefined,
+        tagIds: campaign.data.tagIds || [],
+        excludeTagIds: campaign.data.excludeTagIds || [],
       });
       // Reset hasChanges when loading fresh data
       setHasChanges(false);
@@ -319,7 +327,11 @@ export default function CampaignDetailsPage() {
       (editedCampaign.replyTo || '') !== (campaign.data.replyTo || '') ||
       editedCampaign.type !== campaign.data.type ||
       editedCampaign.audienceType !== campaign.data.audienceType ||
-      (editedCampaign.segmentId || null) !== (campaign.data.segmentId || null);
+      (editedCampaign.segmentId || null) !== (campaign.data.segmentId || null) ||
+      JSON.stringify([...(editedCampaign.tagIds || [])].sort()) !==
+        JSON.stringify([...(campaign.data.tagIds || [])].sort()) ||
+      JSON.stringify([...(editedCampaign.excludeTagIds || [])].sort()) !==
+        JSON.stringify([...(campaign.data.excludeTagIds || [])].sort());
 
     setHasChanges(changed);
   }, [editedCampaign, campaign]);
@@ -503,6 +515,9 @@ export default function CampaignDetailsPage() {
                         ...editedCampaign,
                         audienceType: value,
                         segmentId: value === CampaignAudienceType.SEGMENT ? editedCampaign.segmentId : undefined,
+                        tagIds: value === CampaignAudienceType.TAG ? (editedCampaign.tagIds ?? c.tagIds ?? []) : undefined,
+                        excludeTagIds:
+                          value === CampaignAudienceType.TAG ? (editedCampaign.excludeTagIds ?? c.excludeTagIds ?? []) : undefined,
                       });
                     }}
                   >
@@ -519,6 +534,11 @@ export default function CampaignDetailsPage() {
                         value={CampaignAudienceType.SEGMENT}
                         title="Specific segment"
                         description="Target a defined group of contacts"
+                      />
+                      <SelectItemWithDescription
+                        value={CampaignAudienceType.TAG}
+                        title="Specific tags"
+                        description="Target contacts that have (or don't have) certain tags"
                       />
                     </SelectContent>
                   </Select>
@@ -568,6 +588,29 @@ export default function CampaignDetailsPage() {
                   </div>
                 )}
               </div>
+
+              {(editedCampaign.audienceType ?? c.audienceType) === CampaignAudienceType.TAG && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>
+                      Include contacts with any of <span className="text-red-500">*</span>
+                    </Label>
+                    <TagPicker
+                      value={editedCampaign.tagIds ?? c.tagIds ?? []}
+                      onChange={ids => setEditedCampaign({...editedCampaign, tagIds: ids})}
+                      placeholder="Select tags…"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Exclude contacts with any of</Label>
+                    <TagPicker
+                      value={editedCampaign.excludeTagIds ?? c.excludeTagIds ?? []}
+                      onChange={ids => setEditedCampaign({...editedCampaign, excludeTagIds: ids})}
+                      placeholder="Select tags to exclude…"
+                    />
+                  </div>
+                </div>
+              )}
 
               {editedCampaign.audienceType === CampaignAudienceType.FILTERED && (
                 <p className="text-sm text-neutral-500">

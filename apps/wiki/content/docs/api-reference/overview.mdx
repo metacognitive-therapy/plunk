@@ -212,7 +212,7 @@ The `/v1/*` endpoints are designed for use from your applications and accept sim
 
 | Method | Path                                  | Description                                                                                  |
 | ------ | ------------------------------------- | -------------------------------------------------------------------------------------------- |
-| GET    | `/contacts`                           | List contacts. Supports `search` (by email substring), `limit`, `cursor`.                    |
+| GET    | `/contacts`                           | List contacts. Supports `search` (by email substring), `subscribed`, `tags` (comma-separated tag IDs, matches ANY), `limit`, `cursor`. Each contact includes its `tags: {id, name}[]`. |
 | POST   | `/contacts`                           | Create or upsert a contact by email. Returns `_meta.isNew` and `_meta.isUpdate`.             |
 | GET    | `/contacts/:id`                       | Get a single contact.                                                                        |
 | PATCH  | `/contacts/:id`                       | Update a contact's email, subscription state, or `data` fields.                              |
@@ -274,6 +274,21 @@ The `/v1/*` endpoints are designed for use from your applications and accept sim
 | POST   | `/segments/:id/compute`       | Recompute membership for a tracked dynamic segment — fires entry/exit events.                |
 | POST   | `/segments/:id/refresh`       | Cheap count refresh — no events, no membership writes.                                       |
 
+### Tags
+
+| Method | Path                          | Description                                                                                  |
+| ------ | ----------------------------- | -------------------------------------------------------------------------------------------- |
+| GET    | `/tags`                       | List all tags for the project, with cached `memberCount` (no pagination — small list).       |
+| GET    | `/tags/:id`                   | Get a single tag.                                                                            |
+| POST   | `/tags`                       | Create a tag. Body: `{ name }`. Names are unique per project, case-insensitively.            |
+| PATCH  | `/tags/:id`                   | Rename a tag. Body: `{ name }`. Safe to do at any time — campaigns, workflows, and segment/filter conditions bind by tag ID, never by name. |
+| DELETE | `/tags/:id`                   | Delete a tag. Returns 409, enumerating references, if it's used by an active campaign, an enabled workflow trigger/step, or a segment/filter condition. |
+| GET    | `/tags/:id/contacts`          | Page-based list of contacts with this tag. `page`, `pageSize` (max 100).                     |
+| POST   | `/tags/contacts/:contactId`   | Apply one or more tags to a contact. Body: `{ tagIds }`. Already-applied tags are a silent no-op. |
+| DELETE | `/tags/contacts/:contactId`   | Remove one or more tags from a contact. Body: `{ tagIds }`.                                  |
+| POST   | `/tags/bulk-apply`            | Bulk add/remove tags across many contacts. Queued — returns a `jobId`. Body is `{ mode: "ids", contactIds, tagIds, action }` or `{ mode: "query", filter: { search?, subscribed?, tagIds? }, excludeIds?, tagIds, action }`, where `action` is `"add"` or `"remove"`. |
+| GET    | `/tags/bulk-apply/:jobId`     | Poll the status of a bulk tag job. `result` reports `{ action, totalRequested, successCount, unchangedCount, failureCount }`. |
+
 ### Workflows
 
 Each workflow consists of a **workflow** record, a graph of **steps**, **transitions** between them, and per-contact **executions**. The API mirrors that structure.
@@ -287,7 +302,7 @@ Each workflow consists of a **workflow** record, a graph of **steps**, **transit
 | PATCH  | `/workflows/:id`                                  | Update workflow metadata, trigger type / config, `enabled`, `allowReentry`.              |
 | DELETE | `/workflows/:id`                                  | Delete a workflow. Active executions must be cancelled or completed first.               |
 | **Steps** |                                                |                                                                                          |
-| POST   | `/workflows/:id/steps`                            | Add a step (`SEND_EMAIL`, `DELAY`, `WAIT_FOR_EVENT`, `CONDITION`, `WEBHOOK`, `UPDATE_CONTACT`, `EXIT`). |
+| POST   | `/workflows/:id/steps`                            | Add a step (`SEND_EMAIL`, `DELAY`, `WAIT_FOR_EVENT`, `CONDITION`, `WEBHOOK`, `UPDATE_CONTACT`, `ADD_TAG`, `REMOVE_TAG`, `EXIT`). |
 | PATCH  | `/workflows/:id/steps/:stepId`                    | Update a step's config.                                                                  |
 | DELETE | `/workflows/:id/steps/:stepId?splice=true`        | Delete a step. Pass `splice=true` to auto-reconnect surrounding transitions.             |
 | **Transitions** |                                          |                                                                                          |

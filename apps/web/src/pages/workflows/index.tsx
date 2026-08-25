@@ -17,8 +17,13 @@ import {
   IconSpinner,
   Input,
   Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from '@plunk/ui';
-import type {Workflow} from '@plunk/db';
+import type {Tag, Workflow} from '@plunk/db';
 import type {PaginatedResponse} from '@plunk/types';
 import {EmptyState} from '@plunk/ui';
 import {
@@ -744,8 +749,11 @@ interface CreateWorkflowDialogProps {
 function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [triggerType, setTriggerType] = useState<'event' | 'tag'>('event');
   const [eventName, setEventName] = useState('');
   const [eventPopoverOpen, setEventPopoverOpen] = useState(false);
+  const [tagId, setTagId] = useState('');
+  const [tagDirection, setTagDirection] = useState<'added' | 'removed'>('added');
   const [allowReentry, setAllowReentry] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -753,16 +761,24 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
   const {data: eventNamesData} = useSWR<{eventNames: string[]}>(open ? '/events/names' : null, {
     revalidateOnFocus: false,
   });
+  const {data: tags} = useSWR<Tag[]>(open ? '/tags' : null, {revalidateOnFocus: false});
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (triggerType === 'tag' && !tagId) {
+      toast.error('Please select a tag');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       const workflow = await network.fetch<Workflow, typeof WorkflowSchemas.create>('POST', '/workflows', {
         name,
         description: description || undefined,
-        eventName: eventName.trim(),
+        eventName: triggerType === 'event' ? eventName.trim() : undefined,
+        tagTrigger: triggerType === 'tag' ? {tagId, direction: tagDirection} : undefined,
         allowReentry,
         enabled: false,
       });
@@ -771,6 +787,8 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
       setName('');
       setDescription('');
       setEventName('');
+      setTagId('');
+      setTagDirection('added');
       setAllowReentry(false);
       onOpenChange(false);
       onSuccess();
@@ -817,6 +835,67 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
             />
           </div>
 
+          <div className="space-y-1.5">
+            <Label>Trigger</Label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setTriggerType('event')}
+                className={`flex-1 px-3 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
+                  triggerType === 'event'
+                    ? 'border-neutral-900 bg-neutral-900 text-white'
+                    : 'border-neutral-200 text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50'
+                }`}
+              >
+                Event
+              </button>
+              <button
+                type="button"
+                onClick={() => setTriggerType('tag')}
+                className={`flex-1 px-3 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
+                  triggerType === 'tag'
+                    ? 'border-neutral-900 bg-neutral-900 text-white'
+                    : 'border-neutral-200 text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50'
+                }`}
+              >
+                Tag added/removed
+              </button>
+            </div>
+          </div>
+
+          {triggerType === 'tag' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="createTagId">Tag
+                <span className="text-red-500"> *</span>
+              </Label>
+                <Select value={tagId} onValueChange={setTagId}>
+                  <SelectTrigger id="createTagId">
+                    <SelectValue placeholder={tags?.length ? 'Select a tag…' : 'No tags yet'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(tags ?? []).map(tag => (
+                      <SelectItem key={tag.id} value={tag.id}>
+                        {tag.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="createTagDirection">When</Label>
+                <Select value={tagDirection} onValueChange={v => setTagDirection(v as 'added' | 'removed')}>
+                  <SelectTrigger id="createTagDirection">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="added">Tag is added</SelectItem>
+                    <SelectItem value="removed">Tag is removed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : (
           <div className="space-y-1.5">
             <Label htmlFor="createEventName">Trigger event
             <span className="text-red-500"> *</span>
@@ -881,6 +960,7 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
               The event that triggers this workflow to start for a contact
             </p>
           </div>
+          )}
 
           <div className="flex items-start gap-3">
             <input

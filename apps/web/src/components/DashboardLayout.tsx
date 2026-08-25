@@ -16,6 +16,7 @@ import {
   Menu,
   Plus,
   Settings,
+  Tag,
   Users,
   Workflow
 } from 'lucide-react';
@@ -53,6 +54,7 @@ const navigation: NavSection[] = [
       {name: 'Dashboard', href: '/', icon: LayoutDashboard},
       {name: 'Contacts', href: '/contacts', icon: Users},
       {name: 'Segments', href: '/segments', icon: Layers},
+      {name: 'Tags', href: '/tags', icon: Tag},
       {name: 'Activity', href: '/activity', icon: Activity},
       {name: 'Analytics', href: '/analytics', icon: BarChart3},
     ],

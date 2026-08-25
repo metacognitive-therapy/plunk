@@ -20,16 +20,52 @@ import {useEffect, useState} from 'react';
 import {DashboardLayout} from '../../components/DashboardLayout';
 import {KeyValueEditor} from '../../components/KeyValueEditor';
 import {ActivityFeed} from '../../components/ActivityFeed';
+import {TagPicker} from '../../components/TagPicker';
 import {network} from '../../lib/network';
 import {toast} from 'sonner';
 import useSWR from 'swr';
 import {ContactSchemas} from '@plunk/shared';
 import dayjs from 'dayjs';
+import {z} from 'zod';
+
+type ContactWithTags = Contact & {tags: {id: string; name: string}[]};
+
+const contactTagIdsSchema = z.object({tagIds: z.array(z.string())});
 
 export default function ContactDetailPage() {
   const router = useRouter();
   const {id} = router.query;
-  const {data: contact, mutate, isLoading} = useSWR<Contact>(id ? `/contacts/${id}` : null);
+  const {data: contact, mutate, isLoading} = useSWR<ContactWithTags>(id ? `/contacts/${id}` : null);
+  const [isSavingTags, setIsSavingTags] = useState(false);
+
+  const handleTagsChange = async (nextIds: string[]) => {
+    if (!contact) return;
+    const currentIds = contact.tags.map(t => t.id);
+    const added = nextIds.filter(tagId => !currentIds.includes(tagId));
+    const removed = currentIds.filter(tagId => !nextIds.includes(tagId));
+    if (added.length === 0 && removed.length === 0) return;
+
+    setIsSavingTags(true);
+    try {
+      if (added.length > 0) {
+        await network.fetch<{added: number}, typeof contactTagIdsSchema>('POST', `/tags/contacts/${contact.id}`, {
+          tagIds: added,
+        });
+      }
+      if (removed.length > 0) {
+        await network.fetch<{removed: number}, typeof contactTagIdsSchema>(
+          'DELETE',
+          `/tags/contacts/${contact.id}`,
+          {tagIds: removed},
+        );
+      }
+      void mutate();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't update tags. Try again.");
+    } finally {
+      setIsSavingTags(false);
+    }
+  };
 
   const [email, setEmail] = useState('');
   const [subscribed, setSubscribed] = useState(true);
@@ -210,6 +246,20 @@ export default function ContactDetailPage() {
 
             {/* Metadata Sidebar */}
             <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Tags</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <TagPicker
+                    value={contact.tags.map(t => t.id)}
+                    onChange={ids => void handleTagsChange(ids)}
+                    allowCreate
+                    placeholder={isSavingTags ? 'Saving…' : 'Add tags…'}
+                  />
+                </CardContent>
+              </Card>
+
               <Card>
                 <CardHeader>
                   <CardTitle>Details</CardTitle>

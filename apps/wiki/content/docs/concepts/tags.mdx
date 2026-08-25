@@ -1,0 +1,100 @@
+---
+title: Tags
+description: Label contacts and act on those labels instantly
+icon: Tag
+---
+
+Tags are lightweight, named labels scoped to a project. A contact either has a tag or doesn't — there's no value, no history, no configuration beyond the name. Apply tags from the dashboard, the API, a CSV import, or a workflow step, then target campaigns and workflows off them.
+
+Tags exist alongside [segments](/concepts/segments), not instead of them. Reach for a tag when you want a fast, freeform label ("customer", "attended webinar") that other things can act on the moment it changes. Reach for a segment when membership needs to be computed from a filter, or when you want a fully manual, curated list that isn't meant to trigger anything on entry.
+
+## Identity and renaming
+
+A tag's name is unique per project, **trimmed and compared case-insensitively** — `"VIP"`, `"vip"`, and `" vip "` all resolve to the same tag. Whichever casing was used when the tag was first created is what's displayed.
+
+Renaming a tag is always safe. Every reference to a tag — campaign audiences, workflow triggers and steps, segment/filter conditions — binds by the tag's **ID**, never its name or a slug. Rename freely; nothing breaks.
+
+## Applying and removing tags
+
+A tag can be applied or removed:
+
+- **From the dashboard** — the contact detail page has an inline tag picker, and the contacts list supports bulk add/remove on a selection (including "select all matching the current filter").
+- **Via the API** — `POST /tags/contacts/:contactId` and `DELETE /tags/contacts/:contactId`, each taking `{ tagIds }`.
+- **In bulk** — `POST /tags/bulk-apply`, which queues a background job and supports both an explicit contact ID list and a "select all matching a filter" query mode with exclusions, following the same pattern as the contacts bulk-action endpoints.
+- **On `/v1/track`** — pass an optional `tags: string[]` alongside the event. Tag names are resolved and **auto-created** if they don't already exist yet, so an integration never needs a separate tag-creation handshake.
+- **During CSV import** — map an optional `tags` column (comma- or semicolon-separated tag names per row), resolved and auto-created the same way.
+
+Applying a tag a contact already has, or removing one it doesn't have, is a **silent no-op** — no event fires, no count changes. This makes it safe to call these endpoints idempotently from your own retry logic. Re-adding a tag that was previously removed does fire the add event again.
+
+## Events and automation
+
+Applying or removing a tag synchronously emits a reserved event on the contact — `tag.added` or `tag.removed`, with payload `{ tagId, tagName }`. This is the same synchronous path `/v1/track` uses, not the few-minutes-delayed background sweep that recomputes [segment](/concepts/segments) membership — it's the main reason to reach for a tag instead of a `trackMembership` segment when you need automation to react immediately. `tag.*` is a reserved event-name prefix, the same as `email.*` and `segment.*` — you can't track a custom event under that name yourself.
+
+### Triggering a workflow from a tag
+
+A [workflow](/concepts/workflows)'s `EVENT` trigger can be scoped to one specific tag: `triggerConfig: { eventName: "tag.added" | "tag.removed", tagId }`. Because this binds by tag ID, renaming the tag later never disables the automation. Whether a contact can re-enter the workflow on a repeat `tag.added` is governed by the workflow's normal `allowReentry` setting.
+
+### Maintaining tags from a workflow
+
+Two step types let a workflow maintain tags as a contact moves through it:
+
+- **`ADD_TAG`** — applies a tag (by ID) to the contact currently in the execution.
+- **`REMOVE_TAG`** — removes one.
+
+Both emit the same `tag.added` / `tag.removed` events, so they can chain into other tag-triggered workflows — for example, tagging a contact `nurtured` at the end of an onboarding sequence to kick off a second workflow.
+
+## Targeting a campaign by tag
+
+Campaigns support a `TAG` audience type alongside `ALL`, `SEGMENT`, and `FILTERED`: send to every contact carrying **any** of `tagIds`, minus every contact carrying **any** of `excludeTagIds`. It's a one-click picker for the common case ("customers, except launch opt-outs") without building a filter tree.
+
+Matching contacts that carry **all** of several tags isn't a picker mode — express that with `audienceType: "FILTERED"` and `hasTag` conditions joined by `AND` instead. See [Campaigns](/concepts/campaigns#targeting-an-audience).
+
+## Filtering on tags
+
+The shared filter engine — used by dynamic segment conditions, `FILTERED` campaign audiences, and workflow `CONDITION` steps — has two tag operators:
+
+| Operator    | What it does                                    |
+| ----------- | ------------------------------------------------ |
+| `hasTag`    | Contact currently carries the given tag.          |
+| `notHasTag` | Contact does not carry the given tag.             |
+
+Both use the fixed field `"tags"`, with the tag ID passed as `value`:
+
+```json
+{ "field": "tags", "operator": "hasTag", "value": "<tagId>" }
+```
+
+Combine it with any other condition — `data.*` fields, events, email activity, segment membership — the same way you would any other filter. See the [Segment filter reference](/guides/segment-filters#tags) for the full operator list.
+
+## Deleting a tag
+
+`DELETE /tags/:id` removes the tag and its memberships. If the tag is still referenced by an active campaign, an enabled workflow (as a trigger or an `ADD_TAG`/`REMOVE_TAG` step), or a segment/filter condition, the request is blocked with `409 Conflict` and a list of what references it — the same protection [segments](/concepts/segments#deleting-a-segment) get. Remove those references first, or delete the tag once it's genuinely unused.
+
+## Performance notes
+
+Each tag carries a cached `memberCount`, maintained incrementally on every apply/remove and reconciled periodically in the background — the tags list never counts memberships live, so it stays fast regardless of list size. `GET /tags/:id/contacts` and the `?tags=` filter on `GET /contacts` both query the underlying membership table directly and are indexed for that access pattern.
+
+## Coexisting with static segments
+
+Tags don't replace static segments, and there's no migration or conversion tooling between the two — pick whichever fits the audience: a tag for a fast, event-driven label, a static segment for a manually curated list you don't want anything reacting to automatically.
+
+## API reference
+
+See the tags API endpoints in the [API overview](/api-reference/overview#tags) — list, get, create, rename, delete, list a tag's contacts, add/remove on a single contact, and bulk apply with job polling.
+
+## What's next
+
+<Cards>
+  <Card title="Campaigns" href="/concepts/campaigns">
+    Use `audienceType: TAG` to target contacts by tag.
+  </Card>
+  <Card title="Workflows" href="/concepts/workflows">
+    Trigger workflows from `tag.added` / `tag.removed`, and maintain tags with `ADD_TAG` / `REMOVE_TAG` steps.
+  </Card>
+  <Card title="Segment filter reference" href="/guides/segment-filters">
+    The full `hasTag` / `notHasTag` operator reference, alongside every other filter field.
+  </Card>
+  <Card title="Segments" href="/concepts/segments">
+    The heavier-weight, filter-driven alternative to tags — and how the two coexist.
+  </Card>
+</Cards>

@@ -341,6 +341,11 @@ export class EventService {
       return true;
     }
 
+    // Tag events: tag.added, tag.removed
+    if (eventName === 'tag.added' || eventName === 'tag.removed') {
+      return true;
+    }
+
     return false;
   }
 
@@ -395,6 +400,14 @@ export class EventService {
 
       // Check if this workflow is triggered by this event
       if (triggerConfig?.eventName === eventName) {
+        // Tag-bound triggers additionally require the tag to match. Binding by
+        // tagId (not name) means renaming a tag can never silently break this.
+        if ((eventName === 'tag.added' || eventName === 'tag.removed') && triggerConfig?.tagId) {
+          if (triggerConfig.tagId !== data?.tagId) {
+            continue;
+          }
+        }
+
         // If event is for a specific contact, start workflow for that contact
         if (contactId) {
           await this.startWorkflowForContact(workflow.id, contactId, data);

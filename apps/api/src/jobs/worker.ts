@@ -12,6 +12,7 @@ import signale from 'signale';
 import {createApiRequestCleanupWorker} from './api-request-cleanup-processor.js';
 import {createIdempotencyKeyCleanupWorker} from './idempotency-key-cleanup-processor.js';
 import {createBulkContactWorker} from './bulk-contact-processor.js';
+import {createBulkTagWorker} from './bulk-tag-processor.js';
 import {createCampaignWorker} from './campaign-processor.js';
 import {createCardVerificationWorker} from './card-verification-processor.js';
 import {createCampaignStatsSweepWorker} from './campaign-stats-sweep-processor.js';
@@ -65,6 +66,11 @@ async function startWorkers() {
     const bulkContactWorker = createBulkContactWorker();
     workers.push({name: 'bulk-contact-actions', worker: bulkContactWorker});
     signale.success('[WORKER] Bulk contact action worker started');
+
+    // Start bulk tag action worker
+    const bulkTagWorker = createBulkTagWorker();
+    workers.push({name: 'bulk-tag-actions', worker: bulkTagWorker});
+    signale.success('[WORKER] Bulk tag action worker started');
 
     // Start segment count worker
     const segmentCountWorker = createSegmentCountWorker();

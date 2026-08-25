@@ -2,6 +2,7 @@ import {ConditionStepDialog} from './ConditionStepDialog';
 import {DelayStepDialog} from './DelayStepDialog';
 import {ExitStepDialog} from './ExitStepDialog';
 import {SendEmailStepDialog} from './SendEmailStepDialog';
+import {TagActionStepDialog} from './TagActionStepDialog';
 import {UpdateContactStepDialog} from './UpdateContactStepDialog';
 import {WaitForEventStepDialog} from './WaitForEventStepDialog';
 import {WebhookStepDialog} from './WebhookStepDialog';
@@ -21,8 +22,13 @@ export function EditStepDialog(props: EditStepDialogProps) {
       return <WebhookStepDialog {...props} />;
     case 'UPDATE_CONTACT':
       return <UpdateContactStepDialog {...props} />;
+    case 'ADD_TAG':
+    case 'REMOVE_TAG':
+      return <TagActionStepDialog {...props} />;
     case 'EXIT':
       return <ExitStepDialog {...props} />;
+    case 'TRIGGER':
+      return null;
     default:
       return null;
   }

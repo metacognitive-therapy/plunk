@@ -15,6 +15,8 @@ export const STEP_TYPE_LABELS: Record<WorkflowStep['type'], string> = {
   EXIT:           'Exit',
   WEBHOOK:        'Webhook',
   UPDATE_CONTACT: 'Update Contact',
+  ADD_TAG:        'Add Tag',
+  REMOVE_TAG:     'Remove Tag',
 };
 
 export const STEP_TYPE_DESCRIPTIONS: Record<WorkflowStep['type'], string> = {
@@ -26,6 +28,8 @@ export const STEP_TYPE_DESCRIPTIONS: Record<WorkflowStep['type'], string> = {
   EXIT:           'Ends the workflow for the contact.',
   WEBHOOK:        "Makes an HTTP request to an external URL with the contact's data.",
   UPDATE_CONTACT: "Sets or updates fields on the contact's profile.",
+  ADD_TAG:        'Applies a tag to the contact.',
+  REMOVE_TAG:     'Removes a tag from the contact.',
 };
 
 export type StepWithTemplate = WorkflowStep & {

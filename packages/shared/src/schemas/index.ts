@@ -107,6 +107,7 @@ export const ContactSchemas = {
         .object({
           search: z.string().max(255).optional(),
           subscribed: z.boolean().optional(),
+          tagIds: z.array(uuid).max(20).optional(),
         })
         .default({}),
       excludeIds: z.array(uuid).max(10000).optional(),
@@ -139,6 +140,8 @@ const segmentFilterSchema = z.object({
     'notTriggeredWithin',
     'memberOfSegment',
     'notMemberOfSegment',
+    'hasTag',
+    'notHasTag',
   ]),
   value: z.any().optional(),
   unit: z.enum(['days', 'hours', 'minutes']).optional(),
@@ -183,6 +186,39 @@ export const SegmentSchemas = {
   }),
 };
 
+export const TagSchemas = {
+  create: z.object({
+    name: z.string().trim().min(1).max(100),
+  }),
+  update: z.object({
+    name: z.string().trim().min(1).max(100),
+  }),
+  // Bulk add/remove across many contacts, mirroring ContactSchemas.bulkAction's
+  // two selection modes (explicit ids, or a query + exclusion list for "select
+  // all matching").
+  bulkApply: z.discriminatedUnion('mode', [
+    z.object({
+      mode: z.literal('ids'),
+      contactIds: z.array(uuid).min(1).max(1000),
+      tagIds: z.array(uuid).min(1).max(20),
+      action: z.enum(['add', 'remove']),
+    }),
+    z.object({
+      mode: z.literal('query'),
+      filter: z
+        .object({
+          search: z.string().max(255).optional(),
+          subscribed: z.boolean().optional(),
+          tagIds: z.array(uuid).max(20).optional(),
+        })
+        .default({}),
+      excludeIds: z.array(uuid).max(10000).optional(),
+      tagIds: z.array(uuid).min(1).max(20),
+      action: z.enum(['add', 'remove']),
+    }),
+  ]),
+};
+
 export const TemplateSchemas = {
   create: z.object({
     name: z.string().min(1).max(100),
@@ -219,13 +255,27 @@ export const TemplateSchemas = {
 };
 
 export const WorkflowSchemas = {
-  create: z.object({
-    name: z.string().min(1).max(100),
-    description: z.string().max(500).optional(),
-    eventName: z.string().min(1),
-    allowReentry: z.boolean().optional(),
-    enabled: z.boolean().default(false),
-  }),
+  create: z
+    .object({
+      name: z.string().min(1).max(100),
+      description: z.string().max(500).optional(),
+      eventName: z.string().min(1).optional(),
+      // Alternative to eventName: trigger when a specific tag is added/removed.
+      // Bound by tagId (not name), so renaming the tag never breaks this workflow.
+      // Internally this still creates an EVENT-type trigger on the reserved
+      // tag.added / tag.removed event name, with tagId carried in triggerConfig.
+      tagTrigger: z
+        .object({
+          tagId: uuid,
+          direction: z.enum(['added', 'removed']),
+        })
+        .optional(),
+      allowReentry: z.boolean().optional(),
+      enabled: z.boolean().default(false),
+    })
+    .refine(data => !!data.eventName || !!data.tagTrigger, {
+      message: 'Provide either eventName or tagTrigger',
+    }),
   update: z.object({
     name: z.string().min(1).max(100).optional(),
     description: z.string().max(500).optional(),
@@ -343,6 +393,8 @@ export const WorkflowStepConfigSchemas = {
         'lessThanOrEqual',
         'exists',
         'notExists',
+        'hasTag',
+        'notHasTag',
       ]),
       value: z.any().optional(),
     }),
@@ -366,6 +418,8 @@ export const WorkflowStepConfigSchemas = {
               'lessThanOrEqual',
               'exists',
               'notExists',
+              'hasTag',
+              'notHasTag',
             ]),
             value: z.any().optional(),
           }),
@@ -391,6 +445,10 @@ export const WorkflowStepConfigSchemas = {
         (value.subscriptionAction && value.subscriptionAction !== 'none'),
       {message: 'Provide at least one field to update or a subscription action'},
     ),
+  // Shared by ADD_TAG and REMOVE_TAG steps.
+  tagAction: z.object({
+    tagId: uuid,
+  }),
 };
 
 export const DomainSchemas = {
@@ -429,6 +487,8 @@ export const CampaignSchemas = {
     audienceType: z.nativeEnum(CampaignAudienceType),
     audienceCondition: filterConditionSchema.optional(),
     segmentId: uuid.optional(),
+    tagIds: z.array(uuid).max(50).optional(),
+    excludeTagIds: z.array(uuid).max(50).optional(),
   }),
   schedule: z.object({
     scheduledFor: z.string(),
@@ -445,6 +505,8 @@ export const CampaignSchemas = {
     audienceType: z.nativeEnum(CampaignAudienceType).optional(),
     audienceCondition: filterConditionSchema.optional(),
     segmentId: z.string().optional(),
+    tagIds: z.array(uuid).max(50).optional(),
+    excludeTagIds: z.array(uuid).max(50).optional(),
   }),
   sendTest: z.object({
     email,
@@ -467,6 +529,8 @@ export const ActionSchemas = {
     email,
     subscribed: z.boolean().optional(),
     data: jsonSchema.optional(),
+    // Tag names to apply to the contact (auto-created if missing, matched case-insensitively).
+    tags: z.array(z.string().min(1).max(100)).max(20).optional(),
   }),
   send: z
     .object({

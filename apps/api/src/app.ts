@@ -37,6 +37,7 @@ import {Events} from './controllers/Events.js';
 import {Oauth} from './controllers/Oauth/index.js';
 import {Projects} from './controllers/Projects.js';
 import {Segments} from './controllers/Segments.js';
+import {Tags} from './controllers/Tags.js';
 import {Templates} from './controllers/Templates.js';
 import {Unsubscribe} from './controllers/Unsubscribe.js';
 import {Uploads} from './controllers/Uploads.js';
@@ -92,7 +93,7 @@ const server = new (class extends Server {
     // Build allowed origins from environment variables
     const allowedOrigins =
       NODE_ENV === 'development'
-        ? [/.*\.localhost:1000/, 'http://localhost:3000', 'http://localhost:4000']
+        ? [/.*\.localhost:1000/, DASHBOARD_URI, LANDING_URI, WIKI_URI]
         : [DASHBOARD_URI, LANDING_URI, WIKI_URI];
 
     // Public API endpoints that should allow all origins
@@ -171,6 +172,7 @@ const server = new (class extends Server {
       new Domains(),
       new Projects(),
       new Segments(),
+      new Tags(),
       new Templates(),
       new Unsubscribe(),
       new Uploads(),

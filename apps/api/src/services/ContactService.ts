@@ -38,8 +38,10 @@ export class ContactService {
       /** Sortable columns. `email` is covered by the `(projectId, email)` unique index. */
       sort?: 'email' | 'createdAt';
       dir?: 'asc' | 'desc';
+      /** Match contacts tagged with ANY of these tag ids. */
+      tagIds?: string[];
     },
-  ): Promise<CursorPaginatedResponse<Contact>> {
+  ): Promise<CursorPaginatedResponse<Contact & {tags: {id: string; name: string}[]}>> {
     const where: Prisma.ContactWhereInput = {
       projectId,
       ...(search
@@ -51,6 +53,9 @@ export class ContactService {
           }
         : {}),
       ...(options?.subscribed !== undefined ? {subscribed: options.subscribed} : {}),
+      ...(options?.tagIds && options.tagIds.length > 0
+        ? {contactTags: {some: {tagId: {in: options.tagIds}}}}
+        : {}),
     };
 
     // The chosen sort column leads; `id` is always the stable tiebreaker the
@@ -78,8 +83,25 @@ export class ContactService {
     // Get total count only on first page for better performance
     const total = !cursor ? await prisma.contact.count({where}) : 0;
 
+    // Batch-fetch tags for the page in one query rather than per-contact, to
+    // avoid N+1s.
+    const contactIds = results.map(c => c.id);
+    const memberships =
+      contactIds.length > 0
+        ? await prisma.contactTag.findMany({
+            where: {contactId: {in: contactIds}},
+            select: {contactId: true, tag: {select: {id: true, name: true}}},
+          })
+        : [];
+    const tagsByContact = new Map<string, {id: string; name: string}[]>();
+    for (const membership of memberships) {
+      const existing = tagsByContact.get(membership.contactId);
+      if (existing) existing.push(membership.tag);
+      else tagsByContact.set(membership.contactId, [membership.tag]);
+    }
+
     return {
-      data: results,
+      data: results.map(c => ({...c, tags: tagsByContact.get(c.id) ?? []})),
       total,
       cursor: nextCursor,
       hasMore,
@@ -87,13 +109,19 @@ export class ContactService {
   }
 
   /**
-   * Get a single contact by ID
+   * Get a single contact by ID, including its current tags (id + name - bound
+   * by id, so a later rename doesn't require the caller to refetch).
    */
-  public static async get(projectId: string, contactId: string): Promise<Contact> {
+  public static async get(projectId: string, contactId: string): Promise<Contact & {tags: {id: string; name: string}[]}> {
     const contact = await prisma.contact.findFirst({
       where: {
         id: contactId,
         projectId,
+      },
+      include: {
+        contactTags: {
+          include: {tag: {select: {id: true, name: true}}},
+        },
       },
     });
 
@@ -101,7 +129,8 @@ export class ContactService {
       throw new HttpException(404, 'Contact not found');
     }
 
-    return contact;
+    const {contactTags, ...rest} = contact;
+    return {...rest, tags: contactTags.map(ct => ct.tag)};
   }
 
   /**

@@ -51,6 +51,40 @@
             "description": "Custom contact data fields",
             "additionalProperties": true
           },
+          "tags": {
+            "type": "array",
+            "description": "Tags currently applied to this contact.",
+            "items": {
+              "$ref": "#/components/schemas/Tag"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Tag": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Trimmed, unique per project (case-insensitive)."
+          },
+          "memberCount": {
+            "type": "integer",
+            "description": "Cached count of contacts carrying this tag, refreshed incrementally on apply/remove and reconciled periodically."
+          },
+          "projectId": {
+            "type": "string"
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -1314,6 +1348,14 @@
           },
           {
             "$ref": "#/components/parameters/SortDirection"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated tag IDs. Returns contacts carrying any of the given tags."
           }
         ],
         "responses": {
@@ -2333,6 +2375,606 @@
           }
         }
       }
+    },
+    "/tags": {
+      "get": {
+        "tags": ["Tags"],
+        "summary": "List tags",
+        "description": "Get all tags for the project, newest first. This endpoint is not paginated — it returns a bare array of every tag.",
+        "operationId": "listTags",
+        "responses": {
+          "200": {
+            "description": "List of tags",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Tag"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Tags"],
+        "summary": "Create tag",
+        "description": "Create a new tag. Names are trimmed and must be unique per project, compared case-insensitively — creating a tag whose trimmed, lowercased name already exists returns the existing tag instead of a duplicate.",
+        "operationId": "createTag",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                }
+              },
+              "examples": {
+                "simple": {
+                  "summary": "Create a tag",
+                  "value": {
+                    "name": "VIP"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tag created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`name` is missing or blank after trimming.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyError"
+                },
+                "example": {
+                  "error": "Name is required"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/tags/{id}": {
+      "get": {
+        "tags": ["Tags"],
+        "summary": "Get tag",
+        "description": "Get a single tag by ID.",
+        "operationId": "getTag",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tag",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Tags"],
+        "summary": "Rename tag",
+        "description": "Rename a tag. Always safe — every reference to a tag (campaign audiences, workflow triggers/steps, segment/filter conditions) binds by ID, never by name.",
+        "operationId": "renameTag",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tag renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Another tag with this name (trimmed, case-insensitive) already exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Tags"],
+        "summary": "Delete tag",
+        "description": "Permanently delete a tag and its memberships. Blocked with `409` if the tag is still referenced by an active campaign, an enabled workflow (as a trigger or an `ADD_TAG`/`REMOVE_TAG` step), or a segment/filter condition — the response enumerates what references it.",
+        "operationId": "deleteTag",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Tag deleted successfully (no content returned)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The tag is still referenced by a campaign, workflow, or segment/filter condition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tags/{id}/contacts": {
+      "get": {
+        "tags": ["Tags"],
+        "summary": "List a tag's contacts",
+        "description": "Get a paginated list of contacts carrying this tag.",
+        "operationId": "listTagContacts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of contacts carrying this tag",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Contact"
+                      }
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "pageSize": {
+                      "type": "integer"
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/tags/contacts/{contactId}": {
+      "post": {
+        "tags": ["Tags"],
+        "summary": "Apply tags to a contact",
+        "description": "Apply one or more tags (by ID) to a contact. Applying a tag the contact already carries is a silent no-op for that tag — no event, no member count change.",
+        "operationId": "applyTagsToContact",
+        "parameters": [
+          {
+            "name": "contactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["tagIds"],
+                "properties": {
+                  "tagIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Contact with its updated tags",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Contact"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Tags"],
+        "summary": "Remove tags from a contact",
+        "description": "Remove one or more tags (by ID) from a contact. Removing a tag the contact doesn't carry is a silent no-op for that tag — no event, no member count change.",
+        "operationId": "removeTagsFromContact",
+        "parameters": [
+          {
+            "name": "contactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["tagIds"],
+                "properties": {
+                  "tagIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Contact with its updated tags",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Contact"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/tags/bulk-apply": {
+      "post": {
+        "tags": ["Tags"],
+        "summary": "Bulk apply or remove tags",
+        "description": "Queue a background job to add or remove one or more tags across many contacts. Accepts either an explicit list of contact IDs (`mode: \"ids\"`), or a filter-based selection with optional exclusions (`mode: \"query\"`) — the same \"select all matching\" pattern used by the contacts bulk-action endpoints. Poll `GET /tags/bulk-apply/{jobId}` for progress.",
+        "operationId": "bulkApplyTags",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["mode", "contactIds", "tagIds", "action"],
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": ["ids"]
+                      },
+                      "contactIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "tagIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": ["add", "remove"]
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": ["mode", "filter", "tagIds", "action"],
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": ["query"]
+                      },
+                      "filter": {
+                        "type": "object",
+                        "properties": {
+                          "search": {
+                            "type": "string"
+                          },
+                          "subscribed": {
+                            "type": "boolean"
+                          },
+                          "tagIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "excludeIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Contact IDs to exclude from the filter match (e.g. rows the user deselected from \"select all matching\")."
+                      },
+                      "tagIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": ["add", "remove"]
+                      }
+                    }
+                  }
+                ]
+              },
+              "examples": {
+                "byIds": {
+                  "summary": "Tag a specific list of contacts",
+                  "value": {
+                    "mode": "ids",
+                    "contactIds": ["ctc_1", "ctc_2"],
+                    "tagIds": ["tag_vip"],
+                    "action": "add"
+                  }
+                },
+                "byQuery": {
+                  "summary": "Untag every subscribed contact matching a search, except one",
+                  "value": {
+                    "mode": "query",
+                    "filter": {
+                      "search": "example.com",
+                      "subscribed": true
+                    },
+                    "excludeIds": ["ctc_keep"],
+                    "tagIds": ["tag_beta"],
+                    "action": "remove"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobId": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/tags/bulk-apply/{jobId}": {
+      "get": {
+        "tags": ["Tags"],
+        "summary": "Get bulk apply/remove job status",
+        "description": "Poll the status of a job queued by `POST /tags/bulk-apply`.",
+        "operationId": "getBulkApplyTagsJob",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["waiting", "active", "completed", "failed"]
+                    },
+                    "progress": {
+                      "type": "integer"
+                    },
+                    "result": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "enum": ["add", "remove"]
+                        },
+                        "totalRequested": {
+                          "type": "integer"
+                        },
+                        "successCount": {
+                          "type": "integer"
+                        },
+                        "unchangedCount": {
+                          "type": "integer",
+                          "description": "Contacts already in the target state — silent no-ops, not counted as failures."
+                        },
+                        "failureCount": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "failedReason": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
     }
   },
   "tags": [
@@ -2355,6 +2997,10 @@
     {
       "name": "Segments",
       "description": "Audience segmentation"
+    },
+    {
+      "name": "Tags",
+      "description": "Contact labeling and tag-driven automation"
     }
   ]
 }

@@ -29,11 +29,13 @@ interface BulkActionResult {
 function buildQueryWhere(projectId: string, selector: Extract<BulkContactActionSelector, {mode: 'query'}>): Prisma.ContactWhereInput {
   const search = selector.filter?.search;
   const subscribed = selector.filter?.subscribed;
+  const tagIds = selector.filter?.tagIds ?? [];
   const excludeIds = selector.excludeIds ?? [];
   return {
     projectId,
     ...(search ? {email: {contains: search, mode: 'insensitive' as const}} : {}),
     ...(subscribed !== undefined ? {subscribed} : {}),
+    ...(tagIds.length > 0 ? {contactTags: {some: {tagId: {in: tagIds}}}} : {}),
     ...(excludeIds.length > 0 ? {id: {notIn: excludeIds}} : {}),
   };
 }

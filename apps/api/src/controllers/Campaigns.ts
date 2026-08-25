@@ -22,8 +22,21 @@ export class Campaigns {
   @CatchAsync
   private async create(req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
-    const {name, description, subject, body, from, fromName, replyTo, type, audienceType, audienceCondition, segmentId} =
-      CampaignSchemas.create.parse(req.body);
+    const {
+      name,
+      description,
+      subject,
+      body,
+      from,
+      fromName,
+      replyTo,
+      type,
+      audienceType,
+      audienceCondition,
+      segmentId,
+      tagIds,
+      excludeTagIds,
+    } = CampaignSchemas.create.parse(req.body);
 
     if (audienceType === CampaignAudienceType.SEGMENT && !segmentId) {
       throw new HttpException(400, 'Segment ID is required for SEGMENT audience type');
@@ -31,6 +44,10 @@ export class Campaigns {
 
     if (audienceType === CampaignAudienceType.FILTERED && !audienceCondition) {
       throw new HttpException(400, 'Audience condition is required for FILTERED audience type');
+    }
+
+    if (audienceType === CampaignAudienceType.TAG && (!tagIds || tagIds.length === 0)) {
+      throw new HttpException(400, 'At least one tag is required for TAG audience type');
     }
 
     assertValidTemplateSyntax({subject, body});
@@ -50,6 +67,8 @@ export class Campaigns {
       audienceType,
       audienceCondition,
       segmentId,
+      tagIds,
+      excludeTagIds,
     });
 
     return res.status(201).json({
@@ -155,8 +174,21 @@ export class Campaigns {
   private async update(req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
     const {id} = UtilitySchemas.id.parse(req.params);
-    const {name, description, subject, body, from, fromName, replyTo, type, audienceType, audienceCondition, segmentId} =
-      req.body;
+    const {
+      name,
+      description,
+      subject,
+      body,
+      from,
+      fromName,
+      replyTo,
+      type,
+      audienceType,
+      audienceCondition,
+      segmentId,
+      tagIds,
+      excludeTagIds,
+    } = req.body;
 
     // Validate audience-specific fields if audienceType is being updated
     if (audienceType === CampaignAudienceType.SEGMENT && segmentId === undefined) {
@@ -165,6 +197,10 @@ export class Campaigns {
 
     if (audienceType === CampaignAudienceType.FILTERED && audienceCondition === undefined) {
       throw new HttpException(400, 'Audience condition is required for FILTERED audience type');
+    }
+
+    if (audienceType === CampaignAudienceType.TAG && tagIds === undefined) {
+      throw new HttpException(400, 'Tag IDs are required for TAG audience type');
     }
 
     assertValidTemplateSyntax({subject, body});
@@ -186,6 +222,8 @@ export class Campaigns {
       audienceType,
       audienceCondition,
       segmentId,
+      tagIds,
+      excludeTagIds,
     });
 
     return res.json({

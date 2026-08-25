@@ -10,6 +10,7 @@ import {DomainService} from '../services/DomainService.js';
 import {EmailService} from '../services/EmailService.js';
 import {EmailVerificationService} from '../services/EmailVerificationService.js';
 import {EventService} from '../services/EventService.js';
+import {TagService} from '../services/TagService.js';
 import {NotFound, ValidationError} from '../exceptions/index.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 import {DASHBOARD_URI} from '../app/constants.js';
@@ -59,7 +60,7 @@ export class Actions {
     const auth = res.locals.auth;
 
     // Zod validation - errors automatically handled by global error handler
-    const {event, email, subscribed, data} = ActionSchemas.track.parse(req.body);
+    const {event, email, subscribed, data, tags} = ActionSchemas.track.parse(req.body);
 
     // Prevent manual tracking of reserved system events
     if (EventService.isReservedEvent(event)) {
@@ -96,6 +97,18 @@ export class Actions {
       undefined,
       data as Record<string, unknown> | undefined,
     );
+
+    // Apply any tags supplied on the same call - resolved/auto-created by name,
+    // then applied after the event so tag.added workflow triggers see a contact
+    // that already has this event's data.
+    if (tags && tags.length > 0) {
+      const resolvedTags = await TagService.resolveOrCreateByNames(auth.projectId, tags);
+      await TagService.applyTags(
+        auth.projectId,
+        contact.id,
+        resolvedTags.map(tag => tag.id),
+      );
+    }
 
     return res.status(200).json({
       success: true,

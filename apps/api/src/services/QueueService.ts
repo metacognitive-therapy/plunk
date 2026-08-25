@@ -6,6 +6,7 @@ import type {
   ApiRequestCleanupJobData,
   BulkContactActionJobData,
   BulkContactActionSelector,
+  BulkTagActionJobData,
   CampaignBatchJobData,
   CampaignStatsSweepJobData,
   CardVerificationJobData,
@@ -189,6 +190,19 @@ export const bulkContactQueue = new Queue<BulkContactActionJobData>('bulk-contac
     },
     removeOnComplete: 50, // Keep last 50 completed bulk operations
     removeOnFail: 100, // Keep last 100 failed bulk operations
+  },
+});
+
+export const bulkTagQueue = new Queue<BulkTagActionJobData>('bulk-tag-actions', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    attempts: 2, // Limited retries for bulk operations
+    backoff: {
+      type: 'exponential',
+      delay: 5000,
+    },
+    removeOnComplete: 50,
+    removeOnFail: 100,
   },
 });
 
@@ -506,6 +520,50 @@ export class QueueService {
       result: returnValue,
       data: job.data,
       failedReason,
+    };
+  }
+
+  /**
+   * Queue bulk tag action job (add/remove tags across many contacts)
+   */
+  public static async queueBulkTagAction(
+    projectId: string,
+    selector: BulkContactActionSelector,
+    tagIds: string[],
+    action: 'add' | 'remove',
+  ): Promise<Job<BulkTagActionJobData>> {
+    return bulkTagQueue.add(
+      'bulk-tag-action',
+      {projectId, action, tagIds, selector},
+      {
+        jobId: `bulk-tag-${action}-${projectId}-${Date.now()}`,
+      },
+    );
+  }
+
+  /**
+   * Get bulk tag action job status and progress
+   */
+  public static async getBulkTagActionJobStatus(jobId: string, projectId: string) {
+    const job = await bulkTagQueue.getJob(jobId);
+
+    if (!job) {
+      return null;
+    }
+
+    if (job.data.projectId !== projectId) {
+      return null;
+    }
+
+    const state = await job.getState();
+
+    return {
+      id: job.id,
+      state,
+      progress: job.progress,
+      result: job.returnvalue,
+      data: job.data,
+      failedReason: job.failedReason,
     };
   }
 

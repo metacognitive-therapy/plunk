@@ -127,22 +127,19 @@ export class Workflows {
   @CatchAsync
   public async create(req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
-    const {name, description, eventName, enabled, allowReentry} = req.body;
 
-    if (!name) {
-      return res.status(400).json({error: 'Name is required'});
-    }
-
-    if (!eventName) {
-      return res.status(400).json({error: 'Event name is required'});
+    const parsed = WorkflowSchemas.create.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({error: parsed.error.errors[0]?.message ?? 'Invalid workflow payload'});
     }
 
     const workflow = await WorkflowService.create(auth.projectId!, {
-      name,
-      description,
-      eventName,
-      enabled,
-      allowReentry,
+      name: parsed.data.name,
+      description: parsed.data.description,
+      eventName: parsed.data.eventName,
+      tagTrigger: parsed.data.tagTrigger,
+      enabled: parsed.data.enabled,
+      allowReentry: parsed.data.allowReentry,
     });
 
     return res.status(201).json(workflow);

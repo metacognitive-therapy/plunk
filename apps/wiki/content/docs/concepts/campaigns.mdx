@@ -22,9 +22,11 @@ import {TypeTable} from 'fumadocs-ui/components/type-table';
     fromName: { type: 'string', description: 'Optional sender display name (e.g. `Acme Marketing <hello@acme.com>`).' },
     replyTo: { type: 'string', description: 'Optional reply-to address.' },
     type: { type: 'string', required: true, description: 'One of `MARKETING`, `TRANSACTIONAL`, or `HEADLESS`. Same semantics as [template types](/concepts/templates#templates-types). Controls the unsubscribe footer and whether unsubscribed contacts are skipped.' },
-    audienceType: { type: 'string', required: true, description: 'Who this campaign is sent to. One of `ALL`, `SEGMENT`, or `FILTERED` — see below.' },
+    audienceType: { type: 'string', required: true, description: 'Who this campaign is sent to. One of `ALL`, `SEGMENT`, `FILTERED`, or `TAG` — see below.' },
     segmentId: { type: 'string', description: 'Required when `audienceType = SEGMENT`.' },
     audienceCondition: { type: 'object', description: 'Inline filter when `audienceType = FILTERED`. Uses the same format as [segment filters](/guides/segment-filters).' },
+    tagIds: { type: 'string[]', description: 'Required when `audienceType = TAG`. Contacts with ANY of these tags are included.' },
+    excludeTagIds: { type: 'string[]', description: 'Optional when `audienceType = TAG`. Contacts with ANY of these tags are subtracted from the include set.' },
     scheduledFor: { type: 'string', description: 'ISO 8601 timestamp. If set, the campaign sends at that time; if null, it sends immediately when you trigger send.' },
   }}
 />
@@ -33,11 +35,12 @@ The campaign also keeps denormalised stats once it sends: `totalRecipients`, `se
 
 ## Targeting an audience
 
-Campaigns support three audience types:
+Campaigns support four audience types:
 
 - **`ALL`** — every subscribed contact in the project. Quick way to broadcast to your full list.
 - **`SEGMENT`** — every contact that's currently a member of a specific [segment](/concepts/segments). Reuses logic you've already built.
 - **`FILTERED`** — an inline filter condition (same JSON shape as segment filters). Lets you hand-craft an audience for a one-off send without saving a reusable segment.
+- **`TAG`** — contacts carrying any of `tagIds`, minus contacts carrying any of `excludeTagIds`. A one-click picker for [tag](/concepts/tags)-based audiences ("customers except launch-optouts") without building a filter tree. Matching against *all* of several tags isn't a picker mode — use `FILTERED` with `hasTag` conditions combined with `AND` for that.
 
 `MARKETING` and `HEADLESS` campaigns automatically skip unsubscribed contacts. `TRANSACTIONAL` campaigns deliver to everyone matching the audience regardless of subscription state — use it sparingly and only for genuine transactional content.
 
@@ -103,6 +106,9 @@ See the [API overview](/api-reference/overview#campaigns) for the full set of ca
   </Card>
   <Card title="Segments" href="/concepts/segments">
     Build audiences for `audienceType: SEGMENT` campaigns.
+  </Card>
+  <Card title="Tags" href="/concepts/tags">
+    Build audiences for `audienceType: TAG` campaigns.
   </Card>
   <Card title="Verifying domains" href="/guides/verifying-domains">
     Required before you can send from your own domain.

@@ -63,7 +63,16 @@ export class Contacts {
     const dirParam = req.query.dir as string | undefined;
     const dir = dirParam === 'asc' ? 'asc' : dirParam === 'desc' ? 'desc' : undefined;
 
-    const result = await ContactService.list(auth.projectId!, limit, cursor, search, {subscribed, sort, dir});
+    // Optional tag facet (?tags=id1,id2) — matches contacts with ANY of the given tags.
+    const tagsParam = req.query.tags as string | undefined;
+    const tagIds = tagsParam
+      ? tagsParam
+          .split(',')
+          .map(id => id.trim())
+          .filter(Boolean)
+      : undefined;
+
+    const result = await ContactService.list(auth.projectId!, limit, cursor, search, {subscribed, sort, dir, tagIds});
 
     return res.status(200).json(result);
   }

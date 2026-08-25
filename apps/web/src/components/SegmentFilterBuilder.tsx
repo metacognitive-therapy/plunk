@@ -13,8 +13,10 @@ import {
   SelectValue,
 } from '@plunk/ui';
 import type {FilterCondition, FilterGroup, SegmentFilter, SegmentFilterOperator} from '@plunk/types';
+import type {Tag} from '@plunk/db';
 import {Check, ChevronsUpDown, GripVertical, Plus, Search, Trash2} from 'lucide-react';
 import {memo, useCallback, useEffect, useMemo, useState} from 'react';
+import useSWR from 'swr';
 import {network} from '../lib/network';
 
 const STANDARD_OPERATORS: {value: SegmentFilterOperator; label: string; description: string}[] = [
@@ -45,6 +47,11 @@ const SEGMENT_OPERATORS: {value: SegmentFilterOperator; label: string; descripti
   {value: 'notMemberOfSegment', label: 'Is not member of', description: 'Contact is not in this segment'},
 ];
 
+const TAG_OPERATORS: {value: SegmentFilterOperator; label: string; description: string}[] = [
+  {value: 'hasTag', label: 'Has tag', description: 'Contact has this tag applied'},
+  {value: 'notHasTag', label: 'Does not have tag', description: 'Contact does not have this tag applied'},
+];
+
 const TIME_UNITS = [
   {value: 'minutes', label: 'Minutes'},
   {value: 'hours', label: 'Hours'},
@@ -57,13 +64,14 @@ const STANDARD_FIELDS = [
   {value: 'subscribed', label: 'Subscribed', type: 'boolean', category: 'Contact fields'},
   {value: 'createdAt', label: 'Created at', type: 'date', category: 'Contact fields'},
   {value: 'updatedAt', label: 'Updated at', type: 'date', category: 'Contact fields'},
+  {value: 'tags', label: 'Tags', type: 'tag', category: 'Contact fields'},
 ] as const;
 
 interface FieldOption {
   value: string;
   label: string;
   description?: string;
-  type: 'string' | 'number' | 'boolean' | 'date' | 'event' | 'email' | 'segment';
+  type: 'string' | 'number' | 'boolean' | 'date' | 'event' | 'email' | 'segment' | 'tag';
   category: 'Contact fields' | 'Custom data' | 'Events' | 'Email activity' | 'Segments';
 }
 
@@ -133,7 +141,10 @@ function useAvailableOptions(currentSegmentId?: string) {
             category: 'Segments' as const,
           }));
 
-        setFields([...typedFields, ...eventOptions, ...emailOptions, ...segmentOptions]);
+        // 'tags' isn't a per-contact field returned by /contacts/fields (it's a
+        // relation, not a column) — add it statically alongside the typed fields.
+        const tagField: FieldOption = {value: 'tags', label: 'Tags', type: 'tag', category: 'Contact fields'};
+        setFields([...typedFields, tagField, ...eventOptions, ...emailOptions, ...segmentOptions]);
       } catch (error) {
         console.error('Failed to fetch available fields and events:', error);
       } finally {
@@ -145,6 +156,27 @@ function useAvailableOptions(currentSegmentId?: string) {
   }, [currentSegmentId]);
 
   return {fields, loading};
+}
+
+/** Single-select tag dropdown for the hasTag/notHasTag value — the segment/workflow
+ * condition value is a tagId, so this resolves the id to a name for display. */
+function TagValueSelect({value, onChange}: {value: string | number | boolean | undefined; onChange: (tagId: string) => void}) {
+  const {data: tags} = useSWR<Tag[]>('/tags', {revalidateOnFocus: false});
+
+  return (
+    <Select value={typeof value === 'string' ? value : ''} onValueChange={onChange}>
+      <SelectTrigger className="text-sm h-9 bg-white">
+        <SelectValue placeholder={tags?.length ? 'Select a tag…' : 'No tags yet'} />
+      </SelectTrigger>
+      <SelectContent>
+        {(tags ?? []).map(tag => (
+          <SelectItem key={tag.id} value={tag.id}>
+            {tag.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 interface FilterRowProps {
@@ -176,6 +208,10 @@ const FilterRow = memo(function FilterRow({filter, onChange, onRemove, available
   const getOperatorsForType = useCallback((type: string, isEvent: boolean) => {
     if (type === 'segment') {
       return SEGMENT_OPERATORS;
+    }
+
+    if (type === 'tag') {
+      return TAG_OPERATORS;
     }
 
     if (isEvent) {
@@ -221,11 +257,16 @@ const FilterRow = memo(function FilterRow({filter, onChange, onRemove, available
 
   const isEventOrEmailActivity = fieldType === 'event' || fieldType === 'email';
   const isSegment = fieldType === 'segment';
+  const isTag = fieldType === 'tag';
 
   // Get operators based on field type (memoized)
   const operators = useMemo(() => {
     if (isSegment) {
       return SEGMENT_OPERATORS;
+    }
+
+    if (isTag) {
+      return TAG_OPERATORS;
     }
 
     if (isEventOrEmailActivity) {
@@ -258,7 +299,7 @@ const FilterRow = memo(function FilterRow({filter, onChange, onRemove, available
     return STANDARD_OPERATORS.filter(op =>
       ['equals', 'notEquals', 'contains', 'notContains', 'exists', 'notExists'].includes(op.value),
     );
-  }, [fieldType, isEventOrEmailActivity, isSegment]);
+  }, [fieldType, isEventOrEmailActivity, isSegment, isTag]);
 
   const handleFieldChange = useCallback(
     (value: string) => {
@@ -266,10 +307,12 @@ const FilterRow = memo(function FilterRow({filter, onChange, onRemove, available
       const newFieldType = selectedField?.type || 'string';
       const isEvent = newFieldType === 'event' || newFieldType === 'email';
       const isNewSegment = newFieldType === 'segment';
+      const isNewTag = newFieldType === 'tag';
       const currentOperatorIsEvent = ['triggered', 'triggeredWithin', 'triggeredOlderThan', 'notTriggered', 'notTriggeredWithin'].includes(
         filter.operator,
       );
       const currentOperatorIsSegment = ['memberOfSegment', 'notMemberOfSegment'].includes(filter.operator);
+      const currentOperatorIsTag = ['hasTag', 'notHasTag'].includes(filter.operator);
 
       // Determine default operator and value based on new field type
       let newOperator = filter.operator;
@@ -281,8 +324,18 @@ const FilterRow = memo(function FilterRow({filter, onChange, onRemove, available
         newOperator = 'memberOfSegment';
         newValue = undefined;
         newUnit = undefined;
+      } else if (isNewTag && !currentOperatorIsTag) {
+        // Switching to tag field
+        newOperator = 'hasTag';
+        newValue = undefined;
+        newUnit = undefined;
       } else if (!isNewSegment && currentOperatorIsSegment) {
         // Switching from segment to non-segment field
+        newOperator = isEvent ? 'triggered' : 'equals';
+        newValue = isEvent ? undefined : getDefaultValueForType(newFieldType);
+        newUnit = undefined;
+      } else if (!isNewTag && currentOperatorIsTag) {
+        // Switching from tag to non-tag field
         newOperator = isEvent ? 'triggered' : 'equals';
         newValue = isEvent ? undefined : getDefaultValueForType(newFieldType);
         newUnit = undefined;
@@ -561,6 +614,8 @@ const FilterRow = memo(function FilterRow({filter, onChange, onRemove, available
               onChange={e => onChange({...filter, value: e.target.value})}
               className="text-sm bg-white"
             />
+          ) : fieldType === 'tag' ? (
+            <TagValueSelect value={filter.value} onChange={tagId => onChange({...filter, value: tagId})} />
           ) : (
             <Input
               type="text"

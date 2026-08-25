@@ -12,11 +12,15 @@ A workflow has a single **trigger** that decides how contacts enter:
 
 | Trigger type | When it fires                                                                                          |
 | ------------ | ------------------------------------------------------------------------------------------------------ |
-| `EVENT`      | Any time a matching event is tracked on a contact (custom event via `/v1/track`, system events such as `email.received` or `contact.subscribed`, or segment entry/exit events). |
+| `EVENT`      | Any time a matching event is tracked on a contact (custom event via `/v1/track`, system events such as `email.received` or `contact.subscribed`, tag events, or segment entry/exit events). |
 | `MANUAL`     | Only when you explicitly start an execution via `POST /workflows/:id/executions`.                      |
 | `SCHEDULE`   | On a recurring schedule defined by `triggerConfig` (e.g. cron expression).                             |
 
 When you create a workflow via the API, the trigger defaults to `EVENT` with the event name you provide. To use `MANUAL` or `SCHEDULE`, change `triggerType` and `triggerConfig` with `PATCH /workflows/:id` after creation.
+
+### Triggering on a tag
+
+An `EVENT` trigger can additionally be scoped to one specific [tag](/concepts/tags): `triggerConfig: { eventName: "tag.added" | "tag.removed", tagId: "<id>" }`. This fires only when *that* tag is applied or removed, rather than any tag change on the contact. Because it binds by tag ID, renaming the tag later never breaks the trigger.
 
 A workflow's trigger event name **cannot be changed after the first execution** — pick it carefully. Other trigger configuration (delays, conditions inside steps) remains editable.
 
@@ -38,7 +42,9 @@ A workflow always begins with a single auto-created `TRIGGER` step. You build th
 | `WAIT_FOR_EVENT`  | Pauses until a specified event is tracked on the contact, with a timeout fallback.                     | `eventName`, `timeout` (seconds)                                 |
 | `CONDITION`       | Branches the execution based on contact data or event data. Each `CONDITION` step has two outgoing transitions tagged `yes` / `no`. | A filter expression (same shape as segment filters) |
 | `WEBHOOK`         | Calls an external HTTPS endpoint with contact + execution context as the JSON body. `url`, header values, and `body` support `{{variables}}`. | `url`, optional `method`, `headers`, `body`            |
-| `UPDATE_CONTACT`  | Patches contact data — useful for tagging contacts as they progress (`{ stage: "activated" }`).        | `data` object                                                    |
+| `UPDATE_CONTACT`  | Patches contact data — useful for progressing custom fields as a contact moves through the journey (`{ stage: "activated" }`). | `data` object                                                    |
+| `ADD_TAG`         | Applies a [tag](/concepts/tags) to the contact flowing through the workflow. Fires `tag.added`, so it can chain into another workflow. | `tagId`                                                           |
+| `REMOVE_TAG`      | Removes a tag from the contact. Fires `tag.removed`.                                                   | `tagId`                                                           |
 | `EXIT`            | Terminates the execution. Optionally records an `exitReason` for analytics.                            | optional `reason`                                                |
 
 ## Transitions
@@ -76,7 +82,8 @@ Cosmetic changes (renaming, editing template content referenced by steps) don't 
 - **Welcome series** — `EVENT` trigger on `signed_up`, send welcome email, delay 2 days, send tips email, delay 5 days, send upgrade nudge.
 - **Inbound auto-reply** — `EVENT` trigger on `email.received`, `CONDITION` on `event.spamVerdict == "PASS"`, then `SEND_EMAIL` with an auto-reply template. See [Receiving emails](/guides/receiving-emails).
 - **Re-engagement** — Triggered by a segment exit (`segment.active-users.exit`), send a "we miss you" email, wait 7 days for any `email.opened` event, branch on whether the contact engaged.
-- **Webhook fan-out** — `EVENT` trigger on `purchase.completed`, `WEBHOOK` step to your CRM, `UPDATE_CONTACT` to tag `{ tier: "customer" }`, `SEND_EMAIL` with the receipt.
+- **Webhook fan-out** — `EVENT` trigger on `purchase.completed`, `WEBHOOK` step to your CRM, `ADD_TAG` to label the contact `customer`, `SEND_EMAIL` with the receipt.
+- **Tag-driven sequence** — `EVENT` trigger scoped to a tag (`tag.added` on the "trial" tag), send a series of onboarding emails, then `ADD_TAG` "nurtured" so a downstream workflow can pick up from there.
 
 ## API reference
 
@@ -96,5 +103,8 @@ Workflows are managed through the `/workflows` API. See the [API overview](/api-
   </Card>
   <Card title="Segments" href="/concepts/segments">
     Trigger workflows from segment entry / exit events.
+  </Card>
+  <Card title="Tags" href="/concepts/tags">
+    Trigger workflows from tag added / removed events, and maintain tags with `ADD_TAG` / `REMOVE_TAG` steps.
   </Card>
 </Cards>

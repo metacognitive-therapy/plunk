@@ -11,6 +11,7 @@ import {prisma} from '../database/prisma.js';
 import {NtfyService} from '../services/NtfyService.js';
 import {segmentCountQueue} from '../services/QueueService.js';
 import {SegmentService} from '../services/SegmentService.js';
+import {TagService} from '../services/TagService.js';
 
 /**
  * Process segments for a single project
@@ -68,6 +69,14 @@ async function processProjectSegments(projectId: string, projectName?: string): 
     } catch (error) {
       signale.error(`[SEGMENT-COUNT-WORKER] Failed to update counts for non-tracked segments:`, error);
     }
+  }
+
+  // Reconcile tag member counts (applyTags/removeTags increment/decrement
+  // optimistically; this corrects any drift, same rationale as segment counts).
+  try {
+    await TagService.refreshAllMemberCounts(projectId);
+  } catch (error) {
+    signale.error(`[SEGMENT-COUNT-WORKER] Failed to update tag counts:`, error);
   }
 }
 

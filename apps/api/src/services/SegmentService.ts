@@ -716,9 +716,27 @@ export class SegmentService {
       case 'createdAt':
       case 'updatedAt':
         return this.buildDateFieldCondition(field, operator, value, unit);
+      case 'tags':
+        return this.buildTagCondition(operator, value);
       default:
         throw new HttpException(400, `Unsupported filter field: ${field}`);
     }
+  }
+
+  /**
+   * Build a Prisma clause for the hasTag / notHasTag operators. `value` is a
+   * tagId, not a name - bound by id like every other tag reference so renaming
+   * a tag never breaks a segment/filter condition that references it.
+   */
+  private static buildTagCondition(operator: string, value: unknown): Prisma.ContactWhereInput {
+    const tagId = value as string;
+    if (operator === 'hasTag') {
+      return {contactTags: {some: {tagId}}};
+    }
+    if (operator === 'notHasTag') {
+      return {contactTags: {none: {tagId}}};
+    }
+    throw new HttpException(400, `Unsupported operator "${operator}" for field "tags"`);
   }
 
   /**
@@ -843,6 +861,8 @@ export class SegmentService {
       'notTriggeredWithin',
       'memberOfSegment',
       'notMemberOfSegment',
+      'hasTag',
+      'notHasTag',
     ];
 
     if (!validOperators.includes(filter.operator)) {
@@ -872,6 +892,8 @@ export class SegmentService {
       'triggeredWithin',
       'triggeredOlderThan',
       'notTriggeredWithin',
+      'hasTag',
+      'notHasTag',
     ];
 
     if (operatorsNeedingValue.includes(filter.operator) && filter.value === undefined) {

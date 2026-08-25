@@ -496,6 +496,12 @@ export class WorkflowExecutionService {
       case 'UPDATE_CONTACT':
         return await this.executeUpdateContact(step, execution, stepExecution, config);
 
+      case 'ADD_TAG':
+        return await this.executeAddTag(step, execution, stepExecution, config);
+
+      case 'REMOVE_TAG':
+        return await this.executeRemoveTag(step, execution, stepExecution, config);
+
       default:
         throw new Error(`Unknown step type: ${step.type}`);
     }
@@ -731,12 +737,22 @@ export class WorkflowExecutionService {
         : {};
     const context = execution.context || {};
 
+    // Tag ids currently on this contact - only needed by the hasTag/notHasTag
+    // operators, but cheap enough (one indexed lookup) to resolve unconditionally
+    // rather than special-casing the field name here.
+    const contactTags = await prisma.contactTag.findMany({
+      where: {contactId: contact.id},
+      select: {tagId: true},
+    });
+    const tagIds = contactTags.map(t => t.tagId);
+
     // Resolve the field value (support dot notation)
     // Structure allows access to:
     // - contact.email, contact.subscribed
     // - data.firstName, data.lastName, etc.
     // - workflow.* (execution context - alias for event data)
     // - event.* (event data that triggered the workflow)
+    // - tags (array of the contact's current tag ids, for hasTag/notHasTag)
     const fieldData = {
       contact: {
         email: contact.email,
@@ -745,6 +761,7 @@ export class WorkflowExecutionService {
       data: contactData,
       workflow: context,
       event: context, // Alias for easier access to event data
+      tags: tagIds,
     };
 
     // Multi-branch mode (switch/case)
@@ -1189,6 +1206,46 @@ export class WorkflowExecutionService {
   }
 
   /**
+   * ADD_TAG step - Apply a tag to the workflow's contact
+   */
+  private static async executeAddTag(
+    _step: WorkflowStep,
+    execution: WorkflowExecutionWithRelations,
+    _stepExecution: WorkflowStepExecution,
+    config: StepConfig,
+  ): Promise<StepResult> {
+    const {tagId} = WorkflowStepConfigSchemas.tagAction.parse(config);
+    const {TagService} = await import('./TagService.js');
+
+    const result = await TagService.applyTags(execution.workflow.projectId, execution.contact.id, [tagId]);
+
+    return {
+      tagId,
+      added: result.added > 0,
+    };
+  }
+
+  /**
+   * REMOVE_TAG step - Remove a tag from the workflow's contact
+   */
+  private static async executeRemoveTag(
+    _step: WorkflowStep,
+    execution: WorkflowExecutionWithRelations,
+    _stepExecution: WorkflowStepExecution,
+    config: StepConfig,
+  ): Promise<StepResult> {
+    const {tagId} = WorkflowStepConfigSchemas.tagAction.parse(config);
+    const {TagService} = await import('./TagService.js');
+
+    const result = await TagService.removeTags(execution.workflow.projectId, execution.contact.id, [tagId]);
+
+    return {
+      tagId,
+      removed: result.removed > 0,
+    };
+  }
+
+  /**
    * Process next steps based on transitions
    */
   private static async processNextSteps(
@@ -1361,6 +1418,10 @@ export class WorkflowExecutionService {
         return actualValue !== undefined && actualValue !== null;
       case 'notExists':
         return actualValue === undefined || actualValue === null;
+      case 'hasTag':
+        return Array.isArray(actualValue) && actualValue.includes(expectedValue);
+      case 'notHasTag':
+        return !Array.isArray(actualValue) || !actualValue.includes(expectedValue);
       default:
         throw new Error(`Unknown operator: ${operator}`);
     }

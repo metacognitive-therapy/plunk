@@ -21,7 +21,11 @@ export interface ContactImportJobData {
  */
 export type BulkContactActionSelector =
   | {mode: 'ids'; contactIds: string[]}
-  | {mode: 'query'; filter: {search?: string; subscribed?: boolean}; excludeIds?: string[]};
+  | {
+      mode: 'query';
+      filter: {search?: string; subscribed?: boolean; tagIds?: string[]};
+      excludeIds?: string[];
+    };
 
 /**
  * Job data for bulk contact actions (subscribe, unsubscribe, delete)
@@ -30,5 +34,16 @@ export type BulkContactActionSelector =
 export interface BulkContactActionJobData {
   projectId: string;
   operation: 'subscribe' | 'unsubscribe' | 'delete';
+  selector: BulkContactActionSelector;
+}
+
+/**
+ * Job data for bulk tag actions (add/remove one or more tags across many contacts).
+ * Used by: bulkTagQueue worker
+ */
+export interface BulkTagActionJobData {
+  projectId: string;
+  action: 'add' | 'remove';
+  tagIds: string[];
   selector: BulkContactActionSelector;
 }

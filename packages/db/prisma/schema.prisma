@@ -76,6 +76,7 @@ model Project {
   contacts    Contact[]
   templates   Template[]
   segments    Segment[]
+  tags        Tag[]
   workflows   Workflow[]
   campaigns   Campaign[]
   emails      Email[]
@@ -156,6 +157,7 @@ model Contact {
   workflowExecutions WorkflowExecution[]
   events             Event[]
   segmentMemberships SegmentMembership[]
+  contactTags        ContactTag[]
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -262,6 +264,52 @@ model Segment {
   @@map("segments")
 }
 
+// ============================================
+// TAGS (Lightweight contact labels)
+// ============================================
+
+model Tag {
+  id String @id @default(uuid())
+
+  // Details
+  name     String // Display name, preserved as first typed
+  nameNorm String // Trimmed + lowercased, used for case-insensitive identity/uniqueness
+
+  // Stats (cached; reconciled by the periodic segment/tag count sweep - never live-counted)
+  memberCount Int @default(0)
+
+  // Relations
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  contactTags ContactTag[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, nameNorm])
+  @@index([projectId])
+  @@map("tags")
+}
+
+model ContactTag {
+  // Relations
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId String
+
+  tag   Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId String
+
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  @@id([contactId, tagId])
+  @@index([tagId]) // List a tag's members
+  @@index([contactId]) // Render a contact's tag chips
+  @@map("contact_tags")
+}
+
 model SegmentMembership {
   // Relations
   contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
@@ -313,6 +361,10 @@ model Campaign {
 
   segment   Segment? @relation(fields: [segmentId], references: [id])
   segmentId String? // For SEGMENT: reference to saved segment
+
+  // For TAG: match contacts having ANY of tagIds, minus contacts having ANY of excludeTagIds
+  tagIds        String[] @default([])
+  excludeTagIds String[] @default([])
 
   // Scheduling
   scheduledFor DateTime?
@@ -735,6 +787,7 @@ enum CampaignAudienceType {
   ALL // All contacts
   FILTERED // Based on audienceFilter
   SEGMENT // Predefined segment
+  TAG // Contacts having ANY of tagIds, minus ANY of excludeTagIds
 }
 
 enum WorkflowTriggerType {
@@ -752,6 +805,8 @@ enum WorkflowStepType {
   EXIT // Early exit point
   WEBHOOK // Call external webhook
   UPDATE_CONTACT // Update contact fields
+  ADD_TAG // Add a tag to the contact
+  REMOVE_TAG // Remove a tag from the contact
 }
 
 enum WorkflowExecutionStatus {

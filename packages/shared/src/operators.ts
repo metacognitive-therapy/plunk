@@ -31,6 +31,10 @@ export const OPERATORS = {
 
   // Temporal operators (segments only)
   WITHIN: 'within',
+
+  // Tag operators (value: tagId)
+  HAS_TAG: 'hasTag',
+  NOT_HAS_TAG: 'notHasTag',
 } as const;
 
 /**
@@ -48,6 +52,8 @@ export const SEGMENT_OPERATORS = [
   OPERATORS.EXISTS,
   OPERATORS.NOT_EXISTS,
   OPERATORS.WITHIN,
+  OPERATORS.HAS_TAG,
+  OPERATORS.NOT_HAS_TAG,
 ] as const;
 
 /**
@@ -65,6 +71,8 @@ export const WORKFLOW_CONDITION_OPERATORS = [
   OPERATORS.LESS_THAN_OR_EQUAL,
   OPERATORS.EXISTS,
   OPERATORS.NOT_EXISTS,
+  OPERATORS.HAS_TAG,
+  OPERATORS.NOT_HAS_TAG,
 ] as const;
 
 /**

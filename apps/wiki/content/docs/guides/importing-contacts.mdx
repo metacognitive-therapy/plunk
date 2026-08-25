@@ -8,7 +8,7 @@ Plunk supports bulk-importing contacts from a CSV file — useful for migrating 
 
 ## CSV format
 
-The CSV must have a header row. The only required column is `email`. Every other column becomes a custom field on the contact under `data.<columnName>`.
+The CSV must have a header row. The only required column is `email`. An optional `tags` column applies [tags](/concepts/tags) to each row (see below). Every other column becomes a custom field on the contact under `data.<columnName>`.
 
 A minimal file:
 
@@ -29,6 +29,18 @@ linus@example.com,Linus,free,2026-04-21T00:00:00Z
 ```
 
 In this example, every imported contact ends up with `data.firstName`, `data.plan`, and `data.signupDate` set.
+
+### Tagging on import
+
+A `tags` column applies one or more [tags](/concepts/tags) per row, separated by a comma or semicolon:
+
+```csv
+email,firstName,tags
+ada@example.com,Ada,customer;beta-tester
+grace@example.com,Grace,customer
+```
+
+Tag names are resolved the same way everywhere else in Plunk — trimmed and matched case-insensitively — and auto-created if they don't already exist. `tags` is not treated as a custom field; it doesn't end up under `data.tags`.
 
 ### Rules and limits
 
@@ -113,4 +125,5 @@ Poll every few seconds until `status` is `completed` or `failed`. The response i
 ## Related
 
 - [Custom fields](/guides/custom-fields) — how the `data.<column>` fields you import are typed and used.
+- [Tags](/concepts/tags) — how the `tags` column's names resolve, and what you can do with tags after import.
 - [Bulk operations](/api-reference/overview#contacts) — `bulk-subscribe`, `bulk-unsubscribe`, `bulk-delete` for mass actions on existing contacts (max 1,000 per call).

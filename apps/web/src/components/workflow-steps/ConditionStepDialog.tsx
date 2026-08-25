@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {Button, IconSpinner, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@plunk/ui';
+import type {Tag} from '@plunk/db';
 import {AlertTriangle, Info, Plus, Trash2} from 'lucide-react';
 import {useMemo, useState} from 'react';
 import {toast} from 'sonner';
@@ -7,7 +8,7 @@ import useSWR from 'swr';
 
 import {type EditStepDialogProps, getStepConfig, type StepWithTemplate, StepDialogShell, useStepUpdate} from './shared';
 
-type FieldType = 'string' | 'number' | 'boolean' | 'date';
+type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'tag';
 type ConditionMode = 'binary' | 'multi';
 
 interface AvailableField {
@@ -40,6 +41,8 @@ const ALL_OPERATORS: OperatorOption[] = [
   {value: 'lessThanOrEqual',    label: 'Less than or equal',     types: ['number', 'date']},
   {value: 'exists',             label: 'Exists',                 types: ['string', 'number', 'boolean', 'date']},
   {value: 'notExists',          label: 'Does not exist',         types: ['string', 'number', 'boolean', 'date']},
+  {value: 'hasTag',             label: 'Has tag',                types: ['tag']},
+  {value: 'notHasTag',          label: 'Does not have tag',      types: ['tag']},
 ];
 
 const NO_VALUE_OPERATORS = ['exists', 'notExists'];
@@ -270,6 +273,7 @@ export function ConditionStepDialog({step, workflowId, open, onOpenChange, onSuc
             <MultiBranchEditor
               branches={conditionBranches}
               validOperators={validOperators}
+              fieldType={currentFieldType}
               onUpdateBranch={updateBranch}
               onRemoveBranch={id => setConditionBranches(prev => prev.filter(b => b.id !== id))}
               onAddBranch={() =>
@@ -473,6 +477,26 @@ function BinaryCondition({
   );
 }
 
+/** Single-select tag dropdown for the hasTag/notHasTag value (a tagId). */
+function TagValueSelect({value, onChange}: {value: string; onChange: (tagId: string) => void}) {
+  const {data: tags} = useSWR<Tag[]>('/tags', {revalidateOnFocus: false});
+
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger id="editConditionValue" className="mt-1.5">
+        <SelectValue placeholder={tags?.length ? 'Select a tag…' : 'No tags yet'} />
+      </SelectTrigger>
+      <SelectContent>
+        {(tags ?? []).map(tag => (
+          <SelectItem key={tag.id} value={tag.id}>
+            {tag.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 interface ConditionValueInputProps {
   fieldType: string;
   value: string;
@@ -480,6 +504,10 @@ interface ConditionValueInputProps {
 }
 
 function ConditionValueInput({fieldType, value, onChange}: ConditionValueInputProps) {
+  if (fieldType === 'tag') {
+    return <TagValueSelect value={value} onChange={onChange} />;
+  }
+
   if (fieldType === 'boolean') {
     return (
       <Select value={value || 'true'} onValueChange={onChange}>
@@ -514,12 +542,13 @@ function ConditionValueInput({fieldType, value, onChange}: ConditionValueInputPr
 interface MultiBranchEditorProps {
   branches: BranchInput[];
   validOperators: OperatorOption[];
+  fieldType: string;
   onUpdateBranch: (id: string, patch: Partial<BranchInput>) => void;
   onRemoveBranch: (id: string) => void;
   onAddBranch: () => void;
 }
 
-function MultiBranchEditor({branches, validOperators, onUpdateBranch, onRemoveBranch, onAddBranch}: MultiBranchEditorProps) {
+function MultiBranchEditor({branches, validOperators, fieldType, onUpdateBranch, onRemoveBranch, onAddBranch}: MultiBranchEditorProps) {
   return (
     <div className="space-y-3">
       <Label>Branches</Label>
@@ -581,13 +610,17 @@ function MultiBranchEditor({branches, validOperators, onUpdateBranch, onRemoveBr
             {!NO_VALUE_OPERATORS.includes(branch.operator) && (
               <div>
                 <Label className="text-xs">Value</Label>
-                <Input
-                  type="text"
-                  value={branch.value}
-                  onChange={e => onUpdateBranch(branch.id, {value: e.target.value})}
-                  placeholder="Value…"
-                  className="mt-1 h-8 text-sm"
-                />
+                {fieldType === 'tag' ? (
+                  <TagValueSelect value={branch.value} onChange={val => onUpdateBranch(branch.id, {value: val})} />
+                ) : (
+                  <Input
+                    type="text"
+                    value={branch.value}
+                    onChange={e => onUpdateBranch(branch.id, {value: e.target.value})}
+                    placeholder="Value…"
+                    className="mt-1 h-8 text-sm"
+                  />
+                )}
               </div>
             )}
           </div>

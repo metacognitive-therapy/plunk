@@ -53,6 +53,7 @@ The `field` value is namespaced by prefix — the prefix tells Plunk what part o
 | `event.<eventName>`        | Custom events tracked via `/v1/track`                            | `event.signed_up`                 |
 | `email.<activity>`         | Email engagement: `sent`, `delivered`, `opened`, `clicked`, `bounced`, `complained` | `email.opened`           |
 | `segment.<segmentId>`      | Membership of another segment                                    | `segment.cuid_of_other_segment`   |
+| `tags`                     | Whether the contact carries a specific [tag](/concepts/tags)     | `tags`                            |
 
 ## Operators
 
@@ -126,9 +127,22 @@ For `segment.<segmentId>`, where `<segmentId>` is the ID of another segment in y
 | `memberOfSegment`     | Contact is currently in the referenced segment.           |
 | `notMemberOfSegment`  | Contact is not in the referenced segment.                 |
 
+### Tags
+
+For the fixed field `tags`. Unlike segment membership, the tag isn't encoded in the field name — it's passed as `value`, and it's always a tag **ID** (not a name), so renaming a tag never breaks a filter that references it.
+
+| Operator    | What it does                                       |
+| ----------- | --------------------------------------------------- |
+| `hasTag`    | Contact currently carries the tag given in `value`.     |
+| `notHasTag` | Contact does not carry the tag given in `value`.        |
+
+```json
+{ "field": "tags", "operator": "hasTag", "value": "<tagId>" }
+```
+
 ## Quick reference: what to pass with each operator
 
-- **Need a `value`**: `equals`, `notEquals`, `contains`, `notContains`, `greaterThan`, `lessThan`, `greaterThanOrEqual`, `lessThanOrEqual`, `within`, `olderThan`, `triggeredWithin`, `triggeredOlderThan`, `notTriggeredWithin`.
+- **Need a `value`**: `equals`, `notEquals`, `contains`, `notContains`, `greaterThan`, `lessThan`, `greaterThanOrEqual`, `lessThanOrEqual`, `within`, `olderThan`, `triggeredWithin`, `triggeredOlderThan`, `notTriggeredWithin`, `hasTag`, `notHasTag`.
 - **Need a `unit`** (`"days"`, `"hours"`, or `"minutes"`): `within`, `olderThan`, `triggeredWithin`, `triggeredOlderThan`, `notTriggeredWithin`.
 - **Need nothing extra**: `exists`, `notExists`, `triggered`, `notTriggered`, `memberOfSegment`, `notMemberOfSegment`.
 
@@ -212,5 +226,8 @@ Members of the `power-users` segment whose lifetime value is at least 500.
   </Card>
   <Card title="Custom fields" href="/guides/custom-fields">
     How `data.*` fields are typed and used in filters.
+  </Card>
+  <Card title="Tags" href="/concepts/tags">
+    What tags are, and how `hasTag` / `notHasTag` fit alongside applying and removing them directly.
   </Card>
 </Cards>

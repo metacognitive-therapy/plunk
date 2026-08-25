@@ -27,7 +27,10 @@ export type SegmentFilterOperator =
   | 'notTriggeredWithin' // Event/email activity has not occurred within timeframe (includes never-triggered)
   // Segment membership operators
   | 'memberOfSegment' // Contact is a member of another segment
-  | 'notMemberOfSegment'; // Contact is not a member of another segment
+  | 'notMemberOfSegment' // Contact is not a member of another segment
+  // Tag operators
+  | 'hasTag' // Contact has the given tag (value: tagId)
+  | 'notHasTag'; // Contact does not have the given tag (value: tagId)
 
 export type SegmentFilterLogic = 'AND' | 'OR';
 

@@ -21,6 +21,7 @@ import {NextSeo} from 'next-seo';
 import {DashboardLayout} from '../../components/DashboardLayout';
 import {EmailSettings} from '../../components/EmailSettings';
 import {EmailEditor} from '../../components/EmailEditor';
+import {TagPicker} from '../../components/TagPicker';
 import {network} from '../../lib/network';
 import {EmailFormValidator} from '../../lib/validation';
 import {ArrowLeft, TriangleAlert} from 'lucide-react';
@@ -45,6 +46,8 @@ export default function CreateCampaignPage() {
   const [campaignType, setCampaignType] = useState<TemplateType>(TemplateType.MARKETING);
   const [audienceType, setAudienceType] = useState<CampaignAudienceType>(CampaignAudienceType.ALL);
   const [segmentId, setSegmentId] = useState('');
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [excludeTagIds, setExcludeTagIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
 
@@ -127,6 +130,11 @@ export default function CreateCampaignPage() {
       return;
     }
 
+    if (audienceType === CampaignAudienceType.TAG && tagIds.length === 0) {
+      toast.error('Select at least one tag');
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -142,6 +150,8 @@ export default function CreateCampaignPage() {
         audienceType,
         segmentId: audienceType === CampaignAudienceType.SEGMENT ? segmentId : undefined,
         audienceFilter: audienceType === CampaignAudienceType.FILTERED ? [] : undefined,
+        tagIds: audienceType === CampaignAudienceType.TAG ? tagIds : undefined,
+        excludeTagIds: audienceType === CampaignAudienceType.TAG && excludeTagIds.length > 0 ? excludeTagIds : undefined,
       } as any);
 
       toast.success('Campaign created');
@@ -350,6 +360,11 @@ export default function CreateCampaignPage() {
                           title="Specific segment"
                           description="Target a defined group of contacts"
                         />
+                        <SelectItemWithDescription
+                          value={CampaignAudienceType.TAG}
+                          title="Specific tags"
+                          description="Target contacts that have (or don't have) certain tags"
+                        />
                       </SelectContent>
                     </Select>
                   </div>
@@ -387,6 +402,21 @@ export default function CreateCampaignPage() {
                           <span className="font-medium text-neutral-900">{estimatedRecipients.toLocaleString()} recipients</span> in this segment
                         </p>
                       )}
+                    </div>
+                  )}
+
+                  {audienceType === CampaignAudienceType.TAG && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>
+                          Include contacts with any of <span className="text-red-500">*</span>
+                        </Label>
+                        <TagPicker value={tagIds} onChange={setTagIds} placeholder="Select tags…" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Exclude contacts with any of</Label>
+                        <TagPicker value={excludeTagIds} onChange={setExcludeTagIds} placeholder="Select tags to exclude…" />
+                      </div>
                     </div>
                   )}
                 </CardContent>

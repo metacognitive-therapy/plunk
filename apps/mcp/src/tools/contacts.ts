@@ -18,7 +18,7 @@ interface Contact {
 }
 
 /** Either identifier accepted by the contact tools. Exactly one is required. */
-const contactRef = {
+export const contactRef = {
   id: z.string().optional().describe('The contact ID (a UUID). Use this when you already have it.'),
   email: z
     .string()
@@ -39,7 +39,7 @@ const contactRef = {
  * matches "bo@x.com.au". The exact (case-insensitive) match is therefore picked
  * out of the page rather than trusting position.
  */
-async function resolveContact(
+export async function resolveContact(
   client: PlunkClient,
   {id, email}: {id?: string; email?: string},
 ): Promise<{id: string; label: string} | {error: string}> {

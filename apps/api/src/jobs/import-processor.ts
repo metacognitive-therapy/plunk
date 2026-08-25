@@ -12,6 +12,7 @@ import {prisma} from '../database/prisma.js';
 import {ContactService} from '../services/ContactService.js';
 import {NtfyService} from '../services/NtfyService.js';
 import {importQueue} from '../services/QueueService.js';
+import {TagService} from '../services/TagService.js';
 
 const BATCH_SIZE = 100; // Process contacts in batches of 100
 
@@ -121,8 +122,18 @@ export function createImportWorker() {
                 subscribed = lowerValue === 'true' || lowerValue === '1' || lowerValue === 'yes';
               }
 
-              // Extract custom data (all fields except email and subscribed)
-              const {email: _, subscribed: __, ...customData} = record;
+              // Extract tags column (comma or semicolon separated tag names) - resolved/
+              // auto-created by name, same as /v1/track's `tags` field.
+              const tagsValue = record.tags;
+              const tagNames = tagsValue?.trim()
+                ? tagsValue
+                    .split(/[,;]/)
+                    .map(t => t.trim())
+                    .filter(Boolean)
+                : [];
+
+              // Extract custom data (all fields except email, subscribed, and tags)
+              const {email: _, subscribed: __, tags: ___, ...customData} = record;
               const customEntries = Object.entries(customData);
               const data =
                 customEntries.length > 0
@@ -136,7 +147,16 @@ export function createImportWorker() {
               // Upsert contact with subscribed value from CSV if provided
               // For new contacts, ContactService.upsert defaults to true
               // For existing contacts, only update if explicitly provided in CSV
-              await ContactService.upsert(projectId, email, data, subscribed);
+              const contact = await ContactService.upsert(projectId, email, data, subscribed);
+
+              if (tagNames.length > 0) {
+                const resolvedTags = await TagService.resolveOrCreateByNames(projectId, tagNames);
+                await TagService.applyTags(
+                  projectId,
+                  contact.id,
+                  resolvedTags.map(tag => tag.id),
+                );
+              }
 
               result.successCount++;
               if (isUpdate) {

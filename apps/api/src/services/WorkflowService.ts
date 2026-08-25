@@ -118,14 +118,28 @@ export class WorkflowService {
     data: {
       name: string;
       description?: string;
-      eventName: string;
+      eventName?: string;
+      tagTrigger?: {tagId: string; direction: 'added' | 'removed'};
       enabled?: boolean;
       allowReentry?: boolean;
     },
   ): Promise<Workflow> {
-    if (!data.eventName?.trim()) {
+    // Tag triggers are EVENT triggers under the hood - tag.added/tag.removed,
+    // additionally scoped to a specific tagId (see EventService.triggerWorkflows).
+    const eventName = data.tagTrigger
+      ? data.tagTrigger.direction === 'added'
+        ? 'tag.added'
+        : 'tag.removed'
+      : data.eventName?.trim();
+
+    if (!eventName) {
       throw new HttpException(400, 'Event name is required');
     }
+
+    const triggerConfig = data.tagTrigger ? {eventName, tagId: data.tagTrigger.tagId} : {eventName};
+    const triggerLabel = data.tagTrigger
+      ? `Trigger: Tag ${data.tagTrigger.direction}`
+      : `Trigger: ${eventName}`;
 
     const workflow = await prisma.$transaction(async tx => {
       const newWorkflow = await tx.workflow.create({
@@ -134,7 +148,7 @@ export class WorkflowService {
           name: data.name,
           description: data.description,
           triggerType: 'EVENT',
-          triggerConfig: {eventName: data.eventName.trim()},
+          triggerConfig,
           enabled: data.enabled ?? false,
           allowReentry: data.allowReentry ?? false,
         },
@@ -144,9 +158,9 @@ export class WorkflowService {
         data: {
           workflowId: newWorkflow.id,
           type: 'TRIGGER',
-          name: `Trigger: ${data.eventName.trim()}`,
+          name: triggerLabel,
           position: {x: 100, y: 100},
-          config: {eventName: data.eventName.trim()},
+          config: triggerConfig,
         },
       });
 
@@ -1355,6 +1369,11 @@ export class WorkflowService {
       category: f.field.startsWith('data.') ? 'Custom Data' : 'Contact Fields',
     }));
 
+    // Tags aren't a per-contact column - resolveField reads them straight off
+    // fieldData.tags (see executeCondition), not fieldData.contact.*, so this
+    // field is deliberately unprefixed.
+    const tagField = {field: 'tags', type: 'tag' as const, category: 'Contact Fields'};
+
     // Get event fields by analyzing actual event data
     // Event fields are treated as dynamic (unknown type at runtime)
     const eventFieldNames = await EventService.getAvailableEventFields(projectId, eventName);
@@ -1365,7 +1384,7 @@ export class WorkflowService {
     }));
 
     // Combine all fields
-    const allFields = [...contactFields, ...eventFields].sort((a, b) => a.field.localeCompare(b.field));
+    const allFields = [...contactFields, tagField, ...eventFields].sort((a, b) => a.field.localeCompare(b.field));
 
     // Also return legacy format for backwards compatibility
     const fieldNames = allFields.map(f => f.field);

@@ -74,7 +74,7 @@ describe('tool registration', () => {
     expect(names).toContain('plunk_send_email');
     expect(names).toContain('plunk_send_campaign');
     expect(names).toContain('plunk_delete_contact');
-    expect(tools).toHaveLength(23);
+    expect(tools).toHaveLength(30);
 
     await close();
   });
@@ -99,7 +99,12 @@ describe('tool registration', () => {
     const {tools} = await client.listTools();
     const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
 
-    expect(destructive.sort()).toEqual(['plunk_cancel_campaign', 'plunk_delete_contact', 'plunk_send_campaign']);
+    expect(destructive.sort()).toEqual([
+      'plunk_cancel_campaign',
+      'plunk_delete_contact',
+      'plunk_delete_tag',
+      'plunk_send_campaign',
+    ]);
 
     await close();
   });
@@ -349,6 +354,101 @@ describe('single-campaign envelope', () => {
 
     // The model must see the campaign, not a {success, data} wrapper around it.
     expect(result.structuredContent).toMatchObject({id: 'camp-1', name: 'Win-back', status: 'DRAFT'});
+
+    await close();
+  });
+});
+
+describe('addressing tags by name', () => {
+  it('creates a missing tag before applying it to a contact', async () => {
+    const calls: {url: string; method?: string; body?: string}[] = [];
+
+    mockApi((url, init) => {
+      calls.push({url, method: init?.method, body: init?.body as string | undefined});
+
+      if (url.endsWith('/tags') && (init?.method ?? 'GET') === 'GET') {
+        return json([{id: 'existing-tag', name: 'VIP'}]);
+      }
+
+      if (url.endsWith('/tags') && init?.method === 'POST') {
+        return json({id: 'new-tag', name: 'newsletter'}, 201);
+      }
+
+      if (url.includes('/contacts?')) {
+        return json({data: [{id: 'contact-1', email: 'ada@example.com'}], cursor: null, hasMore: false, total: 1});
+      }
+
+      return json({id: 'contact-1', tags: [{id: 'existing-tag', name: 'VIP'}, {id: 'new-tag', name: 'newsletter'}]});
+    });
+
+    const {client, close} = await connect(baseConfig);
+
+    const result = await client.callTool({
+      name: 'plunk_tag_contact',
+      arguments: {email: 'ada@example.com', tagNames: ['VIP', 'newsletter']},
+    });
+
+    expect(result.isError).toBeFalsy();
+
+    const created = calls.find((call) => call.url.endsWith('/tags') && call.method === 'POST');
+    expect(created && JSON.parse(created.body ?? '{}')).toEqual({name: 'newsletter'});
+
+    const applied = calls.find((call) => call.url.includes('/tags/contacts/contact-1') && call.method === 'POST');
+    expect(applied && JSON.parse(applied.body ?? '{}')).toEqual({tagIds: ['existing-tag', 'new-tag']});
+
+    await close();
+  });
+
+  it('reports an unknown tag name without writing anything, on untag', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+
+    mockApi((url) => {
+      if (url.endsWith('/tags')) {
+        return json([{id: 'existing-tag', name: 'VIP'}]);
+      }
+
+      throw new Error('must not write when the tag does not exist');
+    });
+
+    const {client, close} = await connect(baseConfig);
+
+    const result = await client.callTool({
+      name: 'plunk_untag_contact',
+      arguments: {id: 'contact-1', tagNames: ['does-not-exist']},
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('No tag(s) named');
+    expect(spy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')).toBe(false);
+
+    await close();
+  });
+
+  it('resolves a tag by name (case-insensitive) before renaming it', async () => {
+    const calls: {url: string; method?: string; body?: string}[] = [];
+
+    mockApi((url, init) => {
+      calls.push({url, method: init?.method, body: init?.body as string | undefined});
+
+      if (url.endsWith('/tags')) {
+        return json([{id: 'tag-1', name: 'VIP'}]);
+      }
+
+      return json({id: 'tag-1', name: 'Gold'});
+    });
+
+    const {client, close} = await connect(baseConfig);
+
+    const result = await client.callTool({
+      name: 'plunk_rename_tag',
+      arguments: {name: 'vip', newName: 'Gold'},
+    });
+
+    expect(result.isError).toBeFalsy();
+
+    const patch = calls.find((call) => call.method === 'PATCH');
+    expect(patch?.url).toBe('https://api.example.com/tags/tag-1');
+    expect(JSON.parse(patch?.body ?? '{}')).toEqual({name: 'Gold'});
 
     await close();
   });

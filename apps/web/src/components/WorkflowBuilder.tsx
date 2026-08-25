@@ -30,6 +30,7 @@ import {
   Minimize2,
   Plus,
   Settings,
+  Tag as TagIcon,
   Timer,
   Trash2,
   UserCog,
@@ -72,6 +73,8 @@ const STEP_TYPE_LABELS: Record<string, string> = {
   EXIT: 'Exit',
   WEBHOOK: 'Webhook',
   UPDATE_CONTACT: 'Update Contact',
+  ADD_TAG: 'Add Tag',
+  REMOVE_TAG: 'Remove Tag',
 };
 
 const STEP_TYPE_ICONS = {
@@ -83,6 +86,8 @@ const STEP_TYPE_ICONS = {
   EXIT: LogOut,
   WEBHOOK: Webhook,
   UPDATE_CONTACT: UserCog,
+  ADD_TAG: TagIcon,
+  REMOVE_TAG: TagIcon,
 };
 
 const STEP_TYPE_COLORS = {
@@ -94,6 +99,8 @@ const STEP_TYPE_COLORS = {
   EXIT: '#dc2626',
   WEBHOOK: '#16a34a',
   UPDATE_CONTACT: '#4f46e5',
+  ADD_TAG: '#0d9488',
+  REMOVE_TAG: '#b45309',
 };
 
 const STEP_TYPE_BG = {
@@ -105,6 +112,8 @@ const STEP_TYPE_BG = {
   EXIT: '#fee2e2',
   WEBHOOK: '#dcfce7',
   UPDATE_CONTACT: '#e0e7ff',
+  ADD_TAG: '#ccfbf1',
+  REMOVE_TAG: '#fef3c7',
 };
 
 // Multi-branch condition helpers
@@ -516,6 +525,8 @@ const STEP_TYPE_OPTIONS = [
   {value: 'CONDITION', label: 'Condition', icon: GitBranch, color: STEP_TYPE_COLORS.CONDITION},
   {value: 'WEBHOOK', label: 'Webhook', icon: Webhook, color: STEP_TYPE_COLORS.WEBHOOK},
   {value: 'UPDATE_CONTACT', label: 'Update contact', icon: UserCog, color: STEP_TYPE_COLORS.UPDATE_CONTACT},
+  {value: 'ADD_TAG', label: 'Add tag', icon: TagIcon, color: STEP_TYPE_COLORS.ADD_TAG},
+  {value: 'REMOVE_TAG', label: 'Remove tag', icon: TagIcon, color: STEP_TYPE_COLORS.REMOVE_TAG},
   {value: 'EXIT', label: 'Exit', icon: LogOut, color: STEP_TYPE_COLORS.EXIT},
 ];
 

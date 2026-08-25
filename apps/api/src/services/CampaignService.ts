@@ -53,6 +53,11 @@ export class CampaignService {
       SegmentService.validateCondition(data.audienceCondition);
     }
 
+    // Validate tags if provided
+    if (data.audienceType === CampaignAudienceType.TAG && (!data.tagIds || data.tagIds.length === 0)) {
+      throw new HttpException(400, 'At least one tag is required for TAG audience type');
+    }
+
     // Create campaign with initial recipient count of 0
     const campaign = await prisma.campaign.create({
       data: {
@@ -68,6 +73,8 @@ export class CampaignService {
         audienceType: data.audienceType,
         audienceCondition: toPrismaJson(data.audienceCondition || null),
         segmentId: data.segmentId,
+        tagIds: data.tagIds ?? [],
+        excludeTagIds: data.excludeTagIds ?? [],
         status: CampaignStatus.DRAFT,
         totalRecipients: 0, // Will be updated below
       },
@@ -112,6 +119,13 @@ export class CampaignService {
 
     if (data.audienceType !== undefined) {
       updateData.audienceType = data.audienceType;
+
+      if (data.audienceType === CampaignAudienceType.TAG) {
+        const effectiveTagIds = data.tagIds ?? campaign.tagIds;
+        if (!effectiveTagIds || effectiveTagIds.length === 0) {
+          throw new HttpException(400, 'At least one tag is required for TAG audience type');
+        }
+      }
     }
 
     if (data.audienceCondition !== undefined) {
@@ -142,6 +156,13 @@ export class CampaignService {
       delete (updateData as Record<string, unknown>).segmentId;
     }
 
+    if (data.tagIds !== undefined) {
+      updateData.tagIds = data.tagIds;
+    }
+    if (data.excludeTagIds !== undefined) {
+      updateData.excludeTagIds = data.excludeTagIds;
+    }
+
     // Update the campaign first
     const updatedCampaign = await prisma.campaign.update({
       where: {id: campaignId},
@@ -150,7 +171,11 @@ export class CampaignService {
 
     // If audience-related fields changed and campaign is still a draft, recalculate totalRecipients
     const audienceChanged =
-      data.audienceType !== undefined || data.segmentId !== undefined || data.audienceCondition !== undefined;
+      data.audienceType !== undefined ||
+      data.segmentId !== undefined ||
+      data.audienceCondition !== undefined ||
+      data.tagIds !== undefined ||
+      data.excludeTagIds !== undefined;
 
     if (audienceChanged && updatedCampaign.status === CampaignStatus.DRAFT) {
       const recipientCount = await this.getRecipientCount(projectId, updatedCampaign);
@@ -1113,6 +1138,21 @@ export class CampaignService {
         return {
           ...baseWhere,
           ...segmentWhere,
+        };
+      }
+
+      case CampaignAudienceType.TAG: {
+        if (!campaign.tagIds || campaign.tagIds.length === 0) {
+          throw new HttpException(400, 'At least one tag is required for TAG audience type');
+        }
+
+        // ANY-of tagIds, minus ANY-of excludeTagIds
+        return {
+          ...baseWhere,
+          contactTags: {some: {tagId: {in: campaign.tagIds}}},
+          ...(campaign.excludeTagIds && campaign.excludeTagIds.length > 0
+            ? {NOT: {contactTags: {some: {tagId: {in: campaign.excludeTagIds}}}}}
+            : {}),
         };
       }
 

@@ -16,8 +16,8 @@ import {
   Label,
   Switch,
 } from '@plunk/ui';
-import type {Contact} from '@plunk/db';
-import {ContactSchemas} from '@plunk/shared';
+import type {Contact, Tag} from '@plunk/db';
+import {ContactSchemas, TagSchemas} from '@plunk/shared';
 import type {CursorPaginatedResponse} from '@plunk/types';
 import {
   getCoreRowModel,
@@ -62,6 +62,7 @@ import {
   Minus,
   Plus,
   Search,
+  Tag as TagIcon,
   Trash2,
   Upload,
   X,
@@ -69,12 +70,14 @@ import {
 } from 'lucide-react';
 import {NextSeo} from 'next-seo';
 import Link from 'next/link';
+import {useRouter} from 'next/router';
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {toast} from 'sonner';
 import useSWR from 'swr';
 import dayjs from 'dayjs';
 
 type StatusFilter = 'ALL' | 'subscribed' | 'unsubscribed';
+type ContactWithTags = Contact & {tags: {id: string; name: string}[]};
 
 const VIEW_STORAGE_KEY = 'plunk:contacts:view';
 const COLUMNS_STORAGE_KEY = 'plunk:contacts:columns';
@@ -92,19 +95,27 @@ const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
   select: true,
   email: true,
   status: true,
+  tags: true,
   createdAt: true,
   updatedAt: false,
   actions: true,
 };
 
 export default function ContactsPage() {
+  const router = useRouter();
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [cursorHistory, setCursorHistory] = useState<(string | undefined)[]>([undefined]);
   const [currentPage, setCurrentPage] = useState(0);
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [tagsFilter, setTagsFilter] = useState<string[]>([]);
+  const {data: allTags} = useSWR<Tag[]>('/tags', {revalidateOnFocus: false});
+  const tagFacetOptions: FacetedFilterOption[] = useMemo(
+    () => (allTags ?? []).map(tag => ({value: tag.id, label: tag.name})),
+    [allTags],
+  );
   const [view, setView] = usePersistentState<DataTableView>(VIEW_STORAGE_KEY, 'table', isDataTableView);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useColumnVisibility(COLUMNS_STORAGE_KEY, DEFAULT_COLUMN_VISIBILITY);
@@ -118,18 +129,36 @@ export default function ContactsPage() {
   const [excludedContacts, setExcludedContacts] = useState<Set<string>>(new Set());
   const [showBulkActionsDialog, setShowBulkActionsDialog] = useState(false);
   const [bulkOperation, setBulkOperation] = useState<'subscribe' | 'unsubscribe' | 'delete' | null>(null);
+  const [showTagBulkDialog, setShowTagBulkDialog] = useState(false);
+  const [tagBulkAction, setTagBulkAction] = useState<'add' | 'remove' | null>(null);
   const pageSize = 50;
 
-  // Backend is authoritative for sorting + status filtering
-  // (?sort=&dir=, ?subscribed=); the client only mirrors the active state.
+  // Seed the tag facet from a `?tags=<tagId>` link (e.g. from the Tags index
+  // page's "view contacts" links). Runs once the router query is ready.
+  const tagsQueryHydrated = useRef(false);
+  useEffect(() => {
+    if (!router.isReady || tagsQueryHydrated.current) return;
+    tagsQueryHydrated.current = true;
+    const raw = router.query.tags;
+    const fromQuery = typeof raw === 'string' ? raw.split(',').filter(Boolean) : Array.isArray(raw) ? raw : [];
+    if (fromQuery.length > 0) {
+      setTagsFilter(fromQuery);
+    }
+  }, [router.isReady, router.query.tags]);
+
+  // Backend is authoritative for sorting + status/tag filtering
+  // (?sort=&dir=, ?subscribed=, ?tags=); the client only mirrors the active state.
   const sortParam = sorting[0]?.id ?? '';
   const dirParam = sorting[0] ? (sorting[0].desc ? 'desc' : 'asc') : '';
   const subscribedParam = statusFilter === 'subscribed' ? 'true' : statusFilter === 'unsubscribed' ? 'false' : '';
+  const tagsParam = tagsFilter.join(',');
 
-  const {data, mutate, isLoading} = useSWR<CursorPaginatedResponse<Contact>>(
+  const {data, mutate, isLoading} = useSWR<CursorPaginatedResponse<ContactWithTags>>(
     `/contacts?limit=${pageSize}${cursor ? `&cursor=${cursor}` : ''}${
       search ? `&search=${encodeURIComponent(search)}` : ''
-    }${subscribedParam ? `&subscribed=${subscribedParam}` : ''}${sortParam ? `&sort=${sortParam}&dir=${dirParam}` : ''}`,
+    }${subscribedParam ? `&subscribed=${subscribedParam}` : ''}${
+      tagsParam ? `&tags=${encodeURIComponent(tagsParam)}` : ''
+    }${sortParam ? `&sort=${sortParam}&dir=${dirParam}` : ''}`,
     {revalidateOnFocus: false},
   );
 
@@ -159,6 +188,12 @@ export default function ContactsPage() {
 
   const handleStatusChange = (next: StatusFilter) => {
     setStatusFilter(next);
+    resetPagination();
+    clearSelection();
+  };
+
+  const handleTagsFilterChange = (next: string[]) => {
+    setTagsFilter(next);
     resetPagination();
     clearSelection();
   };
@@ -276,6 +311,11 @@ export default function ContactsPage() {
     setShowBulkActionsDialog(true);
   };
 
+  const handleTagBulkAction = (action: 'add' | 'remove') => {
+    setTagBulkAction(action);
+    setShowTagBulkDialog(true);
+  };
+
   const handleSelectAllMatching = () => {
     setSelectAllMatching(true);
     setSelectedContacts(new Set());
@@ -305,19 +345,20 @@ export default function ContactsPage() {
 
   // Whether any search/status filter is narrowing the list — drives the
   // "no results vs first-run empty" distinction below.
-  const hasActiveFilters = search !== '' || statusFilter !== 'ALL';
+  const hasActiveFilters = search !== '' || statusFilter !== 'ALL' || tagsFilter.length > 0;
 
-  // Reset everything that can hide rows (search + status + pagination) so the
-  // user can recover from a filter combination that matched nothing.
+  // Reset everything that can hide rows (search + status + tags + pagination)
+  // so the user can recover from a filter combination that matched nothing.
   const clearFilters = () => {
     setSearchInput('');
     setSearch('');
     setStatusFilter('ALL');
+    setTagsFilter([]);
     resetPagination();
     clearSelection();
   };
 
-  const columns = useMemo<Array<ColumnDef<Contact, unknown>>>(
+  const columns = useMemo<Array<ColumnDef<ContactWithTags, unknown>>>(
     () => [
       {
         id: 'select',
@@ -390,6 +431,27 @@ export default function ContactsPage() {
         ),
       },
       {
+        id: 'tags',
+        enableSorting: false, // Tags are faceted-filtered, not sorted.
+        meta: {label: 'Tags'} satisfies DataTableColumnMeta,
+        header: ({column}) => (
+          <DataTableColumnHeader
+            column={column}
+            filter={
+              <DataTableFacetedFilter
+                title="Tags"
+                options={tagFacetOptions}
+                selected={tagsFilter}
+                onChange={handleTagsFilterChange}
+              />
+            }
+          >
+            Tags
+          </DataTableColumnHeader>
+        ),
+        cell: ({row}) => <ContactTagsCell tags={row.original.tags} />,
+      },
+      {
         id: 'createdAt',
         accessorKey: 'createdAt',
         sortDescFirst: true, // First click surfaces the newest contacts.
@@ -443,12 +505,21 @@ export default function ContactsPage() {
       },
     ],
     // Re-create columns when the facet selection or selection model changes so
-    // the select-column checkboxes and the Status facet read fresh state.
+    // the select-column checkboxes and the Status/Tags facets read fresh state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [statusFilter, selectAllMatching, selectedContacts, excludedContacts, contacts, allOnPageSelected],
+    [
+      statusFilter,
+      tagsFilter,
+      tagFacetOptions,
+      selectAllMatching,
+      selectedContacts,
+      excludedContacts,
+      contacts,
+      allOnPageSelected,
+    ],
   );
 
-  const table = useReactTable<Contact>({
+  const table = useReactTable<ContactWithTags>({
     data: contacts,
     columns,
     state: {sorting, columnVisibility},
@@ -523,13 +594,21 @@ export default function ContactsPage() {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {view === 'card' && (
-                <DataTableFilter
-                  title="Status"
-                  multiple={false}
-                  options={STATUS_OPTIONS}
-                  selected={statusFilter === 'ALL' ? [] : [statusFilter]}
-                  onChange={next => handleStatusChange((next[0] as StatusFilter) ?? 'ALL')}
-                />
+                <>
+                  <DataTableFilter
+                    title="Status"
+                    multiple={false}
+                    options={STATUS_OPTIONS}
+                    selected={statusFilter === 'ALL' ? [] : [statusFilter]}
+                    onChange={next => handleStatusChange((next[0] as StatusFilter) ?? 'ALL')}
+                  />
+                  <DataTableFilter
+                    title="Tags"
+                    options={tagFacetOptions}
+                    selected={tagsFilter}
+                    onChange={handleTagsFilterChange}
+                  />
+                </>
               )}
               {view === 'table' && (
                 <DataTableViewOptions table={table} lockedColumnIds={['select', 'email', 'actions']} />
@@ -569,6 +648,14 @@ export default function ContactsPage() {
               <Button variant="outline" size="sm" onClick={() => handleBulkAction('unsubscribe')}>
                 <MailX className="h-4 w-4" />
                 Unsubscribe
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => handleTagBulkAction('add')}>
+                <TagIcon className="h-4 w-4" />
+                Add tag
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => handleTagBulkAction('remove')}>
+                <TagIcon className="h-4 w-4" />
+                Remove tag
               </Button>
               <Button
                 variant="outline"
@@ -651,6 +738,11 @@ export default function ContactsPage() {
                                 {contact.subscribed ? 'Subscribed' : 'Unsubscribed'}
                               </Badge>
                             </div>
+                            {contact.tags.length > 0 && (
+                              <div className="mt-2">
+                                <ContactTagsCell tags={contact.tags} />
+                              </div>
+                            )}
                             <div className="mt-3 flex items-center justify-between">
                               <div className="group relative inline-block cursor-help">
                                 <span className="text-xs text-neutral-400">
@@ -777,6 +869,32 @@ export default function ContactsPage() {
                   filter: {
                     ...(search ? {search} : {}),
                     ...(statusFilter !== 'ALL' ? {subscribed: statusFilter === 'subscribed'} : {}),
+                    ...(tagsFilter.length > 0 ? {tagIds: tagsFilter} : {}),
+                  },
+                  excludeIds: Array.from(excludedContacts),
+                }
+              : {mode: 'ids', contactIds: Array.from(selectedContacts)}
+          }
+          targetCount={effectiveSelectionCount}
+          onSuccess={() => {
+            mutate();
+            clearSelection();
+          }}
+        />
+
+        {/* Bulk Tag Actions Dialog */}
+        <TagBulkActionsDialog
+          open={showTagBulkDialog}
+          onOpenChange={setShowTagBulkDialog}
+          action={tagBulkAction}
+          selector={
+            selectAllMatching
+              ? {
+                  mode: 'query',
+                  filter: {
+                    ...(search ? {search} : {}),
+                    ...(statusFilter !== 'ALL' ? {subscribed: statusFilter === 'subscribed'} : {}),
+                    ...(tagsFilter.length > 0 ? {tagIds: tagsFilter} : {}),
                   },
                   excludeIds: Array.from(excludedContacts),
                 }
@@ -1217,7 +1335,7 @@ function ImportContactsDialog({open, onOpenChange, onSuccess}: ImportContactsDia
 
 type BulkSelector =
   | {mode: 'ids'; contactIds: string[]}
-  | {mode: 'query'; filter: {search?: string; subscribed?: boolean}; excludeIds: string[]};
+  | {mode: 'query'; filter: {search?: string; subscribed?: boolean; tagIds?: string[]}; excludeIds: string[]};
 
 interface BulkActionsDialogProps {
   open: boolean;
@@ -1500,6 +1618,342 @@ function BulkActionsDialog({open, onOpenChange, operation, selector, targetCount
         variant="default"
       />
     </>
+  );
+}
+
+type TagBulkSelector =
+  | {mode: 'ids'; contactIds: string[]}
+  | {mode: 'query'; filter: {search?: string; subscribed?: boolean; tagIds?: string[]}; excludeIds: string[]};
+
+interface TagBulkResult {
+  action: 'add' | 'remove';
+  totalRequested: number;
+  successCount: number;
+  unchangedCount: number;
+  failureCount: number;
+}
+
+interface TagBulkActionsDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  action: 'add' | 'remove' | null;
+  selector: TagBulkSelector;
+  targetCount: number;
+  onSuccess: () => void;
+}
+
+function TagBulkActionsDialog({open, onOpenChange, action, selector, targetCount, onSuccess}: TagBulkActionsDialogProps) {
+  const {data: tags} = useSWR<Tag[]>(open ? '/tags' : null, {revalidateOnFocus: false});
+  const [tagId, setTagId] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState<'idle' | 'processing' | 'completed' | 'failed'>('idle');
+  const [result, setResult] = useState<TagBulkResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [showCloseConfirmDialog, setShowCloseConfirmDialog] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      setTimeout(() => {
+        setTagId('');
+        setProgress(0);
+        setStatus('idle');
+        setResult(null);
+        setErrorMessage(null);
+      }, 300);
+    }
+  }, [open]);
+
+  const pollJobStatus = async (jobId: string) => {
+    try {
+      const response = await network.fetch<{
+        id: string;
+        state: string;
+        progress: number;
+        result: TagBulkResult | null;
+        failedReason?: string;
+      }>('GET', `/tags/bulk-apply/${jobId}`);
+
+      setProgress(response.progress || 0);
+
+      if (response.state === 'completed') {
+        setStatus('completed');
+        setResult(response.result);
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        if (response.result) {
+          toast.success(buildTagToastSummary(response.result));
+        }
+        onSuccess();
+      } else if (response.state === 'failed') {
+        setStatus('failed');
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        const errorMsg = response.failedReason || 'Operation failed';
+        setErrorMessage(errorMsg);
+        toast.error(errorMsg);
+      } else if (response.state === 'active') {
+        setStatus('processing');
+      }
+    } catch (error) {
+      console.error('Failed to poll job status:', error);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      setStatus('failed');
+      toast.error('Lost track of the job. It may still be running.');
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!action || !tagId) return;
+
+    setIsProcessing(true);
+    setStatus('processing');
+
+    try {
+      const body =
+        selector.mode === 'ids'
+          ? {mode: 'ids' as const, contactIds: selector.contactIds, tagIds: [tagId], action}
+          : {mode: 'query' as const, filter: selector.filter, excludeIds: selector.excludeIds, tagIds: [tagId], action};
+
+      const data = await network.fetch<{jobId: string; message: string}, typeof TagSchemas.bulkApply>(
+        'POST',
+        '/tags/bulk-apply',
+        body,
+      );
+
+      pollIntervalRef.current = setInterval(() => {
+        void pollJobStatus(data.jobId);
+      }, 1000);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Couldn’t start the job. Try again.';
+      setErrorMessage(errorMsg);
+      toast.error(errorMsg);
+      setStatus('failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleClose = () => {
+    if (status === 'processing') {
+      setShowCloseConfirmDialog(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+
+  const confirmClose = () => {
+    onOpenChange(false);
+  };
+
+  const actionLabel = action === 'remove' ? 'Remove tag' : 'Add tag';
+  const isQueueing = status === 'processing' && progress === 0;
+  const dialogTitle =
+    status === 'completed'
+      ? `${actionLabel} complete`
+      : status === 'processing'
+      ? `${actionLabel}…`
+      : status === 'failed'
+      ? `${actionLabel} failed`
+      : actionLabel;
+
+  const handleRetry = () => {
+    setErrorMessage(null);
+    setStatus('idle');
+    void handleConfirm();
+  };
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="transition-colors">{dialogTitle}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {status === 'idle' && (
+              <div className="space-y-3 motion-safe:animate-in motion-safe:fade-in-50 motion-safe:duration-200">
+                <p className="text-sm text-neutral-700 leading-relaxed">
+                  {action === 'remove' ? 'Remove a tag from' : 'Apply a tag to'}{' '}
+                  <span className="font-medium text-neutral-900 tabular-nums">
+                    {targetCount.toLocaleString()} contact{targetCount !== 1 ? 's' : ''}
+                  </span>
+                  .
+                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="bulkTagId">Tag</Label>
+                  <select
+                    id="bulkTagId"
+                    value={tagId}
+                    onChange={e => setTagId(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-neutral-200 bg-white px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-950"
+                  >
+                    <option value="" disabled>
+                      Select a tag…
+                    </option>
+                    {(tags ?? []).map(tag => (
+                      <option key={tag.id} value={tag.id}>
+                        {tag.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {selector.mode === 'query' && (
+                  <p className="text-xs text-neutral-500 leading-relaxed">
+                    Contacts are evaluated when the job runs — any added in the meantime may also be included.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {status === 'processing' && (
+              <div className="space-y-3 py-1 motion-safe:animate-in motion-safe:fade-in-50 motion-safe:duration-200">
+                <div className="flex items-baseline justify-between text-sm">
+                  <span className="flex items-center gap-2 text-neutral-600">
+                    {isQueueing && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-400" />}
+                    <span>
+                      {isQueueing
+                        ? 'Queued — starting up…'
+                        : `${actionLabel === 'Add tag' ? 'Tagging' : 'Untagging'} ${targetCount.toLocaleString()} contact${
+                            targetCount !== 1 ? 's' : ''
+                          }`}
+                    </span>
+                  </span>
+                  <span
+                    className={`tabular-nums font-medium transition-opacity ${
+                      isQueueing ? 'text-neutral-400' : 'text-neutral-900'
+                    }`}
+                  >
+                    {progress}%
+                  </span>
+                </div>
+                <div className="relative w-full bg-neutral-100 rounded-full h-1.5 overflow-hidden">
+                  {isQueueing ? (
+                    <div className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-neutral-300 motion-safe:animate-[indeterminate_1.4s_ease-in-out_infinite]" />
+                  ) : (
+                    <div
+                      className="bg-neutral-900 h-full rounded-full transition-[width] duration-500 ease-out"
+                      style={{width: `${progress}%`}}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {status === 'completed' && result && (
+              <div className="space-y-2 text-sm motion-safe:animate-in motion-safe:fade-in-50 motion-safe:duration-200">
+                <div className="flex items-center gap-2 text-neutral-700">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <span>
+                    {result.successCount.toLocaleString()} contact{result.successCount !== 1 ? 's' : ''} updated
+                  </span>
+                </div>
+                {result.unchangedCount > 0 && (
+                  <div className="flex items-center gap-2 text-neutral-500">
+                    <Check className="h-4 w-4" />
+                    <span>{result.unchangedCount.toLocaleString()} already in that state</span>
+                  </div>
+                )}
+                {result.failureCount > 0 && (
+                  <div className="flex items-center gap-2 text-red-600">
+                    <XCircle className="h-4 w-4" />
+                    <span>{result.failureCount.toLocaleString()} failed</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {status === 'failed' && (
+              <div className="flex items-start gap-2.5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 motion-safe:animate-in motion-safe:fade-in-50 motion-safe:duration-200">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.25} />
+                <p className="leading-relaxed">{errorMessage || 'Something went wrong. Please try again.'}</p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            {status === 'idle' ? (
+              <>
+                <Button type="button" variant="outline" onClick={handleClose}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleConfirm} disabled={isProcessing || !tagId}>
+                  {isProcessing ? 'Starting…' : actionLabel}
+                </Button>
+              </>
+            ) : status === 'failed' ? (
+              <>
+                <Button type="button" variant="outline" onClick={handleClose}>
+                  Close
+                </Button>
+                <Button type="button" onClick={handleRetry}>
+                  Try again
+                </Button>
+              </>
+            ) : (
+              <Button type="button" onClick={handleClose} variant={status === 'completed' ? 'default' : 'outline'}>
+                {status === 'completed' ? 'Done' : 'Hide'}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={showCloseConfirmDialog}
+        onOpenChange={setShowCloseConfirmDialog}
+        onConfirm={confirmClose}
+        title="Hide this dialog?"
+        description="The job keeps running and your contacts are still updated. You just won't see the result here."
+        cancelText="Keep watching"
+        confirmText="Hide"
+        variant="default"
+      />
+    </>
+  );
+}
+
+function buildTagToastSummary(result: TagBulkResult): string {
+  const parts: string[] = [];
+  if (result.successCount > 0) {
+    parts.push(`${result.successCount.toLocaleString()} contact${result.successCount !== 1 ? 's' : ''} updated`);
+  }
+  if (result.failureCount > 0) {
+    parts.push(`${result.failureCount.toLocaleString()} failed`);
+  }
+  return parts.length > 0 ? parts.join(', ') : 'No contacts needed updating';
+}
+
+const MAX_VISIBLE_ROW_TAGS = 2;
+
+function ContactTagsCell({tags}: {tags: {id: string; name: string}[]}) {
+  if (tags.length === 0) return <span className="text-sm text-neutral-400">—</span>;
+
+  const visible = tags.slice(0, MAX_VISIBLE_ROW_TAGS);
+  const remaining = tags.length - visible.length;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {visible.map(tag => (
+        <Badge key={tag.id} variant="secondary" className="whitespace-nowrap">
+          {tag.name}
+        </Badge>
+      ))}
+      {remaining > 0 && <span className="text-xs text-neutral-400">+{remaining}</span>}
+    </div>
   );
 }
 

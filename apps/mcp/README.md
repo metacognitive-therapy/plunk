@@ -84,6 +84,8 @@ Read-only tools (the only ones registered when `PLUNK_READ_ONLY=true`):
 | `plunk_get_campaign`      | Fetch one campaign in full, including its audience size |
 | `plunk_get_campaign_stats`| Opens, clicks, bounces and rates for one campaign       |
 | `plunk_list_segments`     | List audience segments                                  |
+| `plunk_list_tags`         | List every tag defined on the project                   |
+| `plunk_list_tagged_contacts` | List the contacts that carry a given tag              |
 | `plunk_list_domains`      | List sender domains and whether each is verified        |
 | `plunk_check_domain`      | Re-check a domain's DNS verification status             |
 
@@ -104,6 +106,11 @@ Writing tools:
 | `plunk_send_campaign`        | Send or schedule a campaign *(destructive, irreversible)* |
 | `plunk_cancel_campaign`      | Stop a scheduled or in-flight campaign *(destructive)*    |
 | `plunk_create_segment`       | Create an audience segment                                |
+| `plunk_create_tag`           | Create a new tag                                           |
+| `plunk_rename_tag`           | Rename a tag, by ID or name                                |
+| `plunk_delete_tag`           | Permanently delete a tag *(destructive)*                  |
+| `plunk_tag_contact`          | Apply one or more tags to a contact, creating them if needed |
+| `plunk_untag_contact`        | Remove one or more tags from a contact                     |
 
 ### Addressing contacts by email
 
@@ -111,6 +118,12 @@ Writing tools:
 `email`. Passing `email` resolves it to the contact for you, matching exactly and case-insensitively,
 so an agent handed "unsubscribe ada@example.com" does it in one call instead of searching first and
 guessing which row to patch.
+
+### Addressing tags by name
+
+The tag tools work the same way, with `name` in place of `id`. `plunk_tag_contact` goes one step
+further and creates any tag name that doesn't already exist, so "tag ada@example.com as VIP" works in
+one call even the first time "VIP" is used.
 
 ### Managing domains
 

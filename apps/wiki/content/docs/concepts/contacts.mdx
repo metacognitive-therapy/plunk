@@ -12,7 +12,7 @@ Contacts can be added to your Plunk project in several ways:
 
 - Using [`/v1/track`](/api-reference/public-api/trackEvent) — tracking an event for a contact that doesn't exist yet automatically creates it (subscribed by default).
 - Using [`POST /contacts`](/api-reference/contacts/createContact) — create or upsert a single contact. Existing emails are **updated**, not rejected; the response includes a `_meta: { isNew, isUpdate }` block and uses status `201` for new contacts and `200` for updates.
-- Bulk **CSV import** via `POST /contacts/import` — upload a CSV (≤ 5 MB) and poll `GET /contacts/import/:jobId` for status. The first column must be `email`; any other columns map to keys under `data.*`.
+- Bulk **CSV import** via `POST /contacts/import` — upload a CSV (≤ 5 MB) and poll `GET /contacts/import/:jobId` for status. The first column must be `email`; an optional `tags` column (comma- or semicolon-separated names) applies [tags](/concepts/tags), auto-creating any that don't exist; any other columns map to keys under `data.*`.
 - Bulk **subscribe / unsubscribe / delete** via `POST /contacts/bulk-subscribe`, `bulk-unsubscribe`, and `bulk-delete` — each accepts up to 1,000 contact IDs and returns a job ID; poll `GET /contacts/bulk/:jobId` for progress.
 - Adding emails to a **static segment** with `POST /segments/:id/members` and `createMissing: true` will create any contacts that don't already exist.
 - Manually through the dashboard.
@@ -141,6 +141,9 @@ The subscription state controls whether a contact receives marketing emails. Tra
   </Card>
   <Card title="Importing from CSV" href="/guides/importing-contacts">
     Bulk-load contacts and their custom fields.
+  </Card>
+  <Card title="Tags" href="/concepts/tags">
+    Label contacts and act on those labels — in campaigns, workflows, and filters.
   </Card>
   <Card title="Segments" href="/concepts/segments">
     Group contacts dynamically or statically for targeting.

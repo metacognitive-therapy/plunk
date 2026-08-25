@@ -1,6 +1,7 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {CampaignAudienceType, CampaignStatus} from '@plunk/db';
 import {CampaignService} from '../CampaignService';
+import {TagService} from '../TagService';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 
 // Mock STRIPE_ENABLED for billing limit tests
@@ -737,6 +738,88 @@ describe('CampaignService', () => {
       const emails = await sendBatch({subject: 'Hi', body: '<a href="{{unsubscribeUrl}}">Unsubscribe</a>'}, [{}]);
 
       expect(emails[0]?.body).toContain(`/unsubscribe/${emails[0]?.contactId}`);
+    });
+  });
+
+  describe('TAG audience type', () => {
+    it('rejects TAG audience with no tagIds', async () => {
+      await expect(
+        CampaignService.create(projectId, {
+          name: 'No tags',
+          subject: 'Subject',
+          body: '<p>Body</p>',
+          from: 'test@example.com',
+          audienceType: CampaignAudienceType.TAG,
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('unions recipients across multiple tagIds', async () => {
+      const vipTag = await TagService.create(projectId, 'VIP');
+      const newsletterTag = await TagService.create(projectId, 'Newsletter');
+
+      const vipOnly = await factories.createContact({projectId, subscribed: true});
+      const newsletterOnly = await factories.createContact({projectId, subscribed: true});
+      const neither = await factories.createContact({projectId, subscribed: true});
+
+      await TagService.applyTags(projectId, vipOnly.id, [vipTag.id]);
+      await TagService.applyTags(projectId, newsletterOnly.id, [newsletterTag.id]);
+      void neither;
+
+      const campaign = await CampaignService.create(projectId, {
+        name: 'Union campaign',
+        subject: 'Subject',
+        body: '<p>Body</p>',
+        from: 'test@example.com',
+        audienceType: CampaignAudienceType.TAG,
+        tagIds: [vipTag.id, newsletterTag.id],
+      });
+
+      expect(campaign.totalRecipients).toBe(2);
+    });
+
+    it('subtracts excludeTagIds from the union', async () => {
+      const vipTag = await TagService.create(projectId, 'VIP');
+      const suppressedTag = await TagService.create(projectId, 'Suppressed');
+
+      const vipContact = await factories.createContact({projectId, subscribed: true});
+      const suppressedVipContact = await factories.createContact({projectId, subscribed: true});
+
+      await TagService.applyTags(projectId, vipContact.id, [vipTag.id]);
+      await TagService.applyTags(projectId, suppressedVipContact.id, [vipTag.id, suppressedTag.id]);
+
+      const campaign = await CampaignService.create(projectId, {
+        name: 'Exclusion campaign',
+        subject: 'Subject',
+        body: '<p>Body</p>',
+        from: 'test@example.com',
+        audienceType: CampaignAudienceType.TAG,
+        tagIds: [vipTag.id],
+        excludeTagIds: [suppressedTag.id],
+      });
+
+      expect(campaign.totalRecipients).toBe(1);
+    });
+
+    it('only counts subscribed contacts for a non-transactional TAG campaign', async () => {
+      const vipTag = await TagService.create(projectId, 'VIP');
+
+      const subscribedVip = await factories.createContact({projectId, subscribed: true});
+      const unsubscribedVip = await factories.createContact({projectId, subscribed: false});
+
+      await TagService.applyTags(projectId, subscribedVip.id, [vipTag.id]);
+      await TagService.applyTags(projectId, unsubscribedVip.id, [vipTag.id]);
+
+      const campaign = await CampaignService.create(projectId, {
+        name: 'Subscribed only',
+        subject: 'Subject',
+        body: '<p>Body</p>',
+        from: 'test@example.com',
+        audienceType: CampaignAudienceType.TAG,
+        tagIds: [vipTag.id],
+      });
+
+      expect(campaign.totalRecipients).toBe(1);
     });
   });
 });

@@ -20,6 +20,8 @@ export interface CreateCampaignData {
   audienceType: CampaignAudienceType;
   audienceCondition?: FilterCondition;
   segmentId?: string;
+  tagIds?: string[];
+  excludeTagIds?: string[];
 }
 
 /**
@@ -37,4 +39,6 @@ export interface UpdateCampaignData {
   audienceType?: CampaignAudienceType;
   audienceCondition?: FilterCondition;
   segmentId?: string;
+  tagIds?: string[];
+  excludeTagIds?: string[];
 }
