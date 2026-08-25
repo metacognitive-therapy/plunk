@@ -122,4 +122,4 @@ ALTER TABLE "sequence_step_sends" ADD CONSTRAINT "sequence_step_sends_emailId_fk
 ALTER TABLE "emails" ADD CONSTRAINT "emails_sequenceId_fkey" FOREIGN KEY ("sequenceId") REFERENCES "sequences"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "emails" ADD CONSTRAINT "emails_sequenceStepId_fkey" FOREIGN KEY ("sequenceStepId") REFERENCES "sequence_steps"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "emails" ADD CONSTRAINT "emails_sequenceStepId_fkey" FOREIGN KEY ("sequenceStepId") REFERENCES "sequence_steps"("id") ON DELETE CASCADE ON UPDATE CASCADE;
