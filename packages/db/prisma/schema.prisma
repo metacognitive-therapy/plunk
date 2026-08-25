@@ -79,6 +79,7 @@ model Project {
   tags        Tag[]
   workflows   Workflow[]
   campaigns   Campaign[]
+  sequences   Sequence[]
   emails      Email[]
   events      Event[]
   domains     Domain[]
@@ -153,11 +154,13 @@ model Contact {
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String
 
-  emails             Email[]
-  workflowExecutions WorkflowExecution[]
-  events             Event[]
-  segmentMemberships SegmentMembership[]
-  contactTags        ContactTag[]
+  emails                Email[]
+  workflowExecutions    WorkflowExecution[]
+  events                Event[]
+  segmentMemberships    SegmentMembership[]
+  contactTags           ContactTag[]
+  sequenceSubscriptions SequenceSubscription[]
+  sequenceStepSends     SequenceStepSend[]
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -282,7 +285,8 @@ model Tag {
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String
 
-  contactTags ContactTag[]
+  contactTags     ContactTag[]
+  enrollSequences Sequence[] // Sequences that auto-enroll contacts when this tag is applied
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -400,6 +404,138 @@ model Campaign {
   @@index([segmentId])
   @@index([audienceCondition(ops: JsonbOps)], type: Gin) // GIN index for campaign audience condition queries
   @@map("campaigns")
+}
+
+// ============================================
+// SEQUENCES (Evolving ordered email series)
+// ============================================
+
+model Sequence {
+  id String @id @default(uuid())
+
+  // Details
+  name   String
+  status SequenceStatus @default(DRAFT)
+
+  // Sequence type (applies to every step; no per-step override)
+  type TemplateType @default(MARKETING)
+
+  // Sender (applies to every step; sendCampaignEmail requires a from address)
+  from     String?
+  fromName String?
+  replyTo  String?
+
+  // Auto-enroll: contacts receiving this tag are enrolled while the sequence is ACTIVE.
+  // Bound by tag ID so renames never break enrollment. Tag deletion detaches (SetNull).
+  enrollTag   Tag?    @relation(fields: [enrollTagId], references: [id], onDelete: SetNull)
+  enrollTagId String?
+
+  // Relations
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  steps         SequenceStep[]
+  subscriptions SequenceSubscription[]
+  stepSends     SequenceStepSend[]
+  emails        Email[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+  @@index([enrollTagId])
+  @@map("sequences")
+}
+
+model SequenceStep {
+  id String @id @default(uuid())
+
+  // Position in the series. Mutable: reordering rewrites orders in one transaction.
+  // Deliberately not unique per sequence so a reorder never needs temporary offsets.
+  order Int
+
+  // Email content
+  subject String
+  body    String @db.Text
+
+  // Delay since the contact's own previous send in this sequence
+  // (or since enrollment for their first step)
+  delayMinutes Int @default(0)
+
+  // Draft steps are never sent; publishing is explicit and one-way in v1
+  published Boolean @default(false)
+
+  // Relations
+  sequence   Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  sequenceId String
+
+  stepSends SequenceStepSend[]
+  emails    Email[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sequenceId, order])
+  @@map("sequence_steps")
+}
+
+model SequenceSubscription {
+  id String @id @default(uuid())
+
+  // Relations
+  sequence   Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  sequenceId String
+
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId String
+
+  // Anchors the first step's delay; later steps anchor on the previous send
+  enrolledAt DateTime @default(now())
+
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  // Also serves as the sweep's keyset-pagination index
+  @@unique([sequenceId, contactId])
+  @@index([contactId])
+  @@map("sequence_subscriptions")
+}
+
+// The sent-set: one row per step delivered (or being delivered) to a contact.
+// Progress is this set, not a position pointer, which is what makes arbitrary
+// step editing and reordering safe: the sweep always picks the lowest-order
+// published step not present here.
+// A row with emailId = null is an in-flight claim; claims older than the reap
+// window are deleted by the sweep so a crashed send retries.
+model SequenceStepSend {
+  id String @id @default(uuid())
+
+  // Relations
+  sequence   Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  sequenceId String
+
+  sequenceStep   SequenceStep @relation(fields: [sequenceStepId], references: [id], onDelete: Cascade)
+  sequenceStepId String
+
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId String
+
+  email   Email?  @relation(fields: [emailId], references: [id], onDelete: SetNull)
+  emailId String? @unique
+
+  // Set when the send completes; null while the row is only a claim
+  sentAt DateTime?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  // Structural double-send backstop: concurrent sweeps race on this constraint
+  @@unique([sequenceStepId, contactId])
+  @@index([sequenceId, contactId]) // Sweep batch fetch of a contact's sent-set
+  @@index([contactId])
+  @@map("sequence_step_sends")
 }
 
 // ============================================
@@ -621,6 +757,20 @@ model Email {
   workflowStepExecution   WorkflowStepExecution? @relation(fields: [workflowStepExecutionId], references: [id], onDelete: Cascade)
   workflowStepExecutionId String? // For WORKFLOW (specific step)
 
+  // Sequence attribution. Sequence sends keep sourceType CAMPAIGN/TRANSACTIONAL
+  // (billing and queue priority switch exhaustively on EmailSourceType), so these
+  // columns are the source of truth for sequence stats.
+  sequence   Sequence? @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  sequenceId String?
+
+  // SetNull, unlike the sequence FK above: deleting a single step is a routine
+  // edit, and it must not erase mail that has already gone out. Stats aggregate
+  // on sequenceId, so they stay correct once this is cleared.
+  sequenceStep   SequenceStep? @relation(fields: [sequenceStepId], references: [id], onDelete: SetNull)
+  sequenceStepId String?
+
+  sequenceStepSend SequenceStepSend? // Back-relation for the sent-set claim row
+
   // Delivery
   status EmailStatus @default(PENDING)
 
@@ -655,6 +805,7 @@ model Email {
   @@index([campaignId, status]) // Cheap "any email still pending?" probe for campaign finalization
   @@index([workflowExecutionId])
   @@index([workflowStepExecutionId])
+  @@index([sequenceId]) // On-demand sequence aggregate stats
   @@index([status])
   @@index([createdAt])
   @@index([projectId, sourceType, createdAt]) // For billing limit queries
@@ -781,6 +932,12 @@ enum CampaignStatus {
   SENDING
   SENT
   CANCELLED
+}
+
+enum SequenceStatus {
+  DRAFT // Not accepting enrollments; nothing sends
+  ACTIVE // Enrolling (manual, API, and tag auto-enroll) and sending
+  PAUSED // Manual/API enrollment allowed; progress kept; nothing sends until resumed
 }
 
 enum CampaignAudienceType {

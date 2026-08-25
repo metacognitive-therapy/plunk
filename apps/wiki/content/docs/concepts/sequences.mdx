@@ -1,0 +1,106 @@
+---
+title: Sequences
+description: An ordered series of emails that keeps growing
+icon: ListOrdered
+---
+
+A sequence is an ordered series of emails that each contact moves through at their own pace. Everyone starts at the first email; each subsequent one arrives after a delay counted from that contact's own previous send. Because progress is tracked per email rather than as a position in a list, a sequence can keep growing — publish a new email at the end and everyone who is already caught up receives it on the next sweep.
+
+That is the difference from the other two ways of sending to many people. A [campaign](/concepts/campaigns) is a one-off send to an audience computed at send time. A [workflow](/concepts/workflows) is a branching automation that a contact enters, walks once, and completes permanently. A sequence is neither: it is a living series with no end, and adding to it reaches the whole enrolled audience without anyone re-running anything.
+
+Reach for a sequence for an onboarding drip, a course delivered over days, or an evolving newsletter back-catalogue where every new subscriber should start at issue one and existing subscribers should get each new issue as it ships.
+
+## Status
+
+A sequence is always in one of three states.
+
+| Status   | Enrollment                          | Sending                                             |
+| -------- | ----------------------------------- | --------------------------------------------------- |
+| `DRAFT`  | Rejected                            | None                                                 |
+| `ACTIVE` | Accepted, including via the enrolling tag | Sends on schedule                              |
+| `PAUSED` | Accepted manually and via the API   | None, but every contact's progress is preserved      |
+
+A new sequence starts as a draft so you can build it out before anyone can join. Pausing is the safe way to stop mail temporarily: nothing is lost, and the next sweep after you reactivate picks each contact up exactly where they were.
+
+Activating a sequence requires its `from` address to be on a domain verified for the project, the same rule campaigns follow. See [Domains](/concepts/transactional-emails) if a send or activation was refused.
+
+## Steps
+
+Each step is one email: a subject, a body, and a delay.
+
+`delayMinutes` is measured from **that contact's own previous send in the sequence**, or from their enrollment for the first step. It is not a calendar schedule, so two people who enrolled a week apart move through the series a week apart. A delay of `0` means the step is sent as soon as the contact is eligible. The maximum is ten years.
+
+The API always takes the delay in minutes. In the dashboard you enter it in minutes, hours or days, whichever suits the step, and it is converted for you — a step saved as "3 days" is stored as `4320`.
+
+### Drafts and publishing
+
+A step is created unpublished. Unpublished steps are drafts: they are never sent, and they are invisible to the sweep. Publishing is explicit and **one-way** — a published step can be deleted but not returned to draft. This is deliberate: unpublishing would leave the contacts who already received it in an ambiguous state.
+
+Deleting a step never recalls or erases mail it has already sent. Those emails stay on each contact's activity and keep counting toward the sequence's stats; only the step itself and the record of who had reached it go away.
+
+Publishing a step at the end of a sequence is how the series grows. Every enrolled contact who has received all the earlier steps becomes eligible for it immediately, subject to its delay, so a publish reaches your whole caught-up audience at once. Contacts still working through earlier steps are unaffected and reach it in turn.
+
+### Editing and reordering
+
+Steps are freely editable and reorderable at any time, including after they have been sent.
+
+Progress is stored as the **set of steps a contact has received**, not as a pointer into the list. That makes both operations safe by construction: editing a step never re-sends it to someone who already got the old version, and moving a step never causes a re-send or a skip. Someone who has received steps A and C will get B next regardless of where B now sits in the order.
+
+Editing a step that has not reached a contact yet simply means they get the new version. This is what makes it practical to fix a typo in a drip that thousands of people are mid-way through.
+
+## Enrolling contacts
+
+A contact enrolls once per sequence, and their enrollment time anchors the first step's delay. Enrolling the same contact twice is a silent no-op.
+
+- **From the dashboard** — enroll a single contact from the sequence page, or select contacts on the contacts list and use the "Add to sequence" bulk action (including "select all matching the current filter").
+- **Via the API** — `POST /sequences/:id/contacts` with either an explicit `contactIds` list or a query-mode selector with exclusions. Lists of 100 IDs or fewer are enrolled synchronously; anything larger is queued and returns a job ID to poll.
+- **Automatically, from a tag** — bind an `enrollTagId` to the sequence and applying that [tag](/concepts/tags) enrolls the contact. This fires only while the sequence is `ACTIVE`, and it binds by tag ID, so renaming the tag never breaks it.
+
+Enrolling into a `DRAFT` sequence is rejected with `409 Conflict`. Activate or pause it first.
+
+### Unsubscribed contacts
+
+The sweep skips unsubscribed contacts without unenrolling them. Their place in the series is kept, so if they resubscribe they resume from where they stopped rather than starting over.
+
+### Unenrolling
+
+Removing a contact from a sequence also discards their send history for it, so re-enrolling them later starts the whole series from the first step. If what you actually want is to stop the mail without losing their place, unsubscribe the contact instead.
+
+## How sending works
+
+A background sweep runs every five minutes. For each active sequence it walks the enrolled contacts, works out each one's lowest-order published step they have not yet received, and sends it if the delay since their previous send has elapsed. Sends go through the same pipeline as campaigns, so open, click, bounce and complaint tracking, the unsubscribe footer and the usual suppression rules all apply unchanged.
+
+Because the schedule is a sweep rather than a per-contact timer, a step with a delay of `n` minutes arrives somewhere between `n` and `n + 5` minutes. Sequence sends count toward campaign email volume for [billing](/concepts/billing).
+
+The sweep is safe to run concurrently and safe to interrupt. A contact can never receive the same step twice, and a run that is cut short simply resumes on the next sweep.
+
+The trade-off for that guarantee is that a step counts as delivered once it is handed to the send pipeline, not once the provider confirms it. If a send fails permanently at the provider, the sweep does not retry it for that contact — they move on to the next step. This matches how campaigns behave; retrying would risk sending the same step twice.
+
+## Stats
+
+`GET /sequences/:id/stats` reports sent, opened, clicked, bounced and complained across every email the sequence has ever sent, computed live from the underlying email records. Per-step breakdowns are not exposed yet.
+
+## Deleting a sequence
+
+`DELETE /sequences/:id` removes the sequence together with its steps, its enrollments and its send history. There is no undo, and it is not the way to stop sending temporarily — set the status to `PAUSED` for that.
+
+## API reference
+
+See the sequence API endpoints in the [API overview](/api-reference/overview) — list, get, create, update, delete, step create/update/publish/delete/reorder, enroll with job polling, unenroll, and stats.
+
+## What's next
+
+<Cards>
+  <Card title="Tags" href="/concepts/tags">
+    Bind a tag to a sequence so applying it enrolls the contact automatically.
+  </Card>
+  <Card title="Campaigns" href="/concepts/campaigns">
+    The one-off alternative — a single send to an audience computed at send time.
+  </Card>
+  <Card title="Workflows" href="/concepts/workflows">
+    Branching, event-driven automation a contact walks once.
+  </Card>
+  <Card title="Contacts" href="/concepts/contacts">
+    Subscription state, and how it interacts with a sequence's progress.
+  </Card>
+</Cards>

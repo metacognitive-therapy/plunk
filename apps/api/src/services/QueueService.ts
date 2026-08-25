@@ -6,6 +6,7 @@ import type {
   ApiRequestCleanupJobData,
   BulkContactActionJobData,
   BulkContactActionSelector,
+  BulkSequenceEnrollJobData,
   BulkTagActionJobData,
   CampaignBatchJobData,
   CampaignStatsSweepJobData,
@@ -19,6 +20,7 @@ import type {
   ScheduledCampaignJobData,
   SegmentCountJobData,
   SendEmailJobData,
+  SequenceSweepJobData,
   WorkflowStepJobData,
 } from '@plunk/types';
 
@@ -203,6 +205,34 @@ export const bulkTagQueue = new Queue<BulkTagActionJobData>('bulk-tag-actions', 
     },
     removeOnComplete: 50,
     removeOnFail: 100,
+  },
+});
+
+export const bulkSequenceQueue = new Queue<BulkSequenceEnrollJobData>('bulk-sequence-enroll', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 5000,
+    },
+    removeOnComplete: 50,
+    removeOnFail: 100,
+  },
+});
+
+// Delivers due sequence steps. Retries add nothing: whatever a failed run left
+// undone is exactly what the next 5-minute run computes from the sent-set.
+export const sequenceSweepQueue = new Queue<SequenceSweepJobData>('sequence-sweep', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 10000,
+    },
+    removeOnComplete: 20,
+    removeOnFail: 50,
   },
 });
 
@@ -546,6 +576,49 @@ export class QueueService {
    */
   public static async getBulkTagActionJobStatus(jobId: string, projectId: string) {
     const job = await bulkTagQueue.getJob(jobId);
+
+    if (!job) {
+      return null;
+    }
+
+    if (job.data.projectId !== projectId) {
+      return null;
+    }
+
+    const state = await job.getState();
+
+    return {
+      id: job.id,
+      state,
+      progress: job.progress,
+      result: job.returnvalue,
+      data: job.data,
+      failedReason: job.failedReason,
+    };
+  }
+
+  /**
+   * Queue bulk sequence enrollment job (enroll many contacts into a sequence)
+   */
+  public static async queueBulkSequenceEnroll(
+    projectId: string,
+    sequenceId: string,
+    selector: BulkContactActionSelector,
+  ): Promise<Job<BulkSequenceEnrollJobData>> {
+    return bulkSequenceQueue.add(
+      'bulk-sequence-enroll',
+      {projectId, sequenceId, selector},
+      {
+        jobId: `bulk-sequence-enroll-${sequenceId}-${Date.now()}`,
+      },
+    );
+  }
+
+  /**
+   * Get bulk sequence enrollment job status and progress
+   */
+  public static async getBulkSequenceEnrollJobStatus(jobId: string, projectId: string) {
+    const job = await bulkSequenceQueue.getJob(jobId);
 
     if (!job) {
       return null;

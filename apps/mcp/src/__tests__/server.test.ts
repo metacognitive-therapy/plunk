@@ -74,7 +74,8 @@ describe('tool registration', () => {
     expect(names).toContain('plunk_send_email');
     expect(names).toContain('plunk_send_campaign');
     expect(names).toContain('plunk_delete_contact');
-    expect(tools).toHaveLength(30);
+    expect(names).toContain('plunk_create_sequence');
+    expect(tools).toHaveLength(43);
 
     await close();
   });
@@ -102,8 +103,11 @@ describe('tool registration', () => {
     expect(destructive.sort()).toEqual([
       'plunk_cancel_campaign',
       'plunk_delete_contact',
+      'plunk_delete_sequence',
+      'plunk_delete_sequence_step',
       'plunk_delete_tag',
       'plunk_send_campaign',
+      'plunk_unenroll_contact_from_sequence',
     ]);
 
     await close();
@@ -449,6 +453,106 @@ describe('addressing tags by name', () => {
     const patch = calls.find((call) => call.method === 'PATCH');
     expect(patch?.url).toBe('https://api.example.com/tags/tag-1');
     expect(JSON.parse(patch?.body ?? '{}')).toEqual({name: 'Gold'});
+
+    await close();
+  });
+});
+
+describe('sequences', () => {
+  it('resolves a sequence by name before adding a step to it', async () => {
+    const calls: {url: string; method?: string; body?: string}[] = [];
+
+    mockApi((url, init) => {
+      calls.push({url, method: init?.method, body: init?.body as string | undefined});
+
+      if (url.endsWith('/sequences') && (init?.method ?? 'GET') === 'GET') {
+        return json([{id: 'seq-1', name: 'Onboarding', status: 'ACTIVE'}]);
+      }
+
+      return json({id: 'step-1', order: 0, subject: 'Day 2', published: false}, 201);
+    });
+
+    const {client, close} = await connect(baseConfig);
+
+    const result = await client.callTool({
+      name: 'plunk_add_sequence_step',
+      arguments: {name: 'onboarding', subject: 'Day 2', body: 'Hello again', delayMinutes: 1440},
+    });
+
+    expect(result.isError).toBeFalsy();
+
+    const post = calls.find((call) => call.url.endsWith('/sequences/seq-1/steps'));
+    expect(post?.method).toBe('POST');
+    expect(JSON.parse(post?.body ?? '{}')).toEqual({subject: 'Day 2', body: 'Hello again', delayMinutes: 1440});
+
+    await close();
+  });
+
+  it('reports an unknown sequence name without writing anything', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+
+    mockApi((url) => {
+      if (url.endsWith('/sequences')) {
+        return json([{id: 'seq-1', name: 'Onboarding', status: 'ACTIVE'}]);
+      }
+
+      throw new Error('must not write when the sequence does not exist');
+    });
+
+    const {client, close} = await connect(baseConfig);
+
+    const result = await client.callTool({
+      name: 'plunk_delete_sequence',
+      arguments: {name: 'does-not-exist'},
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('No sequence named');
+    expect(spy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')).toBe(false);
+
+    await close();
+  });
+
+  it('resolves both the sequence and the contact when enrolling by name and email', async () => {
+    const calls: {url: string; method?: string; body?: string}[] = [];
+
+    mockApi((url, init) => {
+      calls.push({url, method: init?.method, body: init?.body as string | undefined});
+
+      if (url.endsWith('/sequences')) {
+        return json([{id: 'seq-1', name: 'Onboarding', status: 'ACTIVE'}]);
+      }
+
+      if (url.includes('/contacts?')) {
+        return json({data: [{id: 'contact-1', email: 'ada@example.com'}], cursor: null, hasMore: false, total: 1});
+      }
+
+      return json({enrolled: 1, skipped: 0});
+    });
+
+    const {client, close} = await connect(baseConfig);
+
+    const result = await client.callTool({
+      name: 'plunk_enroll_contact_in_sequence',
+      arguments: {name: 'Onboarding', email: 'ada@example.com'},
+    });
+
+    expect(result.isError).toBeFalsy();
+
+    const post = calls.find((call) => call.url.endsWith('/sequences/seq-1/contacts') && call.method === 'POST');
+    expect(JSON.parse(post?.body ?? '{}')).toEqual({mode: 'ids', contactIds: ['contact-1']});
+
+    await close();
+  });
+
+  it('hides the mutating sequence tools in read-only mode but keeps the readers', async () => {
+    const {client, close} = await connect({...baseConfig, readOnly: true});
+
+    const names = (await client.listTools()).tools.map((t) => t.name);
+
+    expect(names).toContain('plunk_list_sequences');
+    expect(names).toContain('plunk_get_sequence_stats');
+    expect(names).not.toContain('plunk_publish_sequence_step');
 
     await close();
   });

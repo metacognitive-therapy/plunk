@@ -17,7 +17,7 @@ import {
   Switch,
 } from '@plunk/ui';
 import type {Contact, Tag} from '@plunk/db';
-import {ContactSchemas, TagSchemas} from '@plunk/shared';
+import {ContactSchemas, SequenceSchemas, TagSchemas} from '@plunk/shared';
 import type {CursorPaginatedResponse} from '@plunk/types';
 import {
   getCoreRowModel,
@@ -55,6 +55,7 @@ import {
   ChevronRight,
   Edit,
   FileUp,
+  ListOrdered,
   Loader2,
   Mail,
   MailCheck,
@@ -131,6 +132,7 @@ export default function ContactsPage() {
   const [bulkOperation, setBulkOperation] = useState<'subscribe' | 'unsubscribe' | 'delete' | null>(null);
   const [showTagBulkDialog, setShowTagBulkDialog] = useState(false);
   const [tagBulkAction, setTagBulkAction] = useState<'add' | 'remove' | null>(null);
+  const [showSequenceBulkDialog, setShowSequenceBulkDialog] = useState(false);
   const pageSize = 50;
 
   // Seed the tag facet from a `?tags=<tagId>` link (e.g. from the Tags index
@@ -657,6 +659,10 @@ export default function ContactsPage() {
                 <TagIcon className="h-4 w-4" />
                 Remove tag
               </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowSequenceBulkDialog(true)}>
+                <ListOrdered className="h-4 w-4" />
+                Add to sequence
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -887,6 +893,30 @@ export default function ContactsPage() {
           open={showTagBulkDialog}
           onOpenChange={setShowTagBulkDialog}
           action={tagBulkAction}
+          selector={
+            selectAllMatching
+              ? {
+                  mode: 'query',
+                  filter: {
+                    ...(search ? {search} : {}),
+                    ...(statusFilter !== 'ALL' ? {subscribed: statusFilter === 'subscribed'} : {}),
+                    ...(tagsFilter.length > 0 ? {tagIds: tagsFilter} : {}),
+                  },
+                  excludeIds: Array.from(excludedContacts),
+                }
+              : {mode: 'ids', contactIds: Array.from(selectedContacts)}
+          }
+          targetCount={effectiveSelectionCount}
+          onSuccess={() => {
+            mutate();
+            clearSelection();
+          }}
+        />
+
+        {/* Bulk Sequence Enrollment Dialog */}
+        <SequenceBulkEnrollDialog
+          open={showSequenceBulkDialog}
+          onOpenChange={setShowSequenceBulkDialog}
           selector={
             selectAllMatching
               ? {
@@ -1935,6 +1965,319 @@ function buildTagToastSummary(result: TagBulkResult): string {
     parts.push(`${result.failureCount.toLocaleString()} failed`);
   }
   return parts.length > 0 ? parts.join(', ') : 'No contacts needed updating';
+}
+
+interface SequenceEnrollResult {
+  enrolledCount: number;
+  skippedCount: number;
+}
+
+interface SequenceBulkEnrollDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  selector: TagBulkSelector;
+  targetCount: number;
+  onSuccess: () => void;
+}
+
+function SequenceBulkEnrollDialog({
+  open,
+  onOpenChange,
+  selector,
+  targetCount,
+  onSuccess,
+}: SequenceBulkEnrollDialogProps) {
+  const {data: sequences} = useSWR<{id: string; name: string; status: string}[]>(open ? '/sequences' : null, {
+    revalidateOnFocus: false,
+  });
+  const [sequenceId, setSequenceId] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState<'idle' | 'processing' | 'completed' | 'failed'>('idle');
+  const [result, setResult] = useState<SequenceEnrollResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [showCloseConfirmDialog, setShowCloseConfirmDialog] = useState(false);
+
+  // DRAFT sequences reject enrollment server-side, so don't offer them.
+  const enrollable = (sequences ?? []).filter(sequence => sequence.status !== 'DRAFT');
+
+  useEffect(() => {
+    if (!open) {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      setTimeout(() => {
+        setSequenceId('');
+        setProgress(0);
+        setStatus('idle');
+        setResult(null);
+        setErrorMessage(null);
+      }, 300);
+    }
+  }, [open]);
+
+  const finish = (outcome: SequenceEnrollResult) => {
+    setStatus('completed');
+    setResult(outcome);
+    toast.success(
+      outcome.enrolledCount > 0
+        ? `${outcome.enrolledCount.toLocaleString()} contact${outcome.enrolledCount !== 1 ? 's' : ''} enrolled`
+        : 'Everyone selected was already enrolled',
+    );
+    onSuccess();
+  };
+
+  const pollJobStatus = async (jobId: string) => {
+    try {
+      const response = await network.fetch<{
+        id: string;
+        state: string;
+        progress: number;
+        result: SequenceEnrollResult | null;
+        failedReason?: string;
+      }>('GET', `/sequences/${sequenceId}/contacts/${jobId}`);
+
+      setProgress(response.progress || 0);
+
+      if (response.state === 'completed') {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        finish(response.result ?? {enrolledCount: 0, skippedCount: 0});
+      } else if (response.state === 'failed') {
+        setStatus('failed');
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        const errorMsg = response.failedReason || 'Enrollment failed';
+        setErrorMessage(errorMsg);
+        toast.error(errorMsg);
+      } else if (response.state === 'active') {
+        setStatus('processing');
+      }
+    } catch (error) {
+      console.error('Failed to poll enrollment status:', error);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      setStatus('failed');
+      toast.error('Lost track of the job. It may still be running.');
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!sequenceId) return;
+
+    setIsProcessing(true);
+    setStatus('processing');
+
+    try {
+      const body =
+        selector.mode === 'ids'
+          ? {mode: 'ids' as const, contactIds: selector.contactIds}
+          : {mode: 'query' as const, filter: selector.filter, excludeIds: selector.excludeIds};
+
+      // Small id lists come back enrolled already; anything bigger returns a job to poll.
+      const data = await network.fetch<
+        {enrolled: number; skipped: number} | {jobId: string; message: string},
+        typeof SequenceSchemas.enroll
+      >('POST', `/sequences/${sequenceId}/contacts`, body);
+
+      if ('jobId' in data) {
+        pollIntervalRef.current = setInterval(() => {
+          void pollJobStatus(data.jobId);
+        }, 1000);
+      } else {
+        setProgress(100);
+        finish({enrolledCount: data.enrolled, skippedCount: data.skipped});
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Couldn’t start the enrollment. Try again.';
+      setErrorMessage(errorMsg);
+      toast.error(errorMsg);
+      setStatus('failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleClose = () => {
+    if (status === 'processing') {
+      setShowCloseConfirmDialog(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+
+  const isQueueing = status === 'processing' && progress === 0;
+  const dialogTitle =
+    status === 'completed'
+      ? 'Enrollment complete'
+      : status === 'processing'
+      ? 'Adding to sequence…'
+      : status === 'failed'
+      ? 'Enrollment failed'
+      : 'Add to sequence';
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="transition-colors">{dialogTitle}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {status === 'idle' && (
+              <div className="space-y-3 motion-safe:animate-in motion-safe:fade-in-50 motion-safe:duration-200">
+                <p className="text-sm text-neutral-700 leading-relaxed">
+                  Enroll{' '}
+                  <span className="font-medium text-neutral-900 tabular-nums">
+                    {targetCount.toLocaleString()} contact{targetCount !== 1 ? 's' : ''}
+                  </span>{' '}
+                  into a sequence. They start at the first email.
+                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="bulkSequenceId">Sequence</Label>
+                  <select
+                    id="bulkSequenceId"
+                    value={sequenceId}
+                    onChange={e => setSequenceId(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-neutral-200 bg-white px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-950"
+                  >
+                    <option value="" disabled>
+                      Select a sequence…
+                    </option>
+                    {enrollable.map(sequence => (
+                      <option key={sequence.id} value={sequence.id}>
+                        {sequence.name}
+                        {sequence.status === 'PAUSED' ? ' (paused)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {enrollable.length === 0 && (
+                    <p className="text-xs text-neutral-500">
+                      No sequences are ready yet — a sequence has to be active or paused before contacts can join.
+                    </p>
+                  )}
+                </div>
+                {selector.mode === 'query' && (
+                  <p className="text-xs text-neutral-500 leading-relaxed">
+                    Contacts are evaluated when the job runs — any added in the meantime may also be included.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {status === 'processing' && (
+              <div className="space-y-3 py-1 motion-safe:animate-in motion-safe:fade-in-50 motion-safe:duration-200">
+                <div className="flex items-baseline justify-between text-sm">
+                  <span className="flex items-center gap-2 text-neutral-600">
+                    {isQueueing && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-400" />}
+                    <span>
+                      {isQueueing
+                        ? 'Queued — starting up…'
+                        : `Enrolling ${targetCount.toLocaleString()} contact${targetCount !== 1 ? 's' : ''}`}
+                    </span>
+                  </span>
+                  <span
+                    className={`tabular-nums font-medium transition-opacity ${
+                      isQueueing ? 'text-neutral-400' : 'text-neutral-900'
+                    }`}
+                  >
+                    {progress}%
+                  </span>
+                </div>
+                <div className="relative w-full bg-neutral-100 rounded-full h-1.5 overflow-hidden">
+                  {isQueueing ? (
+                    <div className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-neutral-300 motion-safe:animate-[indeterminate_1.4s_ease-in-out_infinite]" />
+                  ) : (
+                    <div
+                      className="bg-neutral-900 h-full rounded-full transition-[width] duration-500 ease-out"
+                      style={{width: `${progress}%`}}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {status === 'completed' && result && (
+              <div className="space-y-2 text-sm motion-safe:animate-in motion-safe:fade-in-50 motion-safe:duration-200">
+                <div className="flex items-center gap-2 text-neutral-700">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <span>
+                    {result.enrolledCount.toLocaleString()} contact{result.enrolledCount !== 1 ? 's' : ''} enrolled
+                  </span>
+                </div>
+                {result.skippedCount > 0 && (
+                  <div className="flex items-center gap-2 text-neutral-500">
+                    <Check className="h-4 w-4" />
+                    <span>{result.skippedCount.toLocaleString()} already enrolled</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {status === 'failed' && (
+              <div className="flex items-start gap-2.5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 motion-safe:animate-in motion-safe:fade-in-50 motion-safe:duration-200">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.25} />
+                <p className="leading-relaxed">{errorMessage || 'Something went wrong. Please try again.'}</p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            {status === 'idle' ? (
+              <>
+                <Button type="button" variant="outline" onClick={handleClose}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleConfirm} disabled={isProcessing || !sequenceId}>
+                  {isProcessing ? 'Starting…' : 'Add to sequence'}
+                </Button>
+              </>
+            ) : status === 'failed' ? (
+              <>
+                <Button type="button" variant="outline" onClick={handleClose}>
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setErrorMessage(null);
+                    setStatus('idle');
+                    void handleConfirm();
+                  }}
+                >
+                  Try again
+                </Button>
+              </>
+            ) : (
+              <Button type="button" onClick={handleClose} variant={status === 'completed' ? 'default' : 'outline'}>
+                {status === 'completed' ? 'Done' : 'Hide'}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={showCloseConfirmDialog}
+        onOpenChange={setShowCloseConfirmDialog}
+        onConfirm={() => onOpenChange(false)}
+        title="Hide this dialog?"
+        description="The job keeps running and your contacts are still enrolled. You just won't see the result here."
+        cancelText="Keep watching"
+        confirmText="Hide"
+        variant="default"
+      />
+    </>
+  );
 }
 
 const MAX_VISIBLE_ROW_TAGS = 2;

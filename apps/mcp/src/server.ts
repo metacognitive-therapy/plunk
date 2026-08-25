@@ -15,6 +15,7 @@ import {registerDomainTools} from './tools/domains.js';
 import {registerEmailTools} from './tools/email.js';
 import {registerEventTools} from './tools/events.js';
 import {registerSegmentTools} from './tools/segments.js';
+import {registerSequenceTools} from './tools/sequences.js';
 import {registerTagTools} from './tools/tags.js';
 import {registerTemplateTools} from './tools/templates.js';
 import type {ToolContext} from './tools/shared.js';
@@ -35,6 +36,10 @@ const INSTRUCTIONS = [
   '   ask the user to confirm and will show them the recipient count. Do not try to work around that',
   '   prompt. Prefer `plunk_test_campaign` to send the user a single copy for review before any bulk',
   '   send. If a send is already scheduled or in flight, `plunk_cancel_campaign` stops the remainder.',
+  '',
+  'A campaign is a one-off send. A **sequence** is an ordered series each contact moves through at their',
+  'own pace, and it keeps growing — publishing a new step reaches everyone already caught up. Reach for',
+  '`plunk_create_sequence` when the user describes a drip, onboarding series or an evolving newsletter.',
   '',
   'Sender addresses must be on a domain verified for the project, or the send is rejected — check with',
   '`plunk_list_domains` when you are choosing a `from` address or a send was refused.',
@@ -64,6 +69,7 @@ export function buildServer(config: PlunkMcpConfig): McpServer {
   registerCampaignTools(ctx, client);
   registerSegmentTools(ctx, client);
   registerTagTools(ctx, client);
+  registerSequenceTools(ctx, client);
   registerDomainTools(ctx, client);
 
   return server;

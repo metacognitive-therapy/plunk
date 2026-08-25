@@ -7,5 +7,6 @@ export * from './activity.js';
 export * from './billing.js';
 export * from './campaign.js';
 export * from './membership.js';
+export * from './sequences.js';
 export * from './tag.js';
 export * from './verification.js';

@@ -12,6 +12,7 @@ import signale from 'signale';
 import {createApiRequestCleanupWorker} from './api-request-cleanup-processor.js';
 import {createIdempotencyKeyCleanupWorker} from './idempotency-key-cleanup-processor.js';
 import {createBulkContactWorker} from './bulk-contact-processor.js';
+import {createBulkSequenceWorker} from './bulk-sequence-processor.js';
 import {createBulkTagWorker} from './bulk-tag-processor.js';
 import {createCampaignWorker} from './campaign-processor.js';
 import {createCardVerificationWorker} from './card-verification-processor.js';
@@ -24,6 +25,7 @@ import {createImportWorker} from './import-processor.js';
 import {createMeterWorker} from './meter-processor.js';
 import {createScheduledCampaignWorker} from './scheduled-processor.js';
 import {createSegmentCountWorker} from './segment-count-processor.js';
+import {createSequenceSweepWorker} from './sequence-sweep-processor.js';
 import {createWorkflowWorker} from './workflow-processor-queue.js';
 
 const workers: {name: string; worker: Worker}[] = [];
@@ -71,6 +73,16 @@ async function startWorkers() {
     const bulkTagWorker = createBulkTagWorker();
     workers.push({name: 'bulk-tag-actions', worker: bulkTagWorker});
     signale.success('[WORKER] Bulk tag action worker started');
+
+    // Start bulk sequence enrollment worker
+    const bulkSequenceWorker = createBulkSequenceWorker();
+    workers.push({name: 'bulk-sequence-enroll', worker: bulkSequenceWorker});
+    signale.success('[WORKER] Bulk sequence enrollment worker started');
+
+    // Start sequence delivery sweep worker
+    const sequenceSweepWorker = createSequenceSweepWorker();
+    workers.push({name: 'sequence-sweep', worker: sequenceSweepWorker});
+    signale.success('[WORKER] Sequence sweep worker started');
 
     // Start segment count worker
     const segmentCountWorker = createSegmentCountWorker();

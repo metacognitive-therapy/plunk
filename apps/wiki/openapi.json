@@ -30,6 +30,125 @@
       }
     },
     "schemas": {
+      "Sequence": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "ACTIVE",
+              "PAUSED"
+            ],
+            "description": "DRAFT rejects all enrollment. ACTIVE sends and honours the enrolling tag. PAUSED still accepts enrollment but sends nothing, preserving every contact's progress."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "TRANSACTIONAL",
+              "MARKETING",
+              "HEADLESS"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "nullable": true,
+            "description": "Must be on a verified domain before the sequence can go ACTIVE."
+          },
+          "fromName": {
+            "type": "string",
+            "nullable": true
+          },
+          "replyTo": {
+            "type": "string",
+            "nullable": true
+          },
+          "enrollTagId": {
+            "type": "string",
+            "nullable": true,
+            "description": "Applying this tag to a contact enrolls them, but only while the sequence is ACTIVE."
+          },
+          "stepCount": {
+            "type": "integer"
+          },
+          "subscriptionCount": {
+            "type": "integer"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SequenceStep": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sequenceId": {
+            "type": "string"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Position in the sequence, starting at 0. Mutable via the reorder endpoint."
+          },
+          "subject": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string",
+            "description": "Supports Liquid templating against contact data."
+          },
+          "delayMinutes": {
+            "type": "integer",
+            "description": "Minutes to wait after the contact's own previous send in this sequence, or after their enrollment for the first step."
+          },
+          "published": {
+            "type": "boolean",
+            "description": "Unpublished steps are drafts and are never sent. Publishing is one-way."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SequenceWithSteps": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "steps": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SequenceStep"
+                }
+              }
+            }
+          }
+        ]
+      },
       "Contact": {
         "type": "object",
         "properties": {
@@ -619,6 +738,878 @@
     }
   },
   "paths": {
+    "/sequences": {
+      "get": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "List sequences",
+        "description": "Get every sequence for the project, newest first, each with its step and enrolled-contact counts. Not paginated.",
+        "operationId": "listSequences",
+        "responses": {
+          "200": {
+            "description": "List of sequences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Sequence"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Create sequence",
+        "description": "Create a sequence. It starts as a DRAFT: nobody can be enrolled and nothing is sent until you activate it.",
+        "operationId": "createSequence",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "TRANSACTIONAL",
+                      "MARKETING",
+                      "HEADLESS"
+                    ],
+                    "default": "MARKETING"
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "fromName": {
+                    "type": "string"
+                  },
+                  "replyTo": {
+                    "type": "string"
+                  },
+                  "enrollTagId": {
+                    "type": "string"
+                  }
+                }
+              },
+              "examples": {
+                "simple": {
+                  "summary": "Create a sequence",
+                  "value": {
+                    "name": "Onboarding",
+                    "from": "hello@example.com"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Sequence created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sequence"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/sequences/{id}": {
+      "get": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Get sequence",
+        "description": "Get a single sequence with all of its steps in order.",
+        "operationId": "getSequence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sequence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceWithSteps"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Update sequence",
+        "description": "Rename a sequence, change its sender, set its status, or bind an enrolling tag. Activating a sequence requires `from` to be on a verified domain.",
+        "operationId": "updateSequence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "DRAFT",
+                      "ACTIVE",
+                      "PAUSED"
+                    ]
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "fromName": {
+                    "type": "string"
+                  },
+                  "replyTo": {
+                    "type": "string"
+                  },
+                  "enrollTagId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Pass null to unbind."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sequence updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceWithSteps"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Cannot activate a sequence whose sender is not on a verified domain.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Delete sequence",
+        "description": "Permanently delete a sequence along with its steps, enrollments and send history. To stop sending without losing progress, set the status to PAUSED instead.",
+        "operationId": "deleteSequence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Sequence deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/sequences/{id}/stats": {
+      "get": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Get sequence stats",
+        "description": "Aggregate engagement across every email the sequence has sent.",
+        "operationId": "getSequenceStats",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sequence stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sent": {
+                      "type": "integer"
+                    },
+                    "opened": {
+                      "type": "integer"
+                    },
+                    "clicked": {
+                      "type": "integer"
+                    },
+                    "bounced": {
+                      "type": "integer"
+                    },
+                    "complained": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/sequences/{id}/steps": {
+      "post": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Add sequence step",
+        "description": "Append an email to the end of the sequence. It is created as a draft and sends to nobody until published.",
+        "operationId": "createSequenceStep",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "subject",
+                  "body",
+                  "delayMinutes"
+                ],
+                "properties": {
+                  "subject": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "delayMinutes": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Step created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceStep"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/sequences/{id}/steps/reorder": {
+      "post": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Reorder sequence steps",
+        "description": "Set the order of the sequence's steps. Pass every step ID in the desired order. Progress is tracked per step rather than by position, so reordering never re-sends an email a contact already received and never skips one they have not.",
+        "operationId": "reorderSequenceSteps",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "stepIds"
+                ],
+                "properties": {
+                  "stepIds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Steps reordered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceWithSteps"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`stepIds` must contain exactly the sequence's step IDs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyError"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/sequences/{id}/steps/{stepId}": {
+      "patch": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Update sequence step",
+        "description": "Edit a step's subject, body or delay. Safe at any time: contacts who already received it are not re-sent, and contacts who have not reached it get the new version. Publishing is a separate, one-way endpoint.",
+        "operationId": "updateSequenceStep",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stepId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "subject": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "delayMinutes": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Step updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceStep"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Delete sequence step",
+        "description": "Remove a step from the sequence. The remaining steps close up around it, and the record of who received it is discarded.",
+        "operationId": "deleteSequenceStep",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stepId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Step deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/sequences/{id}/steps/{stepId}/publish": {
+      "post": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Publish sequence step",
+        "description": "Publish a draft step so the sequence starts sending it. This is one-way — a published step can only be deleted, not unpublished. Every contact already caught up on the sequence becomes eligible for it on the next sweep.",
+        "operationId": "publishSequenceStep",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stepId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Step published",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceStep"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/sequences/{id}/contacts": {
+      "post": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Enroll contacts",
+        "description": "Enroll contacts into a sequence. They start at the first published step, and their enrollment time anchors that step's delay. Enrolling someone twice is a silent no-op.\n\nExplicit lists of 100 IDs or fewer are enrolled synchronously and return the outcome. Anything larger, and any `query`-mode selector, is queued and returns a job ID to poll.",
+        "operationId": "enrollContactsInSequence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "mode",
+                      "contactIds"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "ids"
+                        ]
+                      },
+                      "contactIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "mode"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "query"
+                        ]
+                      },
+                      "filter": {
+                        "type": "object",
+                        "properties": {
+                          "search": {
+                            "type": "string"
+                          },
+                          "subscribed": {
+                            "type": "boolean"
+                          },
+                          "tagIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "excludeIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Contacts enrolled synchronously",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enrolled": {
+                      "type": "integer"
+                    },
+                    "skipped": {
+                      "type": "integer",
+                      "description": "Already enrolled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Enrollment queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "jobId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "A DRAFT sequence rejects all enrollment. Activate or pause it first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sequences/{id}/contacts/{jobId}": {
+      "get": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Get bulk enrollment job status",
+        "description": "Poll the status of a job queued by `POST /sequences/{id}/contacts`.",
+        "operationId": "getSequenceEnrollmentJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "waiting",
+                        "active",
+                        "completed",
+                        "failed"
+                      ]
+                    },
+                    "progress": {
+                      "type": "integer"
+                    },
+                    "result": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "enrolledCount": {
+                          "type": "integer"
+                        },
+                        "skippedCount": {
+                          "type": "integer",
+                          "description": "Already enrolled — silent no-ops, not failures."
+                        }
+                      }
+                    },
+                    "failedReason": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/sequences/{id}/contacts/{contactId}": {
+      "delete": {
+        "tags": [
+          "Sequences"
+        ],
+        "summary": "Unenroll contact",
+        "description": "Remove a contact from a sequence. Their send history for the sequence is discarded too, so re-enrolling them later starts the series over. To stop mail without losing their place, unsubscribe the contact instead — the sweep skips unsubscribed contacts but keeps their progress.",
+        "operationId": "unenrollContactFromSequence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "contactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Contact unenrolled"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/v1/send": {
       "post": {
         "tags": ["Public API"],
@@ -3001,6 +3992,10 @@
     {
       "name": "Tags",
       "description": "Contact labeling and tag-driven automation"
+    },
+    {
+      "name": "Sequences",
+      "description": "Evolving series of emails contacts move through one step at a time"
     }
   ]
 }

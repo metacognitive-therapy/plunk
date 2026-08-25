@@ -37,6 +37,7 @@ import {Events} from './controllers/Events.js';
 import {Oauth} from './controllers/Oauth/index.js';
 import {Projects} from './controllers/Projects.js';
 import {Segments} from './controllers/Segments.js';
+import {Sequences} from './controllers/Sequences.js';
 import {Tags} from './controllers/Tags.js';
 import {Templates} from './controllers/Templates.js';
 import {Unsubscribe} from './controllers/Unsubscribe.js';
@@ -55,6 +56,7 @@ import {
   emailBodyCleanupQueue,
   idempotencyKeyCleanupQueue,
   segmentCountQueue,
+  sequenceSweepQueue,
 } from './services/QueueService.js';
 import * as S3Service from './services/S3Service.js';
 import {requestIdMiddleware} from './middleware/requestId.js';
@@ -172,6 +174,7 @@ const server = new (class extends Server {
       new Domains(),
       new Projects(),
       new Segments(),
+      new Sequences(),
       new Tags(),
       new Templates(),
       new Unsubscribe(),
@@ -587,4 +590,20 @@ void prisma.$connect().then(async () => {
   );
 
   signale.info('[BACKGROUND-JOB] Campaign stats sweep scheduled (BullMQ repeatable job, runs every 2 minutes)');
+
+  // Set up repeatable job for sequence delivery (BullMQ)
+  // Every 5 minutes: sends each due contact's next unsent published sequence step.
+  // The sent-set model makes every run idempotent, so cadence only affects delay precision.
+  await sequenceSweepQueue.add(
+    'sequence-sweep',
+    {},
+    {
+      repeat: {
+        pattern: '*/5 * * * *', // Every 5 minutes
+      },
+      jobId: 'sequence-sweep-repeatable', // Fixed ID to prevent duplicates
+    },
+  );
+
+  signale.info('[BACKGROUND-JOB] Sequence sweep scheduled (BullMQ repeatable job, runs every 5 minutes)');
 });

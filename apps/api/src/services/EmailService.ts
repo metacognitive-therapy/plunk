@@ -35,6 +35,8 @@ interface SendEmailParams {
   campaignId?: string;
   workflowExecutionId?: string;
   workflowStepExecutionId?: string;
+  sequenceId?: string;
+  sequenceStepId?: string;
   recipientEmail?: string; // Optional custom recipient email (overrides contact.email)
   isTransactional?: boolean; // Override source type to TRANSACTIONAL (e.g. for transactional campaigns)
 }
@@ -163,6 +165,11 @@ export class EmailService {
         sourceType,
         templateId: params.templateId,
         campaignId: params.campaignId,
+        // Sequence sends ride the campaign pipeline (sourceType stays
+        // CAMPAIGN/TRANSACTIONAL, so their volume counts under campaign billing);
+        // these columns carry the attribution for sequence stats.
+        sequenceId: params.sequenceId,
+        sequenceStepId: params.sequenceStepId,
         status: EmailStatus.PENDING,
       },
     });

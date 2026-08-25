@@ -1,4 +1,4 @@
-import {CampaignAudienceType, TemplateType, TrackingMode, WorkflowStepType, WorkflowTriggerType} from '@plunk/db';
+import {CampaignAudienceType, SequenceStatus, TemplateType, TrackingMode, WorkflowStepType, WorkflowTriggerType} from '@plunk/db';
 import type {FilterCondition, FilterGroup} from '@plunk/types';
 import {z} from 'zod';
 
@@ -215,6 +215,64 @@ export const TagSchemas = {
       excludeIds: z.array(uuid).max(10000).optional(),
       tagIds: z.array(uuid).min(1).max(20),
       action: z.enum(['add', 'remove']),
+    }),
+  ]),
+};
+
+/** Ten years, in minutes — see the note on `createStep.delayMinutes`. */
+export const MAX_DELAY_MINUTES = 3650 * 24 * 60;
+
+export const SequenceSchemas = {
+  create: z.object({
+    name: z.string().trim().min(1).max(100),
+    type: z.nativeEnum(TemplateType).default('MARKETING'),
+    from: email.nullish(),
+    fromName: z.string().max(100).nullish(),
+    replyTo: email.nullish(),
+    enrollTagId: uuid.nullish(),
+  }),
+  update: z.object({
+    name: z.string().trim().min(1).max(100).optional(),
+    status: z.nativeEnum(SequenceStatus).optional(),
+    type: z.nativeEnum(TemplateType).optional(),
+    from: email.nullish(),
+    fromName: z.string().max(100).nullish(),
+    replyTo: email.nullish(),
+    enrollTagId: uuid.nullish(),
+  }),
+  createStep: z.object({
+    subject: z.string().min(1),
+    body: z.string().min(1),
+    // Capped at ten years. The dashboard lets the delay be entered in days, which
+    // multiplies by 1440, so an unbounded value could overflow the int4 column.
+    delayMinutes: z.number().int().min(0).max(MAX_DELAY_MINUTES),
+  }),
+  // Publishing is explicit and one-way (POST .../publish); updates cannot flip it
+  updateStep: z.object({
+    subject: z.string().min(1).optional(),
+    body: z.string().min(1).optional(),
+    delayMinutes: z.number().int().min(0).max(MAX_DELAY_MINUTES).optional(),
+  }),
+  // The full ordering: every step id of the sequence, exactly once, in the new order
+  reorderSteps: z.object({
+    stepIds: z.array(uuid).min(1).max(500),
+  }),
+  // Bulk enrollment, mirroring TagSchemas.bulkApply's two selection modes
+  enroll: z.discriminatedUnion('mode', [
+    z.object({
+      mode: z.literal('ids'),
+      contactIds: z.array(uuid).min(1).max(1000),
+    }),
+    z.object({
+      mode: z.literal('query'),
+      filter: z
+        .object({
+          search: z.string().max(255).optional(),
+          subscribed: z.boolean().optional(),
+          tagIds: z.array(uuid).max(20).optional(),
+        })
+        .default({}),
+      excludeIds: z.array(uuid).max(10000).optional(),
     }),
   ]),
 };

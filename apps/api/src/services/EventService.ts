@@ -8,6 +8,7 @@ import {prisma} from '../database/prisma.js';
 import {redis} from '../database/redis.js';
 import {Keys} from './keys.js';
 
+import {SequenceEnrollmentService} from './SequenceEnrollmentService.js';
 import {WorkflowExecutionService} from './WorkflowExecutionService.js';
 
 /**
@@ -42,6 +43,11 @@ export class EventService {
 
     // Resume workflows waiting for this event
     await WorkflowExecutionService.handleEvent(projectId, eventName, contactId, data);
+
+    // Auto-enroll into sequences bound to this tag (ACTIVE sequences only)
+    if (eventName === 'tag.added' && contactId && typeof data?.tagId === 'string') {
+      await SequenceEnrollmentService.handleTagAdded(projectId, contactId, data.tagId);
+    }
 
     return event;
   }

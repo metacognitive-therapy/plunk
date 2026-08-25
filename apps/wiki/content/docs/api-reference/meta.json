@@ -11,6 +11,8 @@
     "templates",
     "campaigns",
     "segments",
+    "tags",
+    "sequences",
     "---Reference---",
     "errors"
   ]
