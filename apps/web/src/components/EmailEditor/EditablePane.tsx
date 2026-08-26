@@ -70,7 +70,10 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
   onChangeRef.current = onChange;
 
   const [toolbar, setToolbar] = useState<{top: number; left: number; hasLink: boolean} | null>(null);
-  const [imageTarget, setImageTarget] = useState<{regionId: string; previous: string} | null>(null);
+  // Carries the element for the same reason `linkTarget` does: the swap has to be
+  // written to the live DOM. The iframe is no longer rewritten on our own edits,
+  // so nothing else would ever show it.
+  const [imageTarget, setImageTarget] = useState<{regionId: string; previous: string; element: HTMLElement} | null>(null);
   const [linkTarget, setLinkTarget] = useState<{regionId: string; previous: string; anchor: HTMLElement} | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [imageUrl, setImageUrl] = useState('');
@@ -102,6 +105,21 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
   /** Removes the current iframe listeners. Held in a ref because the render is
    *  skipped on our own edits, so a run may not own the listeners it must survive. */
   const teardownRef = useRef<(() => void) | null>(null);
+
+  /**
+   * Shape of the region list the iframe's markers were written from.
+   *
+   * Skipping a render leaves the DOM carrying the *previous* run's marker
+   * attributes while `regionsRef` is re-inferred against the *new* source. Region
+   * ids are positional, so those markers only keep naming the same elements while
+   * the list has the same shape — retyping over a text region that held a nested
+   * link or icon deletes those regions and shifts every id after it. A marker
+   * would then resolve to a different element, and because the region it names
+   * *does* match its own `previous`, `applyEdits` would splice one element's
+   * content into another's byte range without complaint. A returned double-click
+   * on that rare edit is the price of never doing that.
+   */
+  const signatureRef = useRef<string | null>(null);
 
   /** Splices one batch into the original and hands it up. */
   const applyRegionEdits = useCallback((edits: RegionEdit[]) => {
@@ -197,14 +215,30 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
       const regions = inferEditableRegions(html);
       regionsRef.current = new Map(regions.map(r => [r.id, r]));
 
+      const signature = regions.map(r => `${r.id}:${r.kind}:${r.tagName}`).join('|');
+      const structureHeld = signature === signatureRef.current;
+      signatureRef.current = signature;
+
       // Re-inferring against the spliced source is the whole job here: the DOM
       // already shows the edit, because the user typed it. Rewriting the iframe
       // would throw away the element the committing click activated a moment ago
       // and repaint every remote image for a change already on screen.
-      if (isOwnEdit) return;
+      if (isOwnEdit && structureHeld) return;
 
       const doc = iframe.contentDocument || iframe.contentWindow?.document;
       if (!doc) return;
+
+      // The cleanup bows out on our own edits, so reaching a full render does not
+      // mean it ran — a structure-changing edit lands here with the previous run's
+      // listeners still attached. Nulled by whichever side runs it, so this is a
+      // no-op on the ordinary path.
+      teardownRef.current?.();
+      teardownRef.current = null;
+      // Whatever was being edited is about to be replaced by the rewrite. It was
+      // activated by the click that committed the edit we are rendering, so it
+      // holds nothing yet; dropping the reference is enough.
+      activeRef.current = null;
+      setToolbar(null);
 
       // The wrap decision is made against the *original*: the marked copy's injected
       // `data-plunk-*` attributes would otherwise read as authored custom HTML and
@@ -244,7 +278,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
             commitActive();
             setImageUrl(region.value);
             setImageFile(null);
-            setImageTarget({regionId: region.id, previous: region.value});
+            setImageTarget({regionId: region.id, previous: region.value, element: image});
           }
           return;
         }
@@ -385,6 +419,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     }
     if (!src) return;
 
+    imageTarget.element.setAttribute('src', src);
     applyRegionEdits([{id: imageTarget.regionId, value: src, previous: imageTarget.previous}]);
     setImageTarget(null);
     setImageFile(null);
