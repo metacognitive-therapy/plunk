@@ -1,6 +1,13 @@
 # Multi-stage Dockerfile for Plunk
 # Creates a single image containing all applications (API, Worker, Web, Landing, Wiki)
 # Use SERVICE environment variable to specify which service to run
+#
+# Cache-mount ids are in Railway's required `s/<service id>-<target path>` form.
+# Railway's builder validates the prefix statically and rejects the Dockerfile
+# outright without it; to BuildKit the id is just an opaque cache namespace, so
+# the GitHub Actions build is unaffected. The id is that of the `plunk` service
+# in the MKT-Oslo workspace — a cache namespace, not a credential. Anyone
+# self-hosting can put any string here.
 
 # ============================================
 # Stage 1: Dependencies (All dependencies for building)
@@ -53,8 +60,8 @@ COPY apps/wiki/tsconfig.json ./apps/wiki/tsconfig.json
 
 # Install dependencies (runs on build platform, fetches binaries for target platform)
 # Use cache mounts for Yarn cache to speed up dependency installation
-RUN --mount=type=cache,id=yarn-berry,target=/root/.yarn/berry/cache,sharing=locked \
-    --mount=type=cache,id=yarn-cache,target=/root/.cache/yarn,sharing=locked \
+RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/root/.yarn/berry/cache,target=/root/.yarn/berry/cache,sharing=locked \
+    --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/root/.cache/yarn,target=/root/.cache/yarn,sharing=locked \
     echo "Building on $BUILDPLATFORM for $TARGETPLATFORM" && \
     yarn install --immutable
 
@@ -85,8 +92,8 @@ COPY packages/email/package.json ./packages/email/
 
 # Install ONLY production dependencies for api, smtp, and their workspace dependencies
 # This excludes devDependencies and unneeded workspaces (web, landing, wiki, ui)
-RUN --mount=type=cache,id=yarn-berry,target=/root/.yarn/berry/cache,sharing=locked \
-    --mount=type=cache,id=yarn-cache,target=/root/.cache/yarn,sharing=locked \
+RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/root/.yarn/berry/cache,target=/root/.yarn/berry/cache,sharing=locked \
+    --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/root/.cache/yarn,target=/root/.cache/yarn,sharing=locked \
     echo "Installing production dependencies for API/SMTP on $BUILDPLATFORM for $TARGETPLATFORM" && \
     yarn workspaces focus api smtp --production
 
@@ -143,7 +150,7 @@ RUN chmod +x /usr/local/bin/generate-url-manifest.sh
 # `npx @plunk/mcp`; it is published to npm by npm-publish.yml, not shipped here.
 COPY packages ./packages
 RUN yarn workspace @plunk/db db:generate
-RUN --mount=type=cache,id=turbo,target=/app/.turbo,sharing=locked \
+RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/app/.turbo,target=/app/.turbo,sharing=locked \
     API_URI=${API_URI} \
     DASHBOARD_URI=${DASHBOARD_URI} \
     LANDING_URI=${LANDING_URI} \
@@ -157,7 +164,7 @@ RUN --mount=type=cache,id=turbo,target=/app/.turbo,sharing=locked \
 # Step 2: Copy and build API (backend services)
 COPY apps/api ./apps/api
 COPY apps/smtp ./apps/smtp
-RUN --mount=type=cache,id=turbo,target=/app/.turbo,sharing=locked \
+RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/app/.turbo,target=/app/.turbo,sharing=locked \
     API_URI=${API_URI} \
     DASHBOARD_URI=${DASHBOARD_URI} \
     LANDING_URI=${LANDING_URI} \
@@ -177,7 +184,7 @@ RUN cd apps/wiki && \
     npx fumadocs-mdx && \
     cd ../..
 # Build wiki with placeholder URLs (replaced at container startup)
-RUN --mount=type=cache,id=turbo,target=/app/.turbo,sharing=locked \
+RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/app/.turbo,target=/app/.turbo,sharing=locked \
     API_URI=${API_URI} \
     DASHBOARD_URI=${DASHBOARD_URI} \
     LANDING_URI=${LANDING_URI} \
@@ -194,7 +201,7 @@ RUN generate-url-manifest.sh wiki /app/apps/wiki
 
 # Step 4: Copy and build Web dashboard
 COPY apps/web ./apps/web
-RUN --mount=type=cache,id=turbo,target=/app/.turbo,sharing=locked \
+RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/app/.turbo,target=/app/.turbo,sharing=locked \
     API_URI=${API_URI} \
     DASHBOARD_URI=${DASHBOARD_URI} \
     LANDING_URI=${LANDING_URI} \
@@ -211,7 +218,7 @@ RUN generate-url-manifest.sh web /app/apps/web
 
 # Step 5: Copy and build Landing page
 COPY apps/landing ./apps/landing
-RUN --mount=type=cache,id=turbo,target=/app/.turbo,sharing=locked \
+RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/app/.turbo,target=/app/.turbo,sharing=locked \
     API_URI=${API_URI} \
     DASHBOARD_URI=${DASHBOARD_URI} \
     LANDING_URI=${LANDING_URI} \
@@ -251,7 +258,7 @@ RUN apk add --no-cache openssl curl nginx gettext
 
 # Install PM2 globally for process management
 # Use cache mount and specific version to prevent hangs
-RUN --mount=type=cache,id=npm,target=/root/.npm \
+RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/root/.npm,target=/root/.npm \
     npm install -g pm2@5.4.2 --prefer-offline --no-audit
 
 # Create non-root user for security
