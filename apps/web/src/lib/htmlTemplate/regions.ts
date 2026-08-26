@@ -26,8 +26,14 @@ type Element = DefaultTreeAdapterMap['element'];
  * Element children a text region is allowed to contain. These are inline
  * formatting only: nothing here carries layout, so rewriting a region's inner
  * HTML cannot reflow the surrounding table structure.
+ *
+ * `img` is here because it is an inline replaced element, not a layout one. Real
+ * templates put icons next to their labels — a social-links row is one cell of
+ * `Follow us: <a><img> Instagram</a> …` — and excluding `img` froze that entire
+ * row: the label text could not be edited at all. The image keeps its own region
+ * regardless, so clicking the icon still swaps the image rather than typing over it.
  */
-const INLINE_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'a', 'span', 'br', 'font', 'small', 'sub', 'sup']);
+const INLINE_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'a', 'span', 'br', 'font', 'small', 'sub', 'sup', 'img']);
 
 /**
  * Elements whose text content is not prose. Each holds a single text child and so

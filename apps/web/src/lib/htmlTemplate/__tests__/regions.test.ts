@@ -296,6 +296,47 @@ describe('applyEdits', () => {
   });
 });
 
+describe('inline images', () => {
+  // A social-links row: icon and label share a cell. Excluding `img` from the
+  // inline set froze the whole row — no label was editable anywhere in it.
+  // Wrapped in a table: parse5 discards a cell that has no table around it.
+  const SOCIAL_ROW =
+    '<table><tr><td class="social">Follow us: <a href="https://example.com/ig"><img src="https://cdn.example.com/ig.png" width="20"> Instagram</a></td></tr></table>';
+
+  it('makes a cell holding an icon and its label editable', () => {
+    const regions = inferEditableRegions(SOCIAL_ROW);
+    const cell = regions.find(r => r.kind === 'text' && r.tagName === 'td');
+
+    expect(cell?.value).toContain('Follow us:');
+    expect(cell?.value).toContain('Instagram');
+  });
+
+  it('still offers the icon as its own image region', () => {
+    // Clicking the icon must swap the image, not type over it, even though the
+    // icon now sits inside an editable text region.
+    const regions = inferEditableRegions(SOCIAL_ROW);
+
+    expect(regions.find(r => r.kind === 'image')?.value).toBe('https://cdn.example.com/ig.png');
+  });
+
+  it('does not treat a lone image as editable text', () => {
+    // No non-whitespace text, so there is nothing to edit as prose.
+    const regions = inferEditableRegions('<table><tr><td class="logo"><img src="https://cdn.example.com/logo.png"></td></tr></table>');
+
+    expect(regions.some(r => r.kind === 'text')).toBe(false);
+  });
+
+  it('rewrites a label without disturbing the icon markup', () => {
+    const regions = inferEditableRegions(SOCIAL_ROW);
+    const cell = regions.find(r => r.kind === 'text' && r.tagName === 'td')!;
+    const next = applyEdits(SOCIAL_ROW, [
+      {id: cell.id, value: cell.value.replace('Instagram', 'Our Instagram'), previous: cell.value},
+    ]);
+
+    expect(next).toContain('<img src="https://cdn.example.com/ig.png" width="20"> Our Instagram');
+  });
+});
+
 describe('raw-text elements', () => {
   it('does not offer a stylesheet as editable text', () => {
     // Caught in browser QA: `<style>` holds a single text child, so it passed the
