@@ -15992,7 +15992,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"parse5@npm:^7.0.0, parse5@npm:^7.1.2":
+"parse5@npm:^7.0.0, parse5@npm:^7.1.2, parse5@npm:^7.3.0":
   version: 7.3.0
   resolution: "parse5@npm:7.3.0"
   dependencies:
@@ -20027,6 +20027,7 @@ __metadata:
     next-seo: "npm:^6.6.0"
     next-sitemap: "npm:^4.2.3"
     nuqs: "npm:^2.7.3"
+    parse5: "npm:^7.3.0"
     postcss: "npm:^8.5.23"
     react: "npm:19.2.3"
     react-dom: "npm:19.2.3"
