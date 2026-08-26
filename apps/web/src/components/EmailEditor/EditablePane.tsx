@@ -87,12 +87,30 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
    */
   const applyEditsRef = useRef<typeof import('../../lib/htmlTemplate/regions').applyEdits | null>(null);
 
+  /**
+   * The exact string this component last handed to `onChange`, held until the
+   * render effect consumes it.
+   *
+   * Every commit flows back down as a new `html` prop, which would otherwise
+   * re-run the render effect and rewrite the iframe — destroying the element the
+   * committing click had *just* activated (so editing a second element took two
+   * clicks) and flashing the whole template on every edit. Comparing the incoming
+   * value against this tells our own splice apart from an edit made elsewhere.
+   */
+  const lastEmittedRef = useRef<string | null>(null);
+
+  /** Removes the current iframe listeners. Held in a ref because the render is
+   *  skipped on our own edits, so a run may not own the listeners it must survive. */
+  const teardownRef = useRef<(() => void) | null>(null);
+
   /** Splices one batch into the original and hands it up. */
   const applyRegionEdits = useCallback((edits: RegionEdit[]) => {
     const applyEdits = applyEditsRef.current;
     if (edits.length === 0 || !applyEdits) return;
     try {
-      onChangeRef.current(applyEdits(htmlRef.current, edits));
+      const next = applyEdits(htmlRef.current, edits);
+      lastEmittedRef.current = next;
+      onChangeRef.current(next);
       setError(null);
     } catch (cause) {
       // Every throw from applyEdits means the source moved underneath this edit.
@@ -163,11 +181,13 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
   // is re-inferred against it, so region ids never go stale against the DOM.
   useEffect(() => {
     let cancelled = false;
-    // The render is async (parse5 is dynamically imported), so the effect returns
-    // before there is anything to tear down. Listeners register themselves here.
-    let teardown: (() => void) | null = null;
     const iframe = iframeRef.current;
     if (!iframe) return;
+
+    // Our own splice coming back down. Consumed here so a later device switch,
+    // which re-runs this effect with an unchanged `html`, still renders.
+    const isOwnEdit = html === lastEmittedRef.current;
+    lastEmittedRef.current = null;
 
     void (async () => {
       const {applyEdits, inferEditableRegions, injectRegionMarkers} = await import('../../lib/htmlTemplate/regions');
@@ -176,6 +196,12 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
 
       const regions = inferEditableRegions(html);
       regionsRef.current = new Map(regions.map(r => [r.id, r]));
+
+      // Re-inferring against the spliced source is the whole job here: the DOM
+      // already shows the edit, because the user typed it. Rewriting the iframe
+      // would throw away the element the committing click activated a moment ago
+      // and repaint every remote image for a change already on screen.
+      if (isOwnEdit) return;
 
       const doc = iframe.contentDocument || iframe.contentWindow?.document;
       if (!doc) return;
@@ -259,26 +285,39 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
       const view = iframe.contentWindow;
       view?.addEventListener('scroll', onScroll);
 
-      teardown = () => {
+      const teardown = () => {
         timeouts.forEach(window.clearTimeout);
         doc.removeEventListener('click', onClick, true);
         doc.removeEventListener('keydown', onKeyDown);
         view?.removeEventListener('scroll', onScroll);
       };
+      teardownRef.current = teardown;
       // Unmounted while parse5 was loading: nothing rendered, but tear down anyway.
       if (cancelled) teardown();
     })();
 
     return () => {
       cancelled = true;
-      // Commit rather than discard. After a commit of our own this is a no-op —
-      // `activeRef` is already null — but a device switch mid-edit re-runs this
-      // effect, and dropping the in-progress edit there would be silent.
+      // `htmlRef` already holds the *incoming* value — React assigns it during the
+      // render that precedes this cleanup — so the same test the effect body makes
+      // is available here. Skipping is what makes the second element clickable in
+      // one click: the click that committed the first has already activated it, and
+      // tearing down would commit and un-edit it immediately.
+      if (htmlRef.current === lastEmittedRef.current) return;
+
+      // Commit rather than discard: a device switch mid-edit re-runs this effect,
+      // and dropping the in-progress edit there would be silent.
       commitActive();
       setToolbar(null);
-      teardown?.();
+      teardownRef.current?.();
+      teardownRef.current = null;
     };
   }, [html, device, commitActive, positionToolbar]);
+
+  // The cleanup above bows out on our own edits, so it cannot be trusted to run
+  // the final teardown — an unmount right after a commit would leave the iframe's
+  // listeners attached to a dead document.
+  useEffect(() => () => teardownRef.current?.(), []);
 
   const exec = (command: string) => {
     const doc = iframeRef.current?.contentDocument;
