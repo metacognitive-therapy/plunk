@@ -18,8 +18,10 @@
     "test:run": "vitest run"
   },
   "resolutions": {
-    "fumadocs-core": "16.0.8"
+    "fumadocs-core": "16.0.8",
+    "@react-email/preview-server@5.0.1/next": "^16.2.11"
   },
+  "//next-resolution": "@react-email/preview-server hard-pins next@16.0.1, which carries CVE-2025-66478 (critical) among others. It is a dev-only preview tool and never ships in the image, but Railway's build-time vulnerability scanner reads yarn.lock wholesale and refuses to build while any vulnerable version is resolved. Pinning it to the ^16.2.11 the three Next apps already use collapses the lockfile to a single next version. Drop this once preview-server ships a patched pin.",
   "//zod": "apps/mcp needs zod 4 (the MCP SDK requires it) while the rest of the monorepo is on zod 3. Declaring zod 3 here keeps it as the hoisted root copy so packages that import zod without declaring it — @hookform/resolvers in web, and anything else that relies on hoisting — keep resolving 3. zod 4 nests under apps/mcp. Remove this only when the whole repo moves to zod 4.",
   "devDependencies": {
     "@eslint/js": "^9.39.1",
