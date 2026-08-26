@@ -49,3 +49,6 @@ install-state.gz
 
 tsconfig.tsbuildinfo
 next-env.d.ts
+
+# Playwright MCP session artifacts (console logs, snapshots)
+.playwright-mcp/
