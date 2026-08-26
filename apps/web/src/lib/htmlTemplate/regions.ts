@@ -29,6 +29,14 @@ type Element = DefaultTreeAdapterMap['element'];
  */
 const INLINE_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'a', 'span', 'br', 'font', 'small', 'sub', 'sup']);
 
+/**
+ * Elements whose text content is not prose. Each holds a single text child and so
+ * would otherwise pass the inline-only test — making a template's stylesheet
+ * clickable and editable as rich text, which is exactly how you end up with a
+ * `<b>` tag inside a `@media` block.
+ */
+const RAW_TEXT_TAGS = new Set(['style', 'script', 'title', 'textarea', 'noscript', 'template']);
+
 /** A Liquid tag that opens a block must close inside the same region, or editing
  *  that region's inner HTML would strand the other half of the pair. */
 const BLOCK_OPENERS = ['if', 'unless', 'for', 'case', 'capture', 'tablerow', 'raw', 'comment'];
@@ -180,7 +188,7 @@ export function inferEditableRegions(html: string): EditableRegion[] {
         }
 
         // An element with no end tag has no inner range to splice into.
-        if (!insideTextRegion && loc.startTag && loc.endTag && isInlineOnlyWithText(node)) {
+        if (!insideTextRegion && !RAW_TEXT_TAGS.has(node.tagName) && loc.startTag && loc.endTag && isInlineOnlyWithText(node)) {
           const start = loc.startTag.endOffset;
           const end = loc.endTag.startOffset;
           const value = html.slice(start, end);

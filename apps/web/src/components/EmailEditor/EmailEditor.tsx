@@ -14,6 +14,7 @@ import {Toolbar} from './Toolbar';
 import {ResizableImage} from './ResizableImage';
 import {HtmlEditor} from './HtmlEditor';
 import {PreviewPane, type PreviewDevice} from './PreviewPane';
+import {EditablePane} from './EditablePane';
 import {useContactFields, useContacts, useSegmentContacts} from '../../lib/hooks/useContacts';
 import {useConfig} from '../../lib/hooks/useConfig';
 import {useTemplateFieldWarnings, useTemplateValidation} from '../../lib/hooks/useTemplateValidation';
@@ -33,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@plunk/ui';
-import {AlertTriangle, Code2, Eye, Upload, X} from 'lucide-react';
+import {AlertTriangle, Code2, Eye, MousePointerClick, Upload, X} from 'lucide-react';
 import {network} from '../../lib/network';
 import {detectCustomHtmlPatterns} from '../../lib/emailStyles';
 import 'tippy.js/dist/tippy.css';
@@ -51,6 +52,13 @@ interface EmailEditorProps {
   segmentId?: string;
 }
 
+/**
+ * `visual` is TipTap, which owns and re-serializes the whole document. `edit` is
+ * click-to-edit over the rendered template, which only ever replaces the byte range
+ * of the element you touched. `html` is the raw source.
+ */
+type EditorMode = 'visual' | 'edit' | 'html';
+
 const commonVariables = [
   {name: 'id', description: 'Contact ID'},
   {name: 'email', description: 'Recipient email address'},
@@ -60,10 +68,11 @@ const commonVariables = [
 ];
 
 export function EmailEditor({value, onChange, placeholder, subject, from, replyTo, segmentId}: EmailEditorProps) {
-  // Detect if initial value has custom HTML and start in appropriate mode
-  const initialMode = detectCustomHtmlPatterns(value) ? 'html' : 'visual';
+  // An imported template opens in click-to-edit rather than being dropped into raw
+  // HTML. This is no longer a lockout: every mode stays reachable from the toggle.
+  const initialMode: EditorMode = detectCustomHtmlPatterns(value) ? 'edit' : 'visual';
 
-  const [mode, setMode] = useState<'visual' | 'html'>(initialMode);
+  const [mode, setMode] = useState<EditorMode>(initialMode);
   const [htmlContent, setHtmlContent] = useState(value);
   const [showVariableDialog, setShowVariableDialog] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
@@ -166,46 +175,44 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
     },
   });
 
-  // Update editor content when value prop changes from outside
+  // Update editor content when value prop changes from outside.
+  // Handing the document to TipTap outside visual mode would flatten it, so this
+  // only syncs `htmlContent` — which is what `edit` and `html` mode both edit.
   useEffect(() => {
     if (editor && value !== editor.getHTML() && value !== htmlContent) {
-      // Only update editor if in visual mode or if value is simple HTML
-      const isCustomHtml = detectCustomHtmlPatterns(value);
-
-      if (!isCustomHtml && mode === 'visual') {
+      if (mode === 'visual') {
         editor.commands.setContent(value || '');
       }
-
-      // Always update htmlContent to stay in sync
       setHtmlContent(value);
-
-      // If custom HTML is detected and we're in visual mode, switch to HTML mode
-      if (isCustomHtml && mode === 'visual') {
-        setMode('html');
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, editor]);
 
-  // Use the same pattern detection as initialization (no editor manipulation)
-  const detectCustomHtml = (html: string): boolean => {
-    return detectCustomHtmlPatterns(html);
-  };
+  const changeMode = (next: EditorMode) => {
+    if (next === mode) return;
 
-  const handleModeToggle = () => {
+    // Leaving visual mode: TipTap's document is the current truth, so snapshot it.
     if (mode === 'visual') {
-      // Switching to HTML mode
       const currentHtml = editor?.getHTML() || '';
       setHtmlContent(currentHtml);
-      setMode('html');
-    } else {
-      // Switching to visual mode - check if custom HTML will be lost
-      if (detectCustomHtml(htmlContent)) {
-        setShowModeWarningDialog(true);
-      } else {
-        switchToVisualMode();
-      }
+      setMode(next);
+      return;
     }
+
+    // Entering visual mode still hands the whole document to TipTap, whose
+    // extension set flattens tables and inline styles. The lock on *editing*
+    // imported HTML is gone — `edit` mode replaced it — but this one transition
+    // remains genuinely destructive, so it keeps its warning.
+    if (next === 'visual') {
+      if (detectCustomHtmlPatterns(htmlContent)) {
+        setShowModeWarningDialog(true);
+        return;
+      }
+      switchToVisualMode();
+      return;
+    }
+
+    setMode(next);
   };
 
   const switchToVisualMode = () => {
@@ -218,13 +225,8 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
     setShowModeWarningDialog(false);
   };
 
-  const stayInHtmlMode = () => {
-    // Explicitly stay in HTML mode and just close the dialog
+  const dismissModeWarning = () => {
     setShowModeWarningDialog(false);
-    // Ensure we're in HTML mode
-    if (mode !== 'html') {
-      setMode('html');
-    }
   };
 
   const handleHtmlChange = (newHtml: string) => {
@@ -334,21 +336,21 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
       {/* Mode toggle */}
       <div className="border-b border-neutral-200 bg-neutral-50 p-2 flex flex-col sm:flex-row justify-between sm:items-center gap-2">
         <div className="flex gap-1">
-          <Button
-            type="button"
-            variant={mode === 'visual' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => mode === 'html' && handleModeToggle()}
-          >
+          <Button type="button" variant={mode === 'visual' ? 'default' : 'ghost'} size="sm" onClick={() => changeMode('visual')}>
             <Eye className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Visual</span>
           </Button>
           <Button
             type="button"
-            variant={mode === 'html' ? 'default' : 'ghost'}
+            variant={mode === 'edit' ? 'default' : 'ghost'}
             size="sm"
-            onClick={() => mode === 'visual' && handleModeToggle()}
+            onClick={() => changeMode('edit')}
+            title="Click any text or image in the rendered email to change it"
           >
+            <MousePointerClick className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Edit</span>
+          </Button>
+          <Button type="button" variant={mode === 'html' ? 'default' : 'ghost'} size="sm" onClick={() => changeMode('html')}>
             <Code2 className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">HTML</span>
           </Button>
@@ -416,7 +418,14 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
         </div>
       )}
 
-      {/* Editor content beside its preview: two columns from `lg` up, stacked below. */}
+      {/* Click-to-edit renders the template itself, so it takes the full width and
+          stands in for the preview: a second live iframe of the same document would
+          be wasted work, and the preview's substituted copy is the wrong thing to
+          type into — you would be editing "John" rather than `{{firstName}}`. */}
+      {mode === 'edit' ? (
+        <EditablePane html={htmlContent} onChange={handleHtmlChange} device={previewDevice} onDeviceChange={setPreviewDevice} />
+      ) : (
+      /* Editor content beside its preview: two columns from `lg` up, stacked below. */
       <div className="lg:flex lg:items-stretch lg:divide-x lg:divide-neutral-200">
         <div className="lg:w-1/2 lg:min-w-0">
           {mode === 'visual' ? (
@@ -443,6 +452,7 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
         </div>
         <div className="lg:w-1/2 lg:min-w-0">{preview}</div>
       </div>
+      )}
 
       {/* Variable insertion dialog */}
       <Dialog open={showVariableDialog} onOpenChange={setShowVariableDialog}>
@@ -559,11 +569,14 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
                 <li>Complex table structures</li>
                 <li>Custom formatting or layout</li>
               </ul>
+              <p className="text-sm text-amber-800 mt-3">
+                Edit mode changes only the text or image you click, leaving the rest of the template untouched.
+              </p>
             </div>
 
             <div className="flex gap-2 justify-end">
-              <Button type="button" variant="outline" onClick={stayInHtmlMode}>
-                Stay in HTML mode
+              <Button type="button" variant="outline" onClick={dismissModeWarning}>
+                Keep my HTML
               </Button>
               <Button type="button" variant="destructive" onClick={switchToVisualMode}>
                 Switch anyway

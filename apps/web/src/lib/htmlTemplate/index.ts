@@ -5,4 +5,5 @@
  * `import('./htmlTemplate/regions')` from the editor instead.
  */
 export {REGION_ATTR, type EditableRegion, type RegionEdit, type RegionKind} from './types';
+export {stripRegionMarkers} from './markers';
 export {sanitizeForRender} from './sanitize';

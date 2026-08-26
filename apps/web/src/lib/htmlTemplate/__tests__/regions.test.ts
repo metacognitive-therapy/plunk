@@ -296,6 +296,22 @@ describe('applyEdits', () => {
   });
 });
 
+describe('raw-text elements', () => {
+  it('does not offer a stylesheet as editable text', () => {
+    // Caught in browser QA: `<style>` holds a single text child, so it passed the
+    // inline-only test and the template's CSS became click-to-edit rich text.
+    const regions = inferEditableRegions(STRIPO_EXPORT);
+
+    expect(regions.some(r => r.tagName === 'style')).toBe(false);
+  });
+
+  it.each(['script', 'title', 'textarea', 'noscript'])('does not offer <%s> as editable text', tag => {
+    const regions = inferEditableRegions(`<${tag}>some content</${tag}>`);
+
+    expect(regions.some(r => r.tagName === tag)).toBe(false);
+  });
+});
+
 describe('injectRegionMarkers', () => {
   it('marks each region on its own element without disturbing other bytes', () => {
     const regions = inferEditableRegions(STRIPO_EXPORT);

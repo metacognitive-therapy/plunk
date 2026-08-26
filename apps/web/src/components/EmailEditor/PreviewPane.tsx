@@ -6,13 +6,13 @@ import {wrapEmailWithStyles} from '../../lib/emailStyles';
 
 export type PreviewDevice = 'desktop' | 'tablet' | 'mobile';
 
-const DEVICE_WIDTHS: Record<PreviewDevice, string> = {
+export const DEVICE_WIDTHS: Record<PreviewDevice, string> = {
   mobile: '375px',
   tablet: '768px',
   desktop: '1200px', // Standard desktop email width
 };
 
-const DEVICES: {id: PreviewDevice; icon: typeof Monitor; label: string}[] = [
+export const DEVICES: {id: PreviewDevice; icon: typeof Monitor; label: string}[] = [
   {id: 'mobile', icon: Smartphone, label: 'Mobile'},
   {id: 'tablet', icon: Tablet, label: 'Tablet'},
   {id: 'desktop', icon: Monitor, label: 'Desktop'},

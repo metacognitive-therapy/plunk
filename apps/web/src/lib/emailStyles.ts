@@ -60,6 +60,16 @@ export const wrapEmailWithStyles = (htmlBody: string): string => {
     return htmlBody;
   }
 
+  return wrapEmailBody(htmlBody);
+};
+
+/**
+ * The wrapper itself, with the "is this already a complete document" decision left
+ * to the caller. Click-to-edit needs this seam: it renders a copy carrying injected
+ * `data-plunk-*` markers, and those alone would make `detectCustomHtmlPatterns`
+ * answer differently than it does for the template the user actually wrote.
+ */
+export const wrapEmailBody = (htmlBody: string): string => {
   return `<!DOCTYPE html>
 <html>
 <head>
