@@ -19,6 +19,32 @@ export const REGION_ATTR: Record<RegionKind, string> = {
   link: 'data-plunk-link',
 };
 
+/** Horizontal alignments a block region can be set to. */
+export type BlockAlign = 'left' | 'center' | 'right';
+
+/**
+ * The element's whole start tag, `<` through `>`, in the original source.
+ *
+ * Alignment is the one edit that cannot be written into a region's own range:
+ * centring a button means `text-align: center` on the *container*, and a text
+ * region's range is its inner content. The range recorded here is adjacent to
+ * that inner range rather than inside it (`startTag.end === region.start`), so
+ * the two never overlap and both apply — unlike a nested href edit, which the
+ * enclosing text region's new value already carries and `applyEdits` collapses.
+ *
+ * The whole tag rather than an insertion point on purpose: a zero-width range
+ * would make `previous` the empty string, identical for every unstyled element,
+ * and the stale-id guard would be vacuous exactly where it is needed. Rewriting
+ * the whole tag also makes the inline style and the legacy `align` attribute one
+ * serialization, so they cannot disagree.
+ */
+export interface StartTagRange {
+  start: number;
+  end: number;
+  /** The tag source, verbatim. */
+  value: string;
+}
+
 export interface EditableRegion {
   id: string;
   kind: RegionKind;
@@ -34,15 +60,25 @@ export interface EditableRegion {
   markerAt: number;
   /** Lowercased tag name of the element the region belongs to. */
   tagName: string;
+  /** Present only on text regions whose element is block-level, which are the
+   *  only ones an alignment can be written to. Inline elements are excluded
+   *  because `text-align` on them is a no-op. */
+  startTag?: StartTagRange;
 }
 
 export interface RegionEdit {
   id: string;
-  /** Replacement for the region's byte range: inner HTML for a text region, a
-   *  bare URL for image/link. */
+  /**
+   * Which of the region's two ranges this edit replaces. Omitted for an ordinary
+   * content edit; `'startTag'` for one that rewrites the element's own tag.
+   */
+  target?: 'startTag';
+  /** Replacement for the targeted byte range: inner HTML for a text region, a
+   *  bare URL for image/link, the whole tag for a `startTag` edit. */
   value: string;
   /**
-   * The region's `value` at the time it was inferred.
+   * The targeted range's content at the time it was inferred — the region's
+   * `value`, or the start tag's for a `startTag` edit.
    *
    * Region ids are positional (`r0..rN` in traversal order), so if the source
    * gains or loses a region between inference and apply — a paste in the Code

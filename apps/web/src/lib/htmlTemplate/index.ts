@@ -4,6 +4,6 @@
  * only ever needed by the editor. Reach it with a dynamic
  * `import('./htmlTemplate/regions')` from the editor instead.
  */
-export {REGION_ATTR, type EditableRegion, type RegionEdit, type RegionKind} from './types';
+export {REGION_ATTR, type BlockAlign, type EditableRegion, type RegionEdit, type RegionKind} from './types';
 export {stripRegionMarkers} from './markers';
 export {sanitizeForRender} from './sanitize';

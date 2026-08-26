@@ -17,7 +17,7 @@
 import type {DefaultTreeAdapterMap} from 'parse5';
 import {parse} from 'parse5';
 
-import {REGION_ATTR, type EditableRegion, type RegionEdit} from './types';
+import {REGION_ATTR, type BlockAlign, type EditableRegion, type RegionEdit} from './types';
 
 type Node = DefaultTreeAdapterMap['node'];
 type Element = DefaultTreeAdapterMap['element'];
@@ -42,6 +42,36 @@ const INLINE_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'a', 
  * `<b>` tag inside a `@media` block.
  */
 const RAW_TEXT_TAGS = new Set(['style', 'script', 'title', 'textarea', 'noscript', 'template']);
+
+/**
+ * Text-region elements an alignment can be written to.
+ *
+ * `text-align` sets the alignment of an element's *inline children*, so it only
+ * does anything on a block container — which is exactly what centring a button
+ * needs, since the button itself is an `inline-block` `<a>` inside a `<p>` or a
+ * `<td>`. Listing it out rather than excluding `INLINE_TAGS` keeps an unknown or
+ * custom tag out: offering an alignment that silently does nothing is worse than
+ * not offering one.
+ *
+ * A block tag also cannot host an image or link region inside its own start tag —
+ * no `src`, no `href` — so a start-tag rewrite can never clobber another edit.
+ */
+const ALIGNABLE_TAGS = new Set([
+  'p',
+  'div',
+  'td',
+  'th',
+  'li',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'blockquote',
+  'caption',
+  'center',
+]);
 
 /** A Liquid tag that opens a block must close inside the same region, or editing
  *  that region's inner HTML would strand the other half of the pair. */
@@ -95,6 +125,150 @@ function attrValueRange(html: string, span: {startOffset: number; endOffset: num
 
   // Unquoted attribute value: runs to the end of the span parse5 reported.
   return start < span.endOffset ? {start, end: span.endOffset} : null;
+}
+
+interface ScannedAttr {
+  /** Lowercased. */
+  name: string;
+  /** Range of the whole `name="value"` pair within the tag. */
+  start: number;
+  end: number;
+  /** Range of the value with quotes excluded, or null for a valueless attribute. */
+  valueStart: number | null;
+  valueEnd: number | null;
+  quoted: boolean;
+  value: string;
+}
+
+/**
+ * Splits a start tag into its attributes, offsets relative to the tag.
+ *
+ * Hand-written rather than a regex because the alternative — matching
+ * `\sstyle\s*=\s*"[^"]*"` against the tag — also matches inside another
+ * attribute's value, and `alt="see style=1"` would then be rewritten as if it
+ * were the style attribute. Byte fidelity outside the one declaration being
+ * changed is the promise this whole module rests on, so the scan is exact.
+ *
+ * parse5 is not used here: its attribute locations are relative to the whole
+ * document, and the callers below hold a detached tag string.
+ */
+function scanStartTagAttrs(tag: string): ScannedAttr[] {
+  const attrs: ScannedAttr[] = [];
+  const isSpace = (c: string | undefined) => c !== undefined && /\s/.test(c);
+
+  // Past `<` and the tag name.
+  let i = 1;
+  while (i < tag.length && !/[\s/>]/.test(tag[i] ?? '>')) i++;
+
+  while (i < tag.length) {
+    while (isSpace(tag[i])) i++;
+    const c = tag[i];
+    if (c === undefined || c === '>' || c === '/') break;
+
+    const start = i;
+    while (i < tag.length && !/[\s=/>]/.test(tag[i] ?? '>')) i++;
+    const name = tag.slice(start, i).toLowerCase();
+
+    let cursor = i;
+    while (isSpace(tag[cursor])) cursor++;
+
+    if (tag[cursor] !== '=') {
+      attrs.push({name, start, end: i, valueStart: null, valueEnd: null, quoted: false, value: ''});
+      continue;
+    }
+
+    cursor++;
+    while (isSpace(tag[cursor])) cursor++;
+
+    const quote = tag[cursor];
+    if (quote === '"' || quote === "'") {
+      const close = tag.indexOf(quote, cursor + 1);
+      const valueEnd = close === -1 ? tag.length : close;
+      attrs.push({
+        name,
+        start,
+        end: Math.min(valueEnd + 1, tag.length),
+        valueStart: cursor + 1,
+        valueEnd,
+        quoted: true,
+        value: tag.slice(cursor + 1, valueEnd),
+      });
+      i = Math.min(valueEnd + 1, tag.length);
+      continue;
+    }
+
+    const valueStart = cursor;
+    while (cursor < tag.length && !/[\s>]/.test(tag[cursor] ?? '>')) cursor++;
+    attrs.push({
+      name,
+      start,
+      end: cursor,
+      valueStart,
+      valueEnd: cursor,
+      quoted: false,
+      value: tag.slice(valueStart, cursor),
+    });
+    i = cursor;
+  }
+
+  return attrs;
+}
+
+/** Replaces any `text-align` declaration with `align`, leaving every other
+ *  declaration's original text untouched. */
+function mergeTextAlign(style: string, align: BlockAlign): string {
+  const kept = style
+    .split(';')
+    .filter(declaration => declaration.trim() !== '')
+    .filter(declaration => {
+      const colon = declaration.indexOf(':');
+      return colon === -1 || declaration.slice(0, colon).trim().toLowerCase() !== 'text-align';
+    });
+
+  kept.push(` text-align: ${align}`);
+  return `${kept.join(';').trim()};`;
+}
+
+/**
+ * Rewrites a start tag so its content is aligned, preserving every other byte.
+ *
+ * The legacy `align` attribute is rewritten alongside the style rather than left
+ * alone: Outlook's Word renderer honours it over `text-align`, so a tag that
+ * carried `align="left"` would keep rendering left-aligned in the one client the
+ * user is most likely to be checking against.
+ */
+export function setBlockAlign(startTag: string, align: BlockAlign): string {
+  const attrs = scanStartTagAttrs(startTag);
+  const splices: {start: number; end: number; text: string}[] = [];
+
+  const legacy = attrs.find(a => a.name === 'align');
+  if (legacy) {
+    splices.push(
+      legacy.valueStart !== null && legacy.valueEnd !== null && legacy.quoted
+        ? {start: legacy.valueStart, end: legacy.valueEnd, text: align}
+        : {start: legacy.start, end: legacy.end, text: `align="${align}"`},
+    );
+  }
+
+  const style = attrs.find(a => a.name === 'style');
+  if (style?.quoted && style.valueStart !== null && style.valueEnd !== null) {
+    splices.push({start: style.valueStart, end: style.valueEnd, text: mergeTextAlign(style.value, align)});
+  } else if (style) {
+    // Unquoted or valueless: no value range to write into, so the pair is replaced.
+    splices.push({start: style.start, end: style.end, text: `style="${mergeTextAlign(style.value, align)}"`});
+  } else {
+    // Inserted just past the last attribute, so a trailing `/>` or any spacing
+    // before the `>` survives as authored.
+    let insertAt = startTag.length - 1;
+    while (insertAt > 0 && /[\s/]/.test(startTag[insertAt - 1] ?? '')) insertAt--;
+    splices.push({start: insertAt, end: insertAt, text: ` style="text-align: ${align};"`});
+  }
+
+  let result = startTag;
+  for (const splice of splices.sort((a, b) => b.start - a.start)) {
+    result = result.slice(0, splice.start) + splice.text + result.slice(splice.end);
+  }
+  return result;
 }
 
 function isElement(node: Node): node is Element {
@@ -208,6 +382,15 @@ export function inferEditableRegions(html: string): EditableRegion[] {
               value,
               markerAt: marker,
               tagName: node.tagName,
+              ...(ALIGNABLE_TAGS.has(node.tagName)
+                ? {
+                    startTag: {
+                      start: loc.startTag.startOffset,
+                      end: loc.startTag.endOffset,
+                      value: html.slice(loc.startTag.startOffset, loc.startTag.endOffset),
+                    },
+                  }
+                : {}),
             });
             insideTextRegion = true;
           }
@@ -235,6 +418,11 @@ export function inferEditableRegions(html: string): EditableRegion[] {
  * twice. The throw is reserved for ranges that partially cross, which inference
  * cannot produce and which would mean a caller fabricated offsets.
  *
+ * **A `startTag` edit is not a nested edit.** It writes the element's own tag,
+ * which is adjacent to that element's inner range rather than inside it, so
+ * aligning a paragraph and retyping it are two independent splices that both
+ * apply — the collapse above would be wrong for them, and is asserted against.
+ *
  * Every edit carries `previous`, the bytes it was inferred against, and is
  * verified before anything is written. Ids are positional, so a source that
  * changed underneath the caller would otherwise reuse an id for a different
@@ -245,11 +433,14 @@ export function applyEdits(html: string, edits: RegionEdit[]): string {
 
   const seen = new Set<string>();
   for (const edit of edits) {
-    if (seen.has(edit.id)) {
+    // Keyed on the range, not the region: aligning a button and retitling it are
+    // two edits on the same id, and both must apply.
+    const key = `${edit.id}:${edit.target ?? 'value'}`;
+    if (seen.has(key)) {
       // Two values for one range: whichever we applied would be arbitrary.
       throw new Error(`Region "${edit.id}" was edited twice in one batch.`);
     }
-    seen.add(edit.id);
+    seen.add(key);
   }
 
   const byId = new Map(inferEditableRegions(html).map(r => [r.id, r]));
@@ -259,23 +450,37 @@ export function applyEdits(html: string, edits: RegionEdit[]): string {
     if (!region) {
       throw new Error(`Unknown region "${edit.id}" — the source changed since regions were inferred.`);
     }
-    if (region.value !== edit.previous) {
+
+    const isStartTag = edit.target === 'startTag';
+    const range = isStartTag ? region.startTag : region;
+    if (!range) {
+      throw new Error(`Region "${edit.id}" has no start tag to edit.`);
+    }
+    if (range.value !== edit.previous) {
       throw new Error(
         `Region "${edit.id}" no longer holds the content it was inferred against; the source changed underneath this edit.`,
       );
     }
-    return {region, value: edit.value};
+
+    return {region, isStartTag, start: range.start, end: range.end, value: edit.value};
   });
 
   // Outermost first, so a containing text region is seen before what it contains.
-  pending.sort((a, b) => a.region.start - b.region.start || b.region.end - a.region.end);
+  pending.sort((a, b) => a.start - b.start || b.end - a.end);
 
   const accepted: typeof pending = [];
 
   for (const candidate of pending) {
-    const enclosing = accepted.find(a => a.region.start <= candidate.region.start && candidate.region.end <= a.region.end);
+    const enclosing = accepted.find(a => a.start <= candidate.start && candidate.end <= a.end);
 
     if (enclosing) {
+      // A start tag sits outside its own region's range and outside every other
+      // region's, so neither side of a containment can be one. Asserted rather
+      // than handled: an enclosed start-tag edit would be dropped as superseded
+      // by a value that does not contain it.
+      if (enclosing.isStartTag || candidate.isStartTag) {
+        throw new Error(`Region "${candidate.region.id}" overlaps the start tag of "${enclosing.region.id}".`);
+      }
       // Contained in an already-accepted edit whose new value supersedes it.
       if (enclosing.region.kind !== 'text') {
         throw new Error(`Region "${candidate.region.id}" is nested inside non-text region "${enclosing.region.id}".`);
@@ -283,7 +488,7 @@ export function applyEdits(html: string, edits: RegionEdit[]): string {
       continue;
     }
 
-    const crossing = accepted.find(a => candidate.region.start < a.region.end && a.region.start < candidate.region.end);
+    const crossing = accepted.find(a => candidate.start < a.end && a.start < candidate.end);
     if (crossing) {
       throw new Error(`Region "${candidate.region.id}" partially overlaps "${crossing.region.id}"; edits cannot be applied.`);
     }
@@ -292,8 +497,8 @@ export function applyEdits(html: string, edits: RegionEdit[]): string {
   }
 
   let result = html;
-  for (const {region, value} of [...accepted].reverse()) {
-    result = result.slice(0, region.start) + value + result.slice(region.end);
+  for (const {start, end, value} of [...accepted].reverse()) {
+    result = result.slice(0, start) + value + result.slice(end);
   }
 
   return result;

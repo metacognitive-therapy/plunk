@@ -1,9 +1,16 @@
 import {Button, Dialog, DialogContent, DialogHeader, DialogTitle, Input, Label} from '@plunk/ui';
-import {Bold, Italic, Link2, Monitor, Smartphone, Tablet, Underline} from 'lucide-react';
+import {AlignCenter, AlignLeft, AlignRight, Bold, Italic, Link2, Underline} from 'lucide-react';
 import {useCallback, useEffect, useRef, useState} from 'react';
 
 import {detectCustomHtmlPatterns, wrapEmailBody} from '../../lib/emailStyles';
-import {REGION_ATTR, stripRegionMarkers, sanitizeForRender, type EditableRegion, type RegionEdit} from '../../lib/htmlTemplate';
+import {
+  REGION_ATTR,
+  stripRegionMarkers,
+  sanitizeForRender,
+  type BlockAlign,
+  type EditableRegion,
+  type RegionEdit,
+} from '../../lib/htmlTemplate';
 import {network} from '../../lib/network';
 import {DEVICE_WIDTHS, DEVICES, type PreviewDevice} from './PreviewPane';
 
@@ -33,6 +40,14 @@ interface ActiveEdit {
   baseline: string;
   /** A href change made through the toolbar while this element was focused. */
   hrefEdit: RegionEdit | null;
+  /**
+   * An alignment change made through the toolbar while this element was focused.
+   *
+   * Separate from the text edit because it lands in a different byte range — the
+   * element's own start tag rather than its inner content — so unlike `hrefEdit`
+   * it is never carried by the new innerHTML and both always apply.
+   */
+  alignEdit: RegionEdit | null;
 }
 
 interface EditablePaneProps {
@@ -69,7 +84,13 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  const [toolbar, setToolbar] = useState<{top: number; left: number; hasLink: boolean} | null>(null);
+  const [toolbar, setToolbar] = useState<{
+    top: number;
+    left: number;
+    hasLink: boolean;
+    /** Null when the region's element is inline, where `text-align` does nothing. */
+    align: BlockAlign | null;
+  } | null>(null);
   // Carries the element for the same reason `linkTarget` does: the swap has to be
   // written to the live DOM. The iframe is no longer rewritten on our own edits,
   // so nothing else would ever show it.
@@ -89,6 +110,9 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
    * land a beat too late to be saved.
    */
   const applyEditsRef = useRef<typeof import('../../lib/htmlTemplate/regions').applyEdits | null>(null);
+
+  /** `setBlockAlign`, held from the same dynamic import and for the same reason. */
+  const setBlockAlignRef = useRef<typeof import('../../lib/htmlTemplate/regions').setBlockAlign | null>(null);
 
   /**
    * The exact string this component last handed to `onChange`, held until the
@@ -156,6 +180,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     // this away, but when the anchor *is* the text region its href sits outside
     // that range and only this edit writes it.
     if (active.hrefEdit) edits.push(active.hrefEdit);
+    if (active.alignEdit) edits.push(active.alignEdit);
 
     applyRegionEdits(edits);
   }, [applyRegionEdits]);
@@ -178,7 +203,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     return () => document.removeEventListener('mousedown', onOutsideMouseDown, true);
   }, [commitActive]);
 
-  const positionToolbar = useCallback((element: HTMLElement, hasLink: boolean) => {
+  const positionToolbar = useCallback((element: HTMLElement, region: EditableRegion, hasLink: boolean) => {
     const iframe = iframeRef.current;
     const wrapper = wrapperRef.current;
     if (!iframe || !wrapper) return;
@@ -187,12 +212,45 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     const iframeRect = iframe.getBoundingClientRect();
     const wrapperRect = wrapper.getBoundingClientRect();
 
+    // Read back from the rendered element rather than from the region's start tag:
+    // most templates align through their stylesheet, and the source would say
+    // nothing at all for an element the reader can plainly see is centred.
+    const computed = region.startTag ? iframe.contentWindow?.getComputedStyle(element).textAlign : undefined;
+    const resolved = computed === 'start' ? 'left' : computed === 'end' ? 'right' : computed;
+
     setToolbar({
       top: iframeRect.top - wrapperRect.top + rect.top - 44,
       left: iframeRect.left - wrapperRect.left + rect.left,
       hasLink,
+      align: resolved === 'left' || resolved === 'center' || resolved === 'right' ? resolved : null,
     });
   }, []);
+
+  /** Writes an alignment onto the active element's own start tag. */
+  const applyAlign = useCallback(
+    (align: BlockAlign) => {
+      const active = activeRef.current;
+      const setBlockAlign = setBlockAlignRef.current;
+      const startTag = active?.region.startTag;
+      if (!active || !startTag || !setBlockAlign) return;
+
+      // Written to the live DOM for the same reason a href change is: the iframe is
+      // not rewritten on our own edits, so nothing else would ever show it.
+      active.element.style.textAlign = align;
+      // Always derived from the original tag, never from the previous alignment's
+      // output, so switching centre → left stays a single replacement.
+      active.alignEdit = {
+        id: active.region.id,
+        target: 'startTag',
+        value: setBlockAlign(startTag.value, align),
+        previous: startTag.value,
+      };
+
+      positionToolbar(active.element, active.region, Boolean(active.element.querySelector('a')));
+      active.element.focus();
+    },
+    [positionToolbar],
+  );
 
   // Renders the template into the iframe and wires click routing. Keyed on `html`
   // alone: after a commit the parent hands back the spliced source and everything
@@ -208,9 +266,12 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     lastEmittedRef.current = null;
 
     void (async () => {
-      const {applyEdits, inferEditableRegions, injectRegionMarkers} = await import('../../lib/htmlTemplate/regions');
+      const {applyEdits, inferEditableRegions, injectRegionMarkers, setBlockAlign} = await import(
+        '../../lib/htmlTemplate/regions'
+      );
       if (cancelled) return;
       applyEditsRef.current = applyEdits;
+      setBlockAlignRef.current = setBlockAlign;
 
       const regions = inferEditableRegions(html);
       regionsRef.current = new Map(regions.map(r => [r.id, r]));
@@ -289,7 +350,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
           return;
         }
         if (activeRef.current?.element === text) {
-          positionToolbar(text, Boolean(text.closest('a') ?? text.querySelector('a')));
+          positionToolbar(text, activeRef.current.region, Boolean(text.closest('a') ?? text.querySelector('a')));
           return;
         }
 
@@ -301,8 +362,14 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
 
         text.contentEditable = 'true';
         text.focus();
-        activeRef.current = {region, element: text, baseline: stripRegionMarkers(text.innerHTML), hrefEdit: null};
-        positionToolbar(text, Boolean(text.closest('a') ?? text.querySelector('a')));
+        activeRef.current = {
+          region,
+          element: text,
+          baseline: stripRegionMarkers(text.innerHTML),
+          hrefEdit: null,
+          alignEdit: null,
+        };
+        positionToolbar(text, region, Boolean(text.closest('a') ?? text.querySelector('a')));
       };
 
       const onKeyDown = (event: KeyboardEvent) => {
@@ -311,7 +378,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
 
       const onScroll = () => {
         const active = activeRef.current;
-        if (active) positionToolbar(active.element, Boolean(active.element.querySelector('a')));
+        if (active) positionToolbar(active.element, active.region, Boolean(active.element.querySelector('a')));
       };
 
       doc.addEventListener('click', onClick, true);
@@ -484,6 +551,31 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
             >
               <Underline className="h-3.5 w-3.5" />
             </Button>
+            {toolbar.align !== null && (
+              <>
+                <span className="mx-0.5 w-px self-stretch bg-neutral-200" />
+                {(
+                  [
+                    ['left', AlignLeft, 'Align left'],
+                    ['center', AlignCenter, 'Center'],
+                    ['right', AlignRight, 'Align right'],
+                  ] as const
+                ).map(([align, Icon, label]) => (
+                  <Button
+                    key={align}
+                    type="button"
+                    variant={toolbar.align === align ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    title={label}
+                    onClick={() => applyAlign(align)}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </Button>
+                ))}
+                <span className="mx-0.5 w-px self-stretch bg-neutral-200" />
+              </>
+            )}
             {toolbar.hasLink && (
               <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" title="Edit link" onClick={openLinkDialog}>
                 <Link2 className="h-3.5 w-3.5" />

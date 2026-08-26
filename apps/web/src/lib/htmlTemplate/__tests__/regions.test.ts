@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
 
-import {applyEdits, hasBalancedLiquidBlocks, inferEditableRegions, injectRegionMarkers} from '../regions';
+import {applyEdits, hasBalancedLiquidBlocks, inferEditableRegions, injectRegionMarkers, setBlockAlign} from '../regions';
 import type {EditableRegion} from '../types';
 
 /**
@@ -379,5 +379,91 @@ describe('injectRegionMarkers', () => {
     const html = '<table><tr><td></td></tr></table>';
 
     expect(injectRegionMarkers(html, inferEditableRegions(html))).toBe(html);
+  });
+});
+
+describe('block alignment', () => {
+  /** The shape a styled email button actually arrives in: an inline-block anchor
+   *  inside a block container, which is the element the alignment has to land on. */
+  const BUTTON = '<td class="cell"><p><a href="https://example.com" class="btn">Read more</a></p></td>';
+
+  const alignable = (html: string) => inferEditableRegions(html).find(r => r.startTag);
+
+  it('records the start tag of a block text region', () => {
+    const region = alignable(BUTTON);
+
+    expect(region?.tagName).toBe('p');
+    expect(region?.startTag?.value).toBe('<p>');
+    // Adjacent to the inner range, never inside it — which is what lets both apply.
+    expect(region?.startTag?.end).toBe(region?.start);
+  });
+
+  it('does not offer a start tag on an inline region, where text-align does nothing', () => {
+    const regions = inferEditableRegions('<td><a href="https://example.com">Go</a><table><tr><td>x</td></tr></table></td>');
+    const anchor = regions.find(r => r.kind === 'text' && r.tagName === 'a');
+
+    expect(anchor).toBeDefined();
+    expect(anchor?.startTag).toBeUndefined();
+  });
+
+  it('centres a button without touching any other byte', () => {
+    const region = alignable(BUTTON);
+    const next = applyEdits(BUTTON, [
+      {id: region!.id, target: 'startTag', value: setBlockAlign(region!.startTag!.value, 'center'), previous: region!.startTag!.value},
+    ]);
+
+    expect(next).toBe('<td class="cell"><p style="text-align: center;"><a href="https://example.com" class="btn">Read more</a></p></td>');
+  });
+
+  it('merges into an existing style attribute, preserving the other declarations verbatim', () => {
+    expect(setBlockAlign('<td style="background-color: #F5F6F1;padding-left: 30px">', 'center')).toBe(
+      '<td style="background-color: #F5F6F1;padding-left: 30px; text-align: center;">',
+    );
+  });
+
+  it('replaces an alignment already declared rather than stacking a second one', () => {
+    const once = setBlockAlign('<p style="color: red; text-align: center;">', 'right');
+
+    expect(once).toBe('<p style="color: red; text-align: right;">');
+    expect(once.match(/text-align/g)).toHaveLength(1);
+  });
+
+  it('rewrites the legacy align attribute too, which Outlook honours over the style', () => {
+    expect(setBlockAlign('<td align="left" width="600">', 'center')).toBe(
+      '<td align="center" width="600" style="text-align: center;">',
+    );
+  });
+
+  it('leaves an attribute value that merely looks like a style declaration alone', () => {
+    expect(setBlockAlign('<p title="use style=&quot;x&quot;">', 'center')).toBe(
+      '<p title="use style=&quot;x&quot;" style="text-align: center;">',
+    );
+  });
+
+  it('applies an alignment and a retype of the same element in one batch', () => {
+    const region = alignable(BUTTON)!;
+    const next = applyEdits(BUTTON, [
+      {id: region.id, value: '<a href="https://example.com" class="btn">Start now</a>', previous: region.value},
+      {id: region.id, target: 'startTag', value: setBlockAlign(region.startTag!.value, 'center'), previous: region.startTag!.value},
+    ]);
+
+    expect(next).toContain('<p style="text-align: center;">');
+    expect(next).toContain('Start now');
+  });
+
+  it('refuses a start-tag edit inferred against different bytes', () => {
+    const region = alignable(BUTTON)!;
+
+    expect(() =>
+      applyEdits(BUTTON, [{id: region.id, target: 'startTag', value: '<p style="text-align: center;">', previous: '<p class="stale">'}]),
+    ).toThrow(/no longer holds the content/);
+  });
+
+  it('refuses a start-tag edit on a region that has none', () => {
+    const link = inferEditableRegions(BUTTON).find(r => r.kind === 'link')!;
+
+    expect(() => applyEdits(BUTTON, [{id: link.id, target: 'startTag', value: '<a>', previous: link.value}])).toThrow(
+      /no start tag/,
+    );
   });
 });
