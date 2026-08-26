@@ -77,10 +77,20 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * `applyEdits`, held from the render effect's dynamic import.
+   *
+   * Kept here so a commit is *synchronous*. Committing through an `await` would
+   * push `onChange` past the end of the current event, which is exactly the window
+   * in which a Save button elsewhere on the page reads the value — the edit would
+   * land a beat too late to be saved.
+   */
+  const applyEditsRef = useRef<typeof import('../../lib/htmlTemplate/regions').applyEdits | null>(null);
+
   /** Splices one batch into the original and hands it up. */
-  const applyRegionEdits = useCallback(async (edits: RegionEdit[]) => {
-    if (edits.length === 0) return;
-    const {applyEdits} = await import('../../lib/htmlTemplate/regions');
+  const applyRegionEdits = useCallback((edits: RegionEdit[]) => {
+    const applyEdits = applyEditsRef.current;
+    if (edits.length === 0 || !applyEdits) return;
     try {
       onChangeRef.current(applyEdits(htmlRef.current, edits));
       setError(null);
@@ -111,8 +121,26 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     // that range and only this edit writes it.
     if (active.hrefEdit) edits.push(active.hrefEdit);
 
-    void applyRegionEdits(edits);
+    applyRegionEdits(edits);
   }, [applyRegionEdits]);
+
+  // An edit is committed when focus leaves the element, and every in-iframe path
+  // does that. A click in the *parent* document does not: pressing Save on the page
+  // around this editor would otherwise drop the element still being edited on the
+  // floor, silently. Clicks inside the iframe never reach this listener — it is a
+  // separate document — so anything that arrives here is outside the edit surface,
+  // except this component's own toolbar and dialogs.
+  useEffect(() => {
+    const onOutsideMouseDown = (event: MouseEvent) => {
+      if (!activeRef.current) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.('[data-plunk-ui]')) return;
+      commitActive();
+    };
+
+    document.addEventListener('mousedown', onOutsideMouseDown, true);
+    return () => document.removeEventListener('mousedown', onOutsideMouseDown, true);
+  }, [commitActive]);
 
   const positionToolbar = useCallback((element: HTMLElement, hasLink: boolean) => {
     const iframe = iframeRef.current;
@@ -142,8 +170,9 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     if (!iframe) return;
 
     void (async () => {
-      const {inferEditableRegions, injectRegionMarkers} = await import('../../lib/htmlTemplate/regions');
+      const {applyEdits, inferEditableRegions, injectRegionMarkers} = await import('../../lib/htmlTemplate/regions');
       if (cancelled) return;
+      applyEditsRef.current = applyEdits;
 
       const regions = inferEditableRegions(html);
       regionsRef.current = new Map(regions.map(r => [r.id, r]));
@@ -242,7 +271,10 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
 
     return () => {
       cancelled = true;
-      activeRef.current = null;
+      // Commit rather than discard. After a commit of our own this is a no-op —
+      // `activeRef` is already null — but a device switch mid-edit re-runs this
+      // effect, and dropping the in-progress edit there would be silent.
+      commitActive();
       setToolbar(null);
       teardown?.();
     };
@@ -292,7 +324,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     if (active) {
       active.hrefEdit = edit;
     } else {
-      void applyRegionEdits([edit]);
+      applyRegionEdits([edit]);
     }
     setLinkTarget(null);
   };
@@ -314,7 +346,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
     }
     if (!src) return;
 
-    await applyRegionEdits([{id: imageTarget.regionId, value: src, previous: imageTarget.previous}]);
+    applyRegionEdits([{id: imageTarget.regionId, value: src, previous: imageTarget.previous}]);
     setImageTarget(null);
     setImageFile(null);
     setImageUrl('');
@@ -355,6 +387,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
       <div ref={wrapperRef} className="relative p-4 bg-neutral-50 flex justify-center items-start overflow-auto min-h-[400px]">
         {toolbar && (
           <div
+            data-plunk-ui
             className="absolute z-20 flex gap-1 rounded-md border border-neutral-300 bg-white p-1 shadow-lg"
             style={{top: toolbar.top, left: toolbar.left}}
             // Keeping focus in the iframe is what preserves the selection the
@@ -396,7 +429,9 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
       </div>
 
       <Dialog open={Boolean(linkTarget)} onOpenChange={open => !open && setLinkTarget(null)}>
-        <DialogContent>
+        {/* Portals to `document.body`, so it needs the marker for the outside-click
+            commit listener to leave the in-progress edit alone. */}
+        <DialogContent data-plunk-ui>
           <DialogHeader>
             <DialogTitle>Edit link</DialogTitle>
           </DialogHeader>
@@ -423,7 +458,7 @@ export function EditablePane({html, onChange, device, onDeviceChange}: EditableP
       </Dialog>
 
       <Dialog open={Boolean(imageTarget)} onOpenChange={open => !open && setImageTarget(null)}>
-        <DialogContent>
+        <DialogContent data-plunk-ui>
           <DialogHeader>
             <DialogTitle>Replace image</DialogTitle>
           </DialogHeader>
