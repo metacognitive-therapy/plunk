@@ -1,51 +1,60 @@
-# Issue: Fix the performance-test fixtures
+# Issue: Performance-test fragility under host contention
 
-Status: ready-for-agent
-Date: 2026-08-27
+Status: corrected — original diagnosis was wrong
+Date: 2026-08-27 (rewritten 2026-08-28)
 
 ## Parent
 
 Not from the identity PRD — found while verifying `docs/issues/00-extract-mailable-contact-predicate.md`.
 
-## What to build
+## Correction
 
-`test/performance/pagination.perf.test.ts` fails on a clean `next`, independently of any feature
-work, and CI runs `yarn test:run` with the performance tests included — so the branch's safety net
-is already red. That matters beyond tidiness: a suite that fails for its own reasons cannot tell
-anyone that a real regression has landed.
+The original version of this issue claimed `test/performance/pagination.perf.test.ts` fails on a
+clean `next`, and blamed the file's `beforeEach` for seeding 10,000 contacts against a 30s
+`hookTimeout`. **Both claims are wrong**, and the fix they implied would have been a change to
+accommodate a problem that isn't there.
 
-The mechanism, diagnosed rather than guessed:
+Measured on 2026-08-28 with no competing processes on the host:
 
-- Vitest is configured with `hookTimeout: 30000`.
-- The file's `beforeEach` seeds 10,000 contacts. On a contended or slow machine that alone exceeds 30s.
-- Several tests in the file declare 60s, 90s, and 120s timeouts precisely because this work is slow —
-  but the *hook* budget is separate and stays at 30s.
-- When the hook times out, the global `afterEach` in the test setup still runs and issues
-  `TRUNCATE ... RESTART IDENTITY CASCADE`, deleting the project row the test is still using.
-- The test then fails with a foreign-key violation on `events_projectId_fkey`, or an assertion like
-  `expected +0 to be 10000` — symptoms that look like application bugs and are not.
+- The file's `beforeEach` creates a project and nothing else. It is fast. The 10,000-contact seeds
+  live inside individual tests, which declare their own 60s/90s/120s timeouts.
+- `npx vitest run test/performance/pagination.perf.test.ts` → 15/15 passed.
+- `npx vitest run test/performance/` → 37/37 passed, 4 files.
+- `npx vitest run --project=plunk` (the full CI suite, performance tests included) → **1361/1361
+  passed, 52 files**.
 
-Evidence: each failing test passes when run alone with `-t`, and fails when run alongside its
-siblings. Failure count varies run to run (7, then 10, then 7) with no code change, which is the
-signature of a timing-dependent fixture rather than a broken assertion.
+## The actual mechanism
 
-Fix the fixture so the suite is deterministic. The direct cause is the hook budget being smaller
-than the work the hook does, so raising `hookTimeout` for this project is the minimum change — but
-seeding 10,000 rows before *every* test in the file is the underlying waste, and moving that to a
-one-time setup shared across the file would remove the pressure rather than accommodate it. Prefer
-the latter if the tests can share a seeded project without cross-contaminating.
+The failures were real but externally caused: multiple `vitest` processes running concurrently on
+the same host, against the same Postgres container. Vitest uses `pool: 'forks'` with `maxWorkers: 4`
+and per-worker databases (`plunk_test_w1..w4`), which isolates *data* but not the *machine* — CPU
+and the single Postgres instance are shared. A second suite started alongside the first roughly
+doubles the load, and timing-sensitive work (10k-row seeds, throughput assertions, token-bucket
+refill windows) starts missing its budget.
 
-Whatever the approach, the truncating `afterEach` must not be able to run while a test still holds
-references to the rows it deletes.
+This repeatedly presented as an application bug: FK violations on `events_projectId_fkey`, or
+`expected +0 to be 10000`. The tell is that the failure count varies run to run with no code
+change, and that every failing test passes when its file is run alone.
 
-## Acceptance criteria
+`apps/api/src/middleware/__tests__/rateLimit.test.ts` ("never refills past the burst ceiling while
+idle") is load-sensitive by construction for the same reason: `refillPerSecond: 100`, `burst: 2`,
+a 100ms sleep, then three sequential Redis round-trips expected to consume exactly two tokens. On a
+loaded machine the calls accrue a third.
 
-- [ ] `npx vitest run test/performance/pagination.perf.test.ts` passes reliably, repeated at least three times.
-- [ ] The full `npx vitest run --project=plunk` passes with no failures in `test/performance/`.
-- [ ] No test's assertions are weakened or its thresholds relaxed to achieve this — the fixture is fixed, not the expectation.
-- [ ] The memory assertions still measure retained memory, keeping the forced-collection behaviour the config comments describe.
-- [ ] `test/performance/template-rendering.perf.test.ts` throughput assertions are reviewed for the same class of machine-dependence, and either made robust or documented as environment-sensitive.
+## What is actually worth doing
+
+Not a fixture rewrite. The suite is deterministic when it has the machine to itself, which is the
+condition CI runs under.
+
+- [ ] Document the constraint where it will be read — one line in the testing section of
+      `CLAUDE.md`: never run two vitest invocations concurrently on this repo; timing-sensitive
+      tests will produce false failures.
+- [ ] Consider making the `rateLimit` idle-refill test tolerant of an extra accrued token, since
+      it asserts a ceiling rather than an exact count. Weakening it is acceptable only if the
+      ceiling property it exists to protect is still asserted.
+- [ ] `test/performance/template-rendering.perf.test.ts` throughput assertions carry the same
+      machine-dependence. Review and either make robust or document as environment-sensitive.
 
 ## Blocked by
 
-None - can start immediately
+None
