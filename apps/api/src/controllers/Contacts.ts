@@ -219,6 +219,26 @@ export class Contacts {
   }
 
   /**
+   * DELETE /contacts/external/:externalId
+   * Delete (anonymize) a contact addressed by its external id rather than its internal id.
+   */
+  @Delete('external/:externalId')
+  @Middleware([requireAuth, requireEmailVerified, contactWriteRateLimit])
+  @CatchAsync
+  public async deleteByExternalId(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const externalId = req.params.externalId;
+
+    if (!externalId) {
+      return res.status(400).json({error: 'External ID is required'});
+    }
+
+    await ContactService.anonymizeByExternalId(auth.projectId!, externalId);
+
+    return res.status(204).send();
+  }
+
+  /**
    * DELETE /contacts/:id
    * Delete a contact
    */

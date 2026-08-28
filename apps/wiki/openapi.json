@@ -2844,7 +2844,7 @@
           "Contacts"
         ],
         "summary": "Delete contact",
-        "description": "Permanently delete a contact",
+        "description": "Anonymizes the contact: nulls its email, clears its `data` attributes, strips the payload from every event it fired, and sets `deletedAt`. The row and its send history (Email records) are retained -- deleting an already-anonymized contact is a no-op, not an error.",
         "operationId": "deleteContact",
         "parameters": [
           {
@@ -2858,7 +2858,38 @@
         ],
         "responses": {
           "204": {
-            "description": "Contact deleted successfully (no content returned)"
+            "description": "Contact anonymized successfully (no content returned)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/contacts/external/{externalId}": {
+      "delete": {
+        "tags": [
+          "Contacts"
+        ],
+        "summary": "Delete contact by external ID",
+        "description": "Anonymizes a contact addressed by its project-scoped external ID rather than its internal ID. Same semantics as `DELETE /contacts/{id}`: the row and its send history are retained, only reachability is removed. A no-op, not an error, if the contact is already anonymized.",
+        "operationId": "deleteContactByExternalId",
+        "parameters": [
+          {
+            "name": "externalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Contact anonymized successfully (no content returned)"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"

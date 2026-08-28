@@ -375,7 +375,11 @@ export function registerContactTools(ctx: ToolContext, client: PlunkClient): voi
     {
       title: 'Delete contact',
       description: [
-        '**Purpose:** Permanently delete a contact and their event history.',
+        '**Purpose:** Erase a contact, by email, external ID, or internal ID. This anonymizes the',
+        "contact rather than destroying it: their email is nulled and their attributes are cleared,",
+        'but the record and their send history are retained (so campaign stats stay accurate and any',
+        'unsubscribe/manage links already delivered to them keep working). They become permanently',
+        'unreachable and are dropped from every count and audience.',
         '',
         '**NOT for:** Stopping email to someone while keeping their record — use',
         '`plunk_unsubscribe_contact` instead. That is almost always what the user actually wants,',
@@ -383,19 +387,24 @@ export function registerContactTools(ctx: ToolContext, client: PlunkClient): voi
         '',
         '**Returns:** Confirmation of deletion.',
         '',
-        '**This cannot be undone.** Confirm with the user before calling it.',
+        '**This cannot be undone.** Confirm with the user before calling it. Deleting an already-',
+        'deleted contact is a no-op, not an error.',
         '',
         '**Key trigger phrases:** "delete this contact", "remove them entirely", "GDPR erase"',
       ].join('\n'),
-      inputSchema: z.object({
-        id: z.string().describe('The contact ID to delete permanently.'),
-      }),
+      inputSchema: z.object(contactRef),
       annotations: {readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true},
     },
-    async ({id}) =>
+    async ({id, email, externalId}) =>
       runTool(async () => {
-        await client.request({method: 'DELETE', path: `/contacts/${encodeURIComponent(id)}`});
-        return jsonResult('Contact deleted.', {id, deleted: true});
+        const resolved = await resolveContact(client, {id, email, externalId});
+
+        if ('error' in resolved) {
+          return errorResult(resolved.error);
+        }
+
+        await client.request({method: 'DELETE', path: `/contacts/${encodeURIComponent(resolved.id)}`});
+        return jsonResult('Contact deleted.', {id: resolved.id, deleted: true});
       }),
   );
 }

@@ -545,7 +545,7 @@ export default function ContactDetailPage() {
           onOpenChange={setShowDeleteDialog}
           onConfirm={handleDelete}
           title={`Delete ${contact.email}?`}
-          description="Their events and email history are deleted too. This can't be undone."
+          description="Their email and details are erased and they'll never receive email again, but their send history is kept. This can't be undone."
           confirmText="Delete contact"
           variant="destructive"
         />

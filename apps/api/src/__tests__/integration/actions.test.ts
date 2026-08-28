@@ -1372,6 +1372,27 @@ describe('Actions API Integration Tests', () => {
       });
     });
 
+    describe('case: contact has been anonymized (docs/issues/07-anonymize-replaces-hard-delete.md)', () => {
+      it('refuses to re-identify and resurrect an anonymized contact with a new email', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        const contact = await factories.createContact({
+          projectId,
+          email: 'erased@example.com',
+          externalId: 'user_77',
+        });
+        await ContactService.delete(projectId, contact.id);
+
+        await expect(
+          ContactService.identify(projectId, 'user_77', undefined, undefined, 'new@example.com'),
+        ).rejects.toMatchObject({code: 409});
+
+        const stillErased = await prisma.contact.findUnique({where: {id: contact.id}});
+        expect(stillErased?.email).toBeNull();
+        expect(stillErased?.deletedAt).not.toBeNull();
+      });
+    });
+
     describe('normalizeEmail on the identify path', () => {
       it('treats case-variant emails as the same contact rather than creating a duplicate', async () => {
         const {ContactService} = await import('../../services/ContactService.js');

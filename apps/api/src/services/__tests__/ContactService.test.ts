@@ -473,24 +473,170 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
       expect(count).toBe(3);
     });
 
-    it('should delete contact', async () => {
-      const contact = await factories.createContact({projectId});
-
-      await ContactService.delete(projectId, contact.id);
-
-      const deleted = await prisma.contact.findUnique({
-        where: {id: contact.id},
-      });
-
-      expect(deleted).toBeNull();
-    });
-
     it('should throw 404 when deleting non-existent contact', async () => {
       await expect(ContactService.delete(projectId, 'non-existent')).rejects.toThrow(/not found/i);
     });
 
     it('should throw 404 when getting non-existent contact', async () => {
       await expect(ContactService.get(projectId, 'non-existent')).rejects.toThrow(/not found/i);
+    });
+  });
+
+  describe('delete() anonymizes instead of destroying the row', () => {
+    it('nulls the email, clears data, strips event payloads, and sets deletedAt -- the row survives', async () => {
+      const contact = await factories.createContact({
+        projectId,
+        email: 'erase-me@example.com',
+        data: {plan: 'pro', firstName: 'Jamie'},
+      });
+      const event = await prisma.event.create({
+        data: {projectId, contactId: contact.id, name: 'custom.event', data: {secret: 'do-not-keep'}},
+      });
+
+      await ContactService.delete(projectId, contact.id);
+
+      const anonymized = await prisma.contact.findUnique({where: {id: contact.id}});
+      expect(anonymized).not.toBeNull(); // no path destroys the row
+      expect(anonymized?.email).toBeNull();
+      expect(anonymized?.data).toBeNull();
+      expect(anonymized?.deletedAt).not.toBeNull();
+
+      const strippedEvent = await prisma.event.findUnique({where: {id: event.id}});
+      expect(strippedEvent).not.toBeNull(); // the event row survives too
+      expect(strippedEvent?.data).toBeNull();
+    });
+
+    it('retains the contact row and its send history; campaign counters are unchanged', async () => {
+      const contact = await factories.createContact({projectId});
+      const campaign = await factories.createCampaign({projectId});
+      // Campaign counters are denormalized off Email rows, not recomputed from Contact -- set
+      // them directly to prove anonymizing the contact can't touch them.
+      const withCounters = await prisma.campaign.update({
+        where: {id: campaign.id},
+        data: {sentCount: 5, openedCount: 2},
+      });
+      const email = await factories.createEmail({
+        projectId,
+        contactId: contact.id,
+        campaignId: campaign.id,
+        sentAt: new Date(),
+        opens: 1,
+      });
+
+      await ContactService.delete(projectId, contact.id);
+
+      const survivingEmail = await prisma.email.findUnique({where: {id: email.id}});
+      expect(survivingEmail).not.toBeNull(); // send history is retained, not cascaded away
+      expect(survivingEmail?.contactId).toBe(contact.id);
+
+      const unchangedCampaign = await prisma.campaign.findUnique({where: {id: campaign.id}});
+      expect(unchangedCampaign?.sentCount).toBe(withCounters.sentCount);
+      expect(unchangedCampaign?.openedCount).toBe(withCounters.openedCount);
+    });
+
+    it('excludes the anonymized contact from the mailable count and from the lead count', async () => {
+      await factories.createContact({projectId}); // mailable
+      const lead = await factories.createContact({projectId, email: null});
+      const anonymized = await factories.createContact({projectId});
+      await ContactService.delete(projectId, anonymized.id);
+
+      const result = await ContactService.list(projectId);
+
+      expect(result.mailable).toBe(1);
+      // Only the true lead counts -- the anonymized contact also has a null email, but it is not
+      // an uncontacted prospect, so it must not inflate the lead headline.
+      expect(result.leads).toBe(1);
+      expect(result.data.some(c => c.id === lead.id)).toBe(true);
+      // The row is still listed (it exists), just excluded from both derived counts.
+      expect(result.data.some(c => c.id === anonymized.id)).toBe(true);
+    });
+
+    it('lets unsubscribe/subscribe and public lookups continue to resolve after anonymization', async () => {
+      const contact = await factories.createContact({projectId, subscribed: true});
+
+      await ContactService.delete(projectId, contact.id);
+
+      // Public GET by id (unsubscribe/manage page) still resolves.
+      const fetched = await ContactService.getById(contact.id);
+      expect(fetched.id).toBe(contact.id);
+
+      // The unsubscribe link embedded in already-delivered mail still takes effect.
+      const unsubscribed = await ContactService.unsubscribe(contact.id);
+      expect(unsubscribed.subscribed).toBe(false);
+
+      const resubscribed = await ContactService.subscribe(contact.id);
+      expect(resubscribed.subscribed).toBe(true);
+      expect(resubscribed.deletedAt).not.toBeNull(); // still anonymized -- subscribing doesn't undo it
+    });
+
+    it('anonymizes by external id', async () => {
+      const contact = await factories.createContact({projectId, externalId: 'user-42'});
+
+      await ContactService.anonymizeByExternalId(projectId, 'user-42');
+
+      const anonymized = await prisma.contact.findUnique({where: {id: contact.id}});
+      expect(anonymized?.email).toBeNull();
+      expect(anonymized?.deletedAt).not.toBeNull();
+      // externalId survives so a second call resolves to the same row instead of 404ing.
+      expect(anonymized?.externalId).toBe('user-42');
+    });
+
+    it('throws 404 anonymizing an unknown external id', async () => {
+      await expect(ContactService.anonymizeByExternalId(projectId, 'no-such-id')).rejects.toThrow(/not found/i);
+    });
+
+    it('is a no-op, not an error, when re-anonymizing an already-anonymized contact', async () => {
+      const contact = await factories.createContact({projectId});
+      await ContactService.delete(projectId, contact.id);
+      const firstPass = await prisma.contact.findUnique({where: {id: contact.id}});
+
+      await ContactService.delete(projectId, contact.id);
+
+      const secondPass = await prisma.contact.findUnique({where: {id: contact.id}});
+      expect(secondPass?.deletedAt?.getTime()).toBe(firstPass?.deletedAt?.getTime());
+    });
+
+    it('never resurrects an anonymized contact through identify on the same external id', async () => {
+      const contact = await factories.createContact({projectId, externalId: 'user-77'});
+      await ContactService.delete(projectId, contact.id);
+
+      await expect(ContactService.identify(projectId, 'user-77', undefined, undefined, 'new@example.com')).rejects.toThrow(
+        /anonymized/i,
+      );
+
+      const stillAnonymized = await prisma.contact.findUnique({where: {id: contact.id}});
+      expect(stillAnonymized?.email).toBeNull();
+    });
+
+    it('refuses to restore email or data through update(), but still allows a subscribed-only patch', async () => {
+      const contact = await factories.createContact({projectId, data: {plan: 'pro'}});
+      await ContactService.delete(projectId, contact.id);
+
+      await expect(ContactService.update(projectId, contact.id, {email: 'resurrected@example.com'})).rejects.toThrow(
+        /anonymized/i,
+      );
+      await expect(ContactService.update(projectId, contact.id, {data: {plan: 'pro'}})).rejects.toThrow(/anonymized/i);
+
+      const stillErased = await prisma.contact.findUnique({where: {id: contact.id}});
+      expect(stillErased?.email).toBeNull();
+      expect(stillErased?.data).toBeNull();
+
+      // Subscription state doesn't resurrect anything anonymize erased -- must still work,
+      // since the MCP unsubscribe tool PATCHes {subscribed} against any contact id.
+      const updated = await ContactService.update(projectId, contact.id, {subscribed: false});
+      expect(updated.subscribed).toBe(false);
+      expect(updated.deletedAt).not.toBeNull();
+    });
+
+    it('creates a fresh contact rather than resurrecting the old one when the same email is reused', async () => {
+      const original = await factories.createContact({projectId, email: 'reused@example.com'});
+      await ContactService.delete(projectId, original.id);
+
+      const recreated = await ContactService.create(projectId, {email: 'reused@example.com'});
+
+      expect(recreated.id).not.toBe(original.id);
+      expect(recreated.email).toBe('reused@example.com');
+      expect(recreated.deletedAt).toBeNull();
     });
   });
 
@@ -691,8 +837,8 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
       });
     });
 
-    describe('bulkDelete', () => {
-      it('should delete multiple contacts', async () => {
+    describe('bulkDelete (anonymizes, does not destroy rows)', () => {
+      it('should anonymize multiple contacts, retaining every row', async () => {
         const contact1 = await factories.createContact({projectId});
         const contact2 = await factories.createContact({projectId});
         const contact3 = await factories.createContact({projectId});
@@ -700,15 +846,21 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
         const result = await ContactService.bulkDelete(projectId, [contact1.id, contact2.id, contact3.id]);
 
         expect(result.deleted).toBe(3);
+        expect(result.unchanged).toBe(0);
 
         const contacts = await prisma.contact.findMany({
           where: {id: {in: [contact1.id, contact2.id, contact3.id]}},
         });
 
-        expect(contacts).toHaveLength(0);
+        expect(contacts).toHaveLength(3); // no path destroys a contact row
+        for (const contact of contacts) {
+          expect(contact.email).toBeNull();
+          expect(contact.data).toBeNull();
+          expect(contact.deletedAt).not.toBeNull();
+        }
       });
 
-      it('should only delete contacts belonging to the specified project', async () => {
+      it('should only anonymize contacts belonging to the specified project', async () => {
         const {project: otherProject} = await factories.createUserWithProject();
         const ownContact = await factories.createContact({projectId});
         const otherContact = await factories.createContact({projectId: otherProject.id});
@@ -720,20 +872,23 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
         const ownContactAfter = await prisma.contact.findUnique({where: {id: ownContact.id}});
         const otherContactAfter = await prisma.contact.findUnique({where: {id: otherContact.id}});
 
-        expect(ownContactAfter).toBeNull();
+        expect(ownContactAfter?.deletedAt).not.toBeNull();
         expect(otherContactAfter).not.toBeNull();
+        expect(otherContactAfter?.deletedAt).toBeNull(); // untouched, not anonymized by a foreign request
       });
 
       it('should handle empty contact IDs array', async () => {
         const result = await ContactService.bulkDelete(projectId, []);
 
         expect(result.deleted).toBe(0);
+        expect(result.unchanged).toBe(0);
       });
 
       it('should handle non-existent contact IDs gracefully', async () => {
         const result = await ContactService.bulkDelete(projectId, ['non-existent-1', 'non-existent-2']);
 
         expect(result.deleted).toBe(0);
+        expect(result.unchanged).toBe(0);
       });
 
       it('should handle large batches efficiently', async () => {
@@ -748,10 +903,11 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
           where: {id: {in: contactIds}},
         });
 
-        expect(remainingContacts).toHaveLength(0);
+        expect(remainingContacts).toHaveLength(200);
+        expect(remainingContacts.every(c => c.deletedAt !== null)).toBe(true);
       });
 
-      it('should delete both subscribed and unsubscribed contacts', async () => {
+      it('should anonymize both subscribed and unsubscribed contacts', async () => {
         const subscribed = await factories.createContact({projectId, subscribed: true});
         const unsubscribed = await factories.createContact({projectId, subscribed: false});
 
@@ -768,7 +924,19 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
         expect(result.deleted).toBe(1);
 
         const contact = await prisma.contact.findUnique({where: {id: existingContact.id}});
-        expect(contact).toBeNull();
+        expect(contact).not.toBeNull();
+        expect(contact?.deletedAt).not.toBeNull();
+      });
+
+      it('counts an already-anonymized contact as unchanged, not failed, on a second pass', async () => {
+        const contact = await factories.createContact({projectId});
+        const fresh = await factories.createContact({projectId});
+
+        const first = await ContactService.bulkDelete(projectId, [contact.id]);
+        expect(first).toEqual({deleted: 1, unchanged: 0});
+
+        const second = await ContactService.bulkDelete(projectId, [contact.id, fresh.id]);
+        expect(second).toEqual({deleted: 1, unchanged: 1});
       });
     });
 

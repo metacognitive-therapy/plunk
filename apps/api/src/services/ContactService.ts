@@ -104,7 +104,10 @@ export class ContactService {
     // conflating the two would make the headline math wrong the moment someone unsubscribes.
     const total = !cursor ? await prisma.contact.count({where}) : 0;
     const mailable = !cursor ? await prisma.contact.count({where: {...where, ...mailableContactWhere()}}) : undefined;
-    const leads = !cursor ? await prisma.contact.count({where: {...where, email: null}}) : undefined;
+    // Anonymized contacts have a null email too, but they aren't leads -- a lead is someone who
+    // hasn't given an email yet, not someone whose record was erased. Excluding `deletedAt` keeps
+    // them out of both counts rather than phantom-appearing as prospects.
+    const leads = !cursor ? await prisma.contact.count({where: {...where, email: null, deletedAt: null}}) : undefined;
 
     // Batch-fetch tags for the page in one query rather than per-contact, to
     // avoid N+1s.
@@ -289,6 +292,14 @@ export class ContactService {
     // First verify contact exists and belongs to project
     const existing = await this.get(projectId, contactId);
 
+    // Mirror the identify() guard: an anonymized contact must never regain an email or
+    // attributes through a plain update, or a PATCH would silently undo anonymize. Subscription
+    // changes (e.g. the MCP unsubscribe tool, which PATCHes {subscribed}) are still allowed --
+    // they don't resurrect anything anonymize erased.
+    if (existing.deletedAt != null && (data.email !== undefined || data.data !== undefined)) {
+      throw new HttpException(409, `Contact "${contactId}" has been anonymized and can no longer be updated`);
+    }
+
     const updateData: Prisma.ContactUpdateInput = {};
 
     if (data.email !== undefined) {
@@ -338,15 +349,70 @@ export class ContactService {
   }
 
   /**
-   * Delete a contact
+   * Anonymize a contact in place: null its email, clear its `data` attributes, strip the
+   * payload from every event it fired, and set `deletedAt`. The row and its send history
+   * (Email rows) are RETAINED -- destroying them would break unsubscribe/manage links already
+   * embedded in delivered mail and desync campaign counters, which are derived from Email rows
+   * rather than stored redundantly. See docs/issues/07-anonymize-replaces-hard-delete.md.
+   *
+   * `externalId` is deliberately left untouched: nulling it would make a second
+   * anonymize-by-external-id call 404 instead of resolving to the same (already anonymized) row,
+   * which is the no-op behaviour anonymization is supposed to have. `identifyAttempt` guards the
+   * one place that survival could otherwise be exploited to resurrect the contact.
+   *
+   * Idempotent: a contact that is already anonymized is returned unchanged rather than
+   * re-anonymized or rejected.
+   */
+  private static async anonymizeContact(contact: Contact): Promise<Contact> {
+    if (contact.deletedAt != null) {
+      return contact;
+    }
+
+    const [anonymized] = await prisma.$transaction([
+      prisma.contact.update({
+        where: {id: contact.id},
+        data: {
+          email: null,
+          data: Prisma.JsonNull,
+          deletedAt: new Date(),
+        },
+      }),
+      prisma.event.updateMany({
+        where: {contactId: contact.id},
+        data: {data: Prisma.JsonNull},
+      }),
+    ]);
+
+    return anonymized;
+  }
+
+  /**
+   * Delete a contact.
+   *
+   * This anonymizes rather than destroys the row -- see {@link anonymizeContact}. There is no
+   * flag or escape hatch back to a hard delete; every entry point (dashboard, API, MCP tool,
+   * bulk equivalents) resolves here or to {@link bulkDelete}.
    */
   public static async delete(projectId: string, contactId: string): Promise<void> {
     // First verify contact exists and belongs to project
-    await this.get(projectId, contactId);
+    const contact = await this.get(projectId, contactId);
 
-    await prisma.contact.delete({
-      where: {id: contactId},
-    });
+    await this.anonymizeContact(contact);
+  }
+
+  /**
+   * Delete (anonymize) a contact addressed by its project-scoped external id rather than its
+   * internal id -- see {@link delete} and {@link anonymizeContact}. Lets an integration that only
+   * knows the external id issue the erasure request directly.
+   */
+  public static async anonymizeByExternalId(projectId: string, externalId: string): Promise<void> {
+    const contact = await this.findByExternalId(projectId, externalId);
+
+    if (!contact) {
+      throw new HttpException(404, 'Contact not found');
+    }
+
+    await this.anonymizeContact(contact);
   }
 
   /**
@@ -506,6 +572,15 @@ export class ContactService {
         target = byEmail;
         bindingExternalId = true;
       }
+    }
+
+    // An anonymized contact (deletedAt set) must never regain an email or attributes through
+    // identify -- externalId survives anonymization deliberately (so a second anonymize-by-
+    // external-id call is a no-op rather than a 404), which means a later identify call for the
+    // same external id would otherwise land here and write a fresh email onto an erased row.
+    // Refuse rather than resurrect; the caller should identify with a new external id instead.
+    if (target?.deletedAt != null) {
+      throw new HttpException(409, `Contact with external ID "${externalId}" has been anonymized and can no longer be identified`);
     }
 
     // A lead (no email on file yet) gaining an email for the first time on this call ->
@@ -1134,17 +1209,40 @@ export class ContactService {
   }
 
   /**
-   * Bulk delete contacts
+   * Bulk delete (anonymize) contacts -- see {@link anonymizeContact}.
+   * `deleted` = contacts newly anonymized.
+   * `unchanged` = contacts that were already anonymized (no-op, not a failure), mirroring
+   * `bulkSubscribe`/`bulkUnsubscribe`'s convention.
    */
-  public static async bulkDelete(projectId: string, contactIds: string[]): Promise<{deleted: number}> {
-    const result = await prisma.contact.deleteMany({
-      where: {
-        id: {in: contactIds},
-        projectId,
-      },
+  public static async bulkDelete(projectId: string, contactIds: string[]): Promise<{deleted: number; unchanged: number}> {
+    const contacts = await prisma.contact.findMany({
+      where: {id: {in: contactIds}, projectId},
+      select: {id: true, deletedAt: true},
     });
 
-    return {deleted: result.count};
+    if (contacts.length === 0) {
+      return {deleted: 0, unchanged: 0};
+    }
+
+    const toAnonymizeIds = contacts.filter(c => c.deletedAt == null).map(c => c.id);
+    const unchanged = contacts.length - toAnonymizeIds.length;
+
+    if (toAnonymizeIds.length === 0) {
+      return {deleted: 0, unchanged};
+    }
+
+    const [updateResult] = await prisma.$transaction([
+      prisma.contact.updateMany({
+        where: {id: {in: toAnonymizeIds}, projectId},
+        data: {email: null, data: Prisma.JsonNull, deletedAt: new Date()},
+      }),
+      prisma.event.updateMany({
+        where: {contactId: {in: toAnonymizeIds}},
+        data: {data: Prisma.JsonNull},
+      }),
+    ]);
+
+    return {deleted: updateResult.count, unchanged};
   }
 
   /**

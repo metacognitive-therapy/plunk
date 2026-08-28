@@ -4,6 +4,7 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {API_URI, DASHBOARD_URI} from '../../app/constants';
 import {buildEmailHeaders} from '../../services/EmailHeaderService';
 import {Unsubscribe} from '../Unsubscribe';
+import {ContactService} from '../../services/ContactService';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 
 /**
@@ -142,6 +143,26 @@ describe('Unsubscribe controller', () => {
 
       expect(captured.status).toBe(200);
       const updated = await prisma.contact.findUnique({where: {id: contact.id}});
+      expect(updated?.subscribed).toBe(false);
+    });
+
+    /**
+     * The link embedded in mail already delivered before a contact anonymized itself (or was
+     * anonymized) must keep resolving -- see docs/issues/07-anonymize-replaces-hard-delete.md.
+     * The contact id in the URL never changes, so this only requires that anonymize doesn't
+     * destroy the row `subscribe`/`unsubscribe` look up by id.
+     */
+    it('still resolves after the contact has been anonymized', async () => {
+      const contact = await factories.createContact({projectId, subscribed: true});
+      await ContactService.delete(projectId, contact.id);
+
+      const captured = await postOneClick(contact.id);
+
+      expect(captured.status).toBe(200);
+      const updated = await prisma.contact.findUnique({where: {id: contact.id}});
+      expect(updated).not.toBeNull();
+      expect(updated?.email).toBeNull();
+      expect(updated?.deletedAt).not.toBeNull();
       expect(updated?.subscribed).toBe(false);
     });
   });

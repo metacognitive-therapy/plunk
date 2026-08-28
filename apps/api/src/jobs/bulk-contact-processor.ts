@@ -55,8 +55,10 @@ async function applyBatch(
       return {changed: r.updated, unchanged: r.unchanged};
     }
     case 'delete': {
+      // "delete" anonymizes rather than destroys the rows -- see ContactService.bulkDelete.
+      // An already-anonymized contact counts as unchanged, not failed.
       const r = await ContactService.bulkDelete(projectId, ids);
-      return {changed: r.deleted, unchanged: 0};
+      return {changed: r.deleted, unchanged: r.unchanged};
     }
   }
 }
@@ -117,10 +119,13 @@ export function createBulkContactWorker() {
           return result;
         }
 
-        // Cursor-based iteration over matching contacts. We re-evaluate the where clause
-        // each batch (with id < cursor) instead of Prisma's `cursor:` because for `delete`
-        // the rows we just processed disappear — a stable cursor would either skip survivors
-        // or revisit deletions. Sorting by id desc + `id < lastId` is idempotent under either.
+        // Cursor-based iteration over matching contacts. We re-evaluate the where clause each
+        // batch (with id < cursor) instead of Prisma's `cursor:` because rows can change out from
+        // under a long-running job (e.g. `subscribed` flipping mid-run for `query` mode). Sorting
+        // by id desc + `id < lastId` walks strictly downward regardless of whether a row's match
+        // state changes, so it can't revisit or skip a row. This held even back when `delete`
+        // destroyed rows outright; anonymizing in place (current behaviour) only makes it easier
+        // to reason about, since matched rows no longer disappear mid-walk either.
         let lastId: string | undefined;
         let processedRows = 0;
 

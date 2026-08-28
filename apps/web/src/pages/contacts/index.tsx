@@ -975,7 +975,7 @@ export default function ContactsPage() {
           onOpenChange={setShowDeleteDialog}
           onConfirm={handleDelete}
           title="Delete this contact?"
-          description="Their events and email history are deleted too. This can't be undone."
+          description="Their email and details are erased and they'll never receive email again, but their send history is kept. This can't be undone."
           confirmText="Delete contact"
           variant="destructive"
         />
@@ -2391,8 +2391,8 @@ function getOperationCopy(operation: 'subscribe' | 'unsubscribe' | 'delete' | nu
         processingLabel: 'Deleting',
         changedVerb: 'deleted',
         summaryNoun: 'removed',
-        alreadyState: null,
-        skipNote: null,
+        alreadyState: 'already deleted',
+        skipNote: 'Already-deleted contacts will be skipped.',
       };
     default:
       return {
