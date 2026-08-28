@@ -5,6 +5,7 @@ import type {CreateCampaignData, FilterCondition, PaginatedResponse, UpdateCampa
 import {fromPrismaJson, toPrismaJson} from '@plunk/types';
 import signale from 'signale';
 
+import {mailableContactWhere} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {redis} from '../database/redis.js';
 import {HttpException} from '../exceptions/index.js';
@@ -1111,7 +1112,7 @@ export class CampaignService {
     const baseWhere: Prisma.ContactWhereInput = {
       projectId,
       // Transactional campaigns send to all contacts regardless of subscription status
-      ...(campaign.type !== TemplateType.TRANSACTIONAL && {subscribed: true}),
+      ...(campaign.type !== TemplateType.TRANSACTIONAL && mailableContactWhere()),
     };
 
     switch (campaign.audienceType) {

@@ -4,6 +4,7 @@ import {compileTemplate} from '@plunk/shared';
 import signale from 'signale';
 
 import {DASHBOARD_URI} from '../app/constants.js';
+import {mailableContactWhere} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {ConflictError, NotFound} from '../exceptions/index.js';
 
@@ -416,7 +417,7 @@ export class SequenceService {
       const subscriptions = await prisma.sequenceSubscription.findMany({
         where: {
           sequenceId: sequence.id,
-          contact: {subscribed: true},
+          contact: mailableContactWhere(),
         },
         include: {contact: {select: {id: true, email: true, data: true}}},
         orderBy: {contactId: 'asc'},

@@ -4,6 +4,7 @@ import {toPrismaJson} from '@plunk/types';
 import signale from 'signale';
 
 import {DASHBOARD_URI, LANDING_URI, STRIPE_ENABLED} from '../app/constants.js';
+import {isMailableContact} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {createTranslatorSync, renderTemplate} from '@plunk/shared';
@@ -66,7 +67,7 @@ export class EmailService {
           select: {subscribed: true, email: true},
         });
 
-        if (!contact?.subscribed) {
+        if (!isMailableContact(contact)) {
           throw new HttpException(
             400,
             `Cannot send marketing template to unsubscribed contact ${contact?.email || params.contactId}. Use a transactional template or send without a template.`,
@@ -212,7 +213,7 @@ export class EmailService {
         select: {subscribed: true},
       });
 
-      if (!contact?.subscribed) {
+      if (!isMailableContact(contact)) {
         signale.info(
           `[WORKFLOW] Skipping marketing email to unsubscribed contact ${params.contactId} in workflow execution ${params.workflowExecutionId}`,
         );
