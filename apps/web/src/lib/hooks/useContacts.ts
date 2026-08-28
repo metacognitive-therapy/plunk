@@ -5,6 +5,8 @@ import useSWR from 'swr';
 interface UseContactsOptions {
   limit?: number;
   search?: string;
+  /** Exact match on the caller-supplied external id (docs/issues/03-track-by-external-id.md). */
+  externalId?: string;
 }
 
 /** Stable identity so consumers' effect dependencies don't churn before the fetch lands. */
@@ -22,12 +24,15 @@ export interface ContactField {
  * Hook to fetch contacts with optional search
  */
 export function useContacts(options: UseContactsOptions = {}) {
-  const {limit = 50, search} = options;
+  const {limit = 50, search, externalId} = options;
 
   const params = new URLSearchParams();
   params.set('limit', limit.toString());
   if (search) {
     params.set('search', search);
+  }
+  if (externalId) {
+    params.set('externalId', externalId);
   }
 
   const {data, error, mutate, isLoading} = useSWR<CursorPaginatedResponse<Contact>>(`/contacts?${params.toString()}`, {

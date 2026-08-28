@@ -42,22 +42,34 @@ export class ContactService {
       dir?: 'asc' | 'desc';
       /** Match contacts tagged with ANY of these tag ids. */
       tagIds?: string[];
+      /**
+       * Exact (case-sensitive) match on `externalId` -- the caller-supplied id, not a
+       * generated one, so unlike `email` it is never case-normalized. Distinct from `search`,
+       * which does a substring match across both fields: this is for "show me exactly this
+       * contact" (docs/issues/03-track-by-external-id.md), driven from the dashboard's
+       * external-id filter.
+       */
+      externalId?: string;
     },
   ): Promise<CursorPaginatedResponse<Contact & {tags: {id: string; name: string}[]}>> {
     const where: Prisma.ContactWhereInput = {
       projectId,
+      // `search` matches BOTH email and externalId (substring, case-insensitive) so a
+      // contact can be looked up in the dashboard by whichever identifier the operator has
+      // on hand, without needing a second search box.
       ...(search
         ? {
-            email: {
-              contains: search,
-              mode: 'insensitive' as const,
-            },
+            OR: [
+              {email: {contains: search, mode: 'insensitive' as const}},
+              {externalId: {contains: search, mode: 'insensitive' as const}},
+            ],
           }
         : {}),
       ...(options?.subscribed !== undefined ? {subscribed: options.subscribed} : {}),
       ...(options?.tagIds && options.tagIds.length > 0
         ? {contactTags: {some: {tagId: {in: options.tagIds}}}}
         : {}),
+      ...(options?.externalId ? {externalId: options.externalId} : {}),
     };
 
     // The chosen sort column leads; `id` is always the stable tiebreaker the
@@ -175,6 +187,25 @@ export class ContactService {
       where: {
         projectId,
         email: this.normalizeEmail(email),
+      },
+    });
+  }
+
+  /**
+   * Find a contact by its project-scoped external id (returns null if not found).
+   *
+   * Read-only, deliberately -- this is the resolver behind the /v1/track externalId path
+   * (docs/issues/03-track-by-external-id.md), which must NEVER create a contact on this
+   * path. The public key that authorises track carries no origin restriction, so "resolve
+   * only, never create" is what stops a leaked key from being used to conjure a contact for
+   * an email address of the caller's choosing and then mail it. Callers that get `null` back
+   * must surface a distinguishable not-found, not fall through to creation.
+   */
+  public static async findByExternalId(projectId: string, externalId: string): Promise<Contact | null> {
+    return prisma.contact.findFirst({
+      where: {
+        projectId,
+        externalId,
       },
     });
   }

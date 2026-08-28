@@ -111,13 +111,13 @@ Two independent, computed properties describe a contact — neither is a stored 
 | **Identified**      | `externalId` is set.                                                |
 | **Email-reachable** | `email` is set, `subscribed` is `true`, and the contact isn't deleted/anonymized. |
 
-A contact can be identified without being email-reachable (a lead), email-reachable without being identified (a typical contact created via `/v1/track` or `POST /contacts`), both, or neither. The dashboard's contact list marks leads distinctly, and the headline contact count is split into mailable contacts and leads so the number you see matches the number a campaign will actually reach.
+A contact can be identified without being email-reachable (a lead), email-reachable without being identified (a typical contact created via `/v1/track` or `POST /contacts`), both, or neither. The dashboard's contact list marks leads distinctly, filters and searches by external ID, and the headline contact count is split into mailable contacts and leads so the number you see matches the number a campaign will actually reach.
 
-<Callout title="Adding an email to a lead" type="info">
-  This version of `/v1/identify` only covers the simplest case — creating a lead from an external id.
-  Resolving an external id against an existing email-bearing contact (or adding an email to an
-  existing lead) is a separate, more involved operation and isn't covered here yet.
-</Callout>
+`/v1/identify` resolves by external id first, then by email: it updates an already-identified contact (adopting a changed or first-time email onto the same row), binds an external id onto a matching email-only contact, refuses with `409` if that email already belongs to someone else's identity, and otherwise creates a new contact.
+
+### Tracking events for a lead
+
+[`POST /v1/track`](/api-reference/public-api/trackEvent) accepts `externalId` in place of `email` to record an event against a contact you've already identified — a lead included. This path **only resolves** an existing contact; it never creates one, and an unknown `externalId` returns `404` rather than silently dropping the event. This is deliberate: the public key that authorises `/v1/track` carries no origin restriction and is extractable from any client bundle that holds it, so letting this path create contacts would let anyone holding a leaked key conjure a contact for an email address of their choosing and mail it. `email` and `externalId` are mutually exclusive on a single request, and `subscribed` cannot be set on the `externalId` path — consent changes go through `/v1/identify` only.
 
 ## Subscription State
 

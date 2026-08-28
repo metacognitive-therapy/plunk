@@ -72,7 +72,17 @@ export class Contacts {
           .filter(Boolean)
       : undefined;
 
-    const result = await ContactService.list(auth.projectId!, limit, cursor, search, {subscribed, sort, dir, tagIds});
+    // Optional exact external-id filter (?externalId=...) — distinct from `search`, which
+    // substring-matches both email and externalId. See docs/issues/03-track-by-external-id.md.
+    const externalId = req.query.externalId as string | undefined;
+
+    const result = await ContactService.list(auth.projectId!, limit, cursor, search, {
+      subscribed,
+      sort,
+      dir,
+      tagIds,
+      externalId,
+    });
 
     return res.status(200).json(result);
   }

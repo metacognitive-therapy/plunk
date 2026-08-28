@@ -13,8 +13,11 @@ interface ContactList {
 
 interface Contact {
   id: string;
-  email: string;
+  // Nullable: a contact with no email is a lead (docs/issues/03-track-by-external-id.md),
+  // identified only by its externalId until something identifies it with an email.
+  email: string | null;
   subscribed?: boolean;
+  externalId?: string | null;
 }
 
 /** Either identifier accepted by the contact tools. Exactly one is required. */
@@ -24,35 +27,57 @@ export const contactRef = {
     .string()
     .optional()
     .describe('The contact email address. Resolved to the contact for you — prefer this if the user gave an email.'),
+  externalId: z
+    .string()
+    .optional()
+    .describe(
+      'The caller-supplied external ID (e.g. your own user id). Resolved to the contact for you — use this for ' +
+        'a lead or any contact identified by external id rather than email.',
+    ),
 };
 
 /**
  * Resolves whichever identifier the model supplied to a contact ID.
  *
- * Agents almost always hold an email rather than an internal UUID, but the API
- * only addresses contacts by ID. Doing the resolution here collapses what would
- * otherwise be a search-then-read round trip the model has to know to perform,
- * and removes the chance of it patching whichever row happened to come back
- * first from a substring search.
+ * Agents almost always hold an email or their own external id rather than an internal UUID,
+ * but the API only addresses contacts by ID. Doing the resolution here collapses what would
+ * otherwise be a search-then-read round trip the model has to know to perform, and removes
+ * the chance of it patching whichever row happened to come back first from a substring
+ * search.
  *
  * `GET /contacts?search=` is a substring match, so a search for "bo@x.com" also
  * matches "bo@x.com.au". The exact (case-insensitive) match is therefore picked
- * out of the page rather than trusting position.
+ * out of the page rather than trusting position. `externalId` is resolved via the exact
+ * `?externalId=` filter instead, since it's an opaque caller-supplied id, not an email --
+ * there's no "close enough" substring match worth trusting for it.
  */
 export async function resolveContact(
   client: PlunkClient,
-  {id, email}: {id?: string; email?: string},
+  {id, email, externalId}: {id?: string; email?: string; externalId?: string},
 ): Promise<{id: string; label: string} | {error: string}> {
-  if (id && email) {
-    return {error: 'Pass either id or email, not both.'};
+  const provided = [id, email, externalId].filter((value) => value !== undefined).length;
+  if (provided > 1) {
+    return {error: 'Pass exactly one of id, email, or externalId.'};
   }
 
   if (id) {
     return {id, label: id};
   }
 
+  if (externalId) {
+    const result = await client.request<ContactList>({
+      path: '/contacts',
+      query: {externalId, limit: 1},
+    });
+    const match = (result.data as Contact[])[0];
+    if (!match) {
+      return {error: `No contact found with external ID "${externalId}".`};
+    }
+    return {id: match.id, label: match.email ?? `external ID ${externalId}`};
+  }
+
   if (!email) {
-    return {error: 'One of id or email is required.'};
+    return {error: 'One of id, email, or externalId is required.'};
   }
 
   const normalised = email.trim().toLowerCase();
@@ -74,7 +99,7 @@ export async function resolveContact(
     return {error: `No contact found with email "${email}".${caveat}`};
   }
 
-  return {id: match.id, label: match.email};
+  return {id: match.id, label: match.email ?? match.id};
 }
 
 export function registerContactTools(ctx: ToolContext, client: PlunkClient): void {
@@ -89,18 +114,26 @@ export function registerContactTools(ctx: ToolContext, client: PlunkClient): voi
         '**NOT for:** Looking up one contact whose ID you already have (use `plunk_get_contact`).',
         'Not for counting a campaign audience — create a segment instead.',
         '',
-        '**Returns:** A page of contacts (id, email, subscribed, custom data), a `cursor` for the',
-        'next page, `hasMore`, and `total`. `total` is only populated on the first page; later pages',
-        'return 0 to avoid the recount cost.',
+        '**Returns:** A page of contacts (id, email — `null` for a lead with no email yet,',
+        'subscribed, externalId, custom data), a `cursor` for the next page, `hasMore`, and',
+        '`total`. `total` is only populated on the first page; later pages return 0 to avoid the',
+        'recount cost.',
         '',
         '**When to use:**',
-        '- The user asks who is on their list, or to find a contact by email',
+        '- The user asks who is on their list, or to find a contact by email or external id',
         '- You need a contact ID before updating, deleting, or tracking an event',
         '',
-        '**Key trigger phrases:** "who is subscribed", "find the contact", "look up", "my contacts"',
+        '**Key trigger phrases:** "who is subscribed", "find the contact", "look up", "my contacts", "leads"',
       ].join('\n'),
       inputSchema: z.object({
-        search: z.string().optional().describe('Case-insensitive substring match on the email address.'),
+        search: z
+          .string()
+          .optional()
+          .describe('Case-insensitive substring match on the email address OR the external ID.'),
+        externalId: z
+          .string()
+          .optional()
+          .describe('Exact match on the external ID. Prefer this over `search` when you have the exact value.'),
         subscribed: z
           .boolean()
           .optional()
@@ -118,11 +151,11 @@ export function registerContactTools(ctx: ToolContext, client: PlunkClient): voi
       }),
       annotations: {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true},
     },
-    async ({search, subscribed, limit, cursor, sort, dir}) =>
+    async ({search, externalId, subscribed, limit, cursor, sort, dir}) =>
       runTool(async () => {
         const result = await client.request<ContactList>({
           path: '/contacts',
-          query: {search, subscribed, limit, cursor, sort, dir},
+          query: {search, externalId, subscribed, limit, cursor, sort, dir},
         });
 
         const summary =
@@ -140,23 +173,25 @@ export function registerContactTools(ctx: ToolContext, client: PlunkClient): voi
     {
       title: 'Get contact',
       description: [
-        '**Purpose:** Fetch a single contact by ID or by email address, including all custom data fields.',
+        '**Purpose:** Fetch a single contact by ID, email address, or external ID, including all custom data fields.',
         '',
         '**NOT for:** Browsing or searching many contacts — use `plunk_list_contacts`.',
         '',
-        '**Returns:** The contact record (id, email, subscribed, data, timestamps).',
+        '**Returns:** The contact record (id, email — `null` for a lead, subscribed, externalId,',
+        'data, timestamps).',
         '',
-        '**Pass `email` if that is what the user gave you** — you do not need to look the ID up first.',
-        'Matching on email is exact and case-insensitive.',
+        '**Pass whichever identifier the user gave you** — you do not need to look the ID up first.',
+        'Matching on email is exact and case-insensitive; matching on external ID is exact.',
+        'A contact with no email on file is a lead, identified only by its external ID.',
         '',
         '**Key trigger phrases:** "show me this contact", "what data do we have on", "is X subscribed"',
       ].join('\n'),
       inputSchema: z.object(contactRef),
       annotations: {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true},
     },
-    async ({id, email}) =>
+    async ({id, email, externalId}) =>
       runTool(async () => {
-        const resolved = await resolveContact(client, {id, email});
+        const resolved = await resolveContact(client, {id, email, externalId});
 
         if ('error' in resolved) {
           return errorResult(resolved.error);
@@ -191,9 +226,9 @@ export function registerContactTools(ctx: ToolContext, client: PlunkClient): voi
       inputSchema: z.object(contactRef),
       annotations: {readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true},
     },
-    async ({id, email}) =>
+    async ({id, email, externalId}) =>
       runTool(async () => {
-        const resolved = await resolveContact(client, {id, email});
+        const resolved = await resolveContact(client, {id, email, externalId});
 
         if ('error' in resolved) {
           return errorResult(resolved.error);
@@ -232,9 +267,9 @@ export function registerContactTools(ctx: ToolContext, client: PlunkClient): voi
       inputSchema: z.object(contactRef),
       annotations: {readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true},
     },
-    async ({id, email}) =>
+    async ({id, email, externalId}) =>
       runTool(async () => {
-        const resolved = await resolveContact(client, {id, email});
+        const resolved = await resolveContact(client, {id, email, externalId});
 
         if ('error' in resolved) {
           return errorResult(resolved.error);

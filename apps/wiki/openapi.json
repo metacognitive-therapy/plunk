@@ -2062,7 +2062,7 @@
           "Public API"
         ],
         "summary": "Track event",
-        "description": "Track an event for a contact. Automatically creates or upserts the contact, then records the event. Tracked events can be used as workflow triggers, segment filters, and audience filters.\n\n**Reserved event names** (rejected with `VALIDATION_ERROR` and code `reserved_event`): anything matching `email.*`, `contact.subscribed`, `contact.unsubscribed`, `segment.<slug>.entry`, `segment.<slug>.exit`. These are emitted by Plunk itself.\n\n**Idempotency**: re-tracking the same event creates a new event record. Send an `Idempotency-Key` header to have a repeated request refused with `409` instead.\n\n**Two timestamps**: every event has an ingestion time (`createdAt` \u2014 when Plunk received it, always \"now\") and an occurrence time (`occurredAt` \u2014 when it actually happened). `occurredAt` defaults to the current time if you don't pass it. Segment \"triggered since\" / \"triggered older than\" conditions and campaign-audience event filters evaluate against `occurredAt`, so a retried or delayed request still lands in the correct audience window instead of being judged by when it happened to arrive.",
+        "description": "Track an event for a contact, identified by EITHER `email` OR `externalId` (mutually exclusive \u2014 passing both is rejected with `422`).\n\n**`email` path** (unchanged): automatically creates or upserts the contact, then records the event.\n\n**`externalId` path** (see docs/issues/03-track-by-external-id.md): RESOLVES an existing contact and NEVER creates one. The public key that authorises this endpoint carries no origin restriction and is extractable from any client bundle that holds it, so this path never creates a contact \u2014 otherwise possession of a leaked key would let anyone conjure contacts for arbitrary email addresses and then mail them. An unknown `externalId` returns `404` (distinguishable from a malformed request) rather than silently dropping the event. `subscribed` is rejected on this path with `422` \u2014 consent changes go through `/v1/identify` only, so recording behaviour can never re-subscribe someone who opted out. `data` is recorded on the event and available to workflows, but is never merged onto the contact on this path (identify is the only writer of persistent contact attributes). Tracking against a lead (a contact with no email) works like any other contact.\n\nTracked events can be used as workflow triggers, segment filters, and audience filters.\n\n**Reserved event names** (rejected with `VALIDATION_ERROR` and code `reserved_event`): anything matching `email.*`, `contact.subscribed`, `contact.unsubscribed`, `segment.<slug>.entry`, `segment.<slug>.exit`. These are emitted by Plunk itself.\n\n**Idempotency**: re-tracking the same event creates a new event record. Send an `Idempotency-Key` header to have a repeated request refused with `409` instead.\n\n**Two timestamps**: every event has an ingestion time (`createdAt` \u2014 when Plunk received it, always \"now\") and an occurrence time (`occurredAt` \u2014 when it actually happened). `occurredAt` defaults to the current time if you don't pass it. Segment \"triggered since\" / \"triggered older than\" conditions and campaign-audience event filters evaluate against `occurredAt`, so a retried or delayed request still lands in the correct audience window instead of being judged by when it happened to arrive.",
         "operationId": "trackEvent",
         "requestBody": {
           "required": true,
@@ -2071,14 +2071,17 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "email",
                   "event"
                 ],
                 "properties": {
                   "email": {
                     "type": "string",
                     "format": "email",
-                    "description": "Contact email. The contact is auto-created if it doesn't exist."
+                    "description": "Contact email. The contact is auto-created if it doesn't exist. Mutually exclusive with `externalId` \u2014 provide exactly one."
+                  },
+                  "externalId": {
+                    "type": "string",
+                    "description": "Caller-supplied stable id for a contact that must ALREADY exist. This path only ever resolves a contact, never creates one \u2014 an unknown value returns `404`. Mutually exclusive with `email` \u2014 provide exactly one. Cannot be combined with `subscribed`."
                   },
                   "event": {
                     "type": "string",
@@ -2086,12 +2089,12 @@
                   },
                   "subscribed": {
                     "type": "boolean",
-                    "description": "Subscription state to apply to the contact. **New** contacts default to subscribed (`true`). **Existing** contacts keep their current state unless you pass an explicit value here. Pass `false` to track an event without resubscribing an unsubscribed contact."
+                    "description": "Subscription state to apply to the contact. **New** contacts default to subscribed (`true`). **Existing** contacts keep their current state unless you pass an explicit value here. Pass `false` to track an event without resubscribing an unsubscribed contact. Only valid on the `email` path \u2014 rejected with `422` when `externalId` is also present, since consent changes go through `/v1/identify` only."
                   },
                   "data": {
                     "type": "object",
                     "additionalProperties": true,
-                    "description": "Contact data and one-off event variables. Persistent values (primitives, plain objects) are saved on the contact and become available as template variables. Pass `{ value, persistent: false }` for one-shot variables that should not be stored on the contact (e.g. order IDs, transaction details). `null` deletes a field. Empty strings are ignored. Reserved keys are filtered out \u2014 see the contacts concept page."
+                    "description": "Event data. On the `email` path, persistent values (primitives, plain objects) are ALSO saved on the contact and become available as template variables, matching existing behaviour. On the `externalId` path, `data` is recorded on the event and available to workflows but is NEVER merged onto the contact. Pass `{ value, persistent: false }` for one-shot variables that should not be stored on the contact (e.g. order IDs, transaction details) on either path. `null` deletes a field (email path only). Empty strings are ignored. Reserved keys are filtered out \u2014 see the contacts concept page."
                   },
                   "occurredAt": {
                     "type": "string",
@@ -2100,12 +2103,30 @@
                   }
                 }
               },
-              "example": {
-                "email": "user@example.com",
-                "event": "purchase",
-                "data": {
-                  "product": "Premium Plan",
-                  "amount": 99
+              "examples": {
+                "byEmail": {
+                  "summary": "By email (creates or updates the contact)",
+                  "value": {
+                    "email": "user@example.com",
+                    "event": "purchase",
+                    "data": {
+                      "product": "Premium Plan",
+                      "amount": 99
+                    }
+                  }
+                },
+                "byExternalId": {
+                  "summary": "By external id (resolves an existing contact only)",
+                  "value": {
+                    "externalId": "user_8f3a2c",
+                    "event": "purchase",
+                    "data": {
+                      "orderId": {
+                        "value": "12345",
+                        "persistent": false
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2146,6 +2167,16 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No contact exists with the given `externalId`. Returned ONLY on the `externalId` path -- the `email` path never 404s, since it auto-creates the contact.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "409": {
             "$ref": "#/components/responses/IdempotencyConflict"

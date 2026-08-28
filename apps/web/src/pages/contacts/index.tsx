@@ -98,6 +98,7 @@ const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
   email: true,
   status: true,
   tags: true,
+  externalId: false,
   createdAt: true,
   updatedAt: false,
   actions: true,
@@ -462,6 +463,19 @@ export default function ContactsPage() {
         cell: ({row}) => <ContactTagsCell tags={row.original.tags} />,
       },
       {
+        id: 'externalId',
+        accessorKey: 'externalId',
+        enableSorting: false, // Not backed by a sortable index for this list.
+        meta: {label: 'External ID'} satisfies DataTableColumnMeta,
+        header: ({column}) => <DataTableColumnHeader column={column}>External ID</DataTableColumnHeader>,
+        cell: ({row}) =>
+          row.original.externalId ? (
+            <span className="text-xs font-mono text-neutral-500 break-all">{row.original.externalId}</span>
+          ) : (
+            <span className="text-xs text-neutral-400">—</span>
+          ),
+      },
+      {
         id: 'createdAt',
         accessorKey: 'createdAt',
         sortDescFirst: true, // First click surfaces the newest contacts.
@@ -582,7 +596,7 @@ export default function ContactsPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
               <Input
                 type="text"
-                placeholder="Search by email…"
+                placeholder="Search by email or external ID…"
                 value={searchInput}
                 onChange={e => setSearchInput(e.target.value)}
                 className="pl-10 pr-10 h-8 text-xs"

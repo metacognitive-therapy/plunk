@@ -612,9 +612,17 @@ const occurredAt = z.preprocess(
 );
 
 export const ActionSchemas = {
+  // docs/issues/03-track-by-external-id.md: track accepts EITHER an email OR an externalId,
+  // never both. The externalId path resolves an existing contact and never creates one (the
+  // public key that authorises this endpoint carries no origin restriction, so "never create"
+  // is what stops a leaked key from conjuring contacts for arbitrary addresses) -- so
+  // `subscribed` is meaningless there and is rejected outright rather than silently ignored:
+  // a caller who thinks they're (re)subscribing someone via track should see their mistake,
+  // not have it swallowed. Consent changes go through /v1/identify only.
   track: z.object({
     event: z.string().min(1),
-    email,
+    email: email.optional(),
+    externalId: z.string().min(1).max(255).optional(),
     subscribed: z.boolean().optional(),
     data: jsonSchema.optional(),
     // Tag names to apply to the contact (auto-created if missing, matched case-insensitively).
@@ -623,7 +631,20 @@ export const ActionSchemas = {
     // now when omitted. Only segment/campaign-audience recency filters read this value -
     // the event feeds and stats keep reading ingestion time.
     occurredAt,
-  }),
+  })
+    .refine(data => !!data.email || !!data.externalId, {
+      message: 'Provide either email or externalId',
+      path: ['email'],
+    })
+    .refine(data => !(data.email && data.externalId), {
+      message: 'email and externalId are mutually exclusive -- provide only one',
+      path: ['externalId'],
+    })
+    .refine(data => !(data.externalId && data.subscribed !== undefined), {
+      message:
+        'subscribed cannot be set on the externalId path -- consent changes go through /v1/identify only',
+      path: ['subscribed'],
+    }),
   send: z
     .object({
       to: z.union([

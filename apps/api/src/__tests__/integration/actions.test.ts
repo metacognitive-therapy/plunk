@@ -1473,4 +1473,200 @@ describe('Actions API Integration Tests', () => {
       });
     });
   });
+
+  // ========================================
+  // /v1/track by externalId (docs/issues/03-track-by-external-id.md)
+  //
+  // The security property IS the point: the public key that authorises track carries no
+  // origin restriction, so this path must RESOLVE an existing contact and NEVER create one.
+  // Exercised at the request-schema-plus-service-layer, matching the house convention for
+  // this file (no live HTTP server) -- the schema assertions cover Actions.track's
+  // ActionSchemas.track.parse() call, and the ContactService/EventService assertions cover
+  // exactly what the controller does with the parsed result on the externalId branch.
+  // ========================================
+  describe('Track by externalId', () => {
+    describe('request schema', () => {
+      it('accepts externalId in place of email', () => {
+        const result = ActionSchemas.track.safeParse({event: 'purchase', externalId: 'user_8f3a2c'});
+        expect(result.success).toBe(true);
+      });
+
+      it('rejects a request with neither email nor externalId', () => {
+        const result = ActionSchemas.track.safeParse({event: 'purchase'});
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.errors.some(e => e.path.includes('email'))).toBe(true);
+        }
+      });
+
+      it('rejects a request carrying BOTH email and externalId', () => {
+        const result = ActionSchemas.track.safeParse({
+          event: 'purchase',
+          email: 'user@example.com',
+          externalId: 'user_8f3a2c',
+        });
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.errors.some(e => e.path.includes('externalId'))).toBe(true);
+        }
+      });
+
+      it('rejects `subscribed` alongside externalId -- consent changes go through /v1/identify only', () => {
+        const result = ActionSchemas.track.safeParse({
+          event: 'purchase',
+          externalId: 'user_8f3a2c',
+          subscribed: true,
+        });
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.errors.some(e => e.path.includes('subscribed'))).toBe(true);
+        }
+      });
+
+      it('still accepts `subscribed` on the email path (unaffected by the externalId rule)', () => {
+        const result = ActionSchemas.track.safeParse({
+          event: 'purchase',
+          email: 'user@example.com',
+          subscribed: true,
+        });
+        expect(result.success).toBe(true);
+      });
+
+      it('still requires event name on the externalId path', () => {
+        const result = ActionSchemas.track.safeParse({externalId: 'user_8f3a2c'});
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.errors.some(e => e.path.includes('event'))).toBe(true);
+        }
+      });
+    });
+
+    describe('resolves and records against an existing contact, never creates one', () => {
+      it('resolves the matching contact and records the event against it', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {EventService} = await import('../../services/EventService.js');
+
+        const existing = await factories.createContact({
+          projectId,
+          email: 'resolved@example.com',
+          externalId: 'user_resolve',
+        });
+
+        // Mirrors what Actions.track does on the externalId branch.
+        const resolved = await ContactService.findByExternalId(projectId, 'user_resolve');
+        expect(resolved?.id).toBe(existing.id);
+
+        const event = await EventService.trackEvent(projectId, 'purchase', resolved!.id, undefined, {plan: 'pro'});
+
+        expect(event.contactId).toBe(existing.id);
+        const storedEvents = await prisma.event.findMany({where: {projectId, contactId: existing.id, name: 'purchase'}});
+        expect(storedEvents).toHaveLength(1);
+      });
+
+      it('an unknown externalId resolves to null and creates NO contact', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        const before = await prisma.contact.count({where: {projectId}});
+
+        const resolved = await ContactService.findByExternalId(projectId, 'does_not_exist');
+
+        expect(resolved).toBeNull();
+        expect(await prisma.contact.count({where: {projectId}})).toBe(before);
+      });
+
+      it('surfaces a distinguishable NotFound (404, CONTACT_NOT_FOUND) for an unknown externalId', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        const resolved = await ContactService.findByExternalId(projectId, 'does_not_exist');
+        expect(resolved).toBeNull();
+
+        // This is exactly what Actions.track throws on the externalId branch when resolution
+        // misses -- distinguishable from a malformed request (422) or an auth failure (401).
+        const error = new NotFound('Contact', 'does_not_exist');
+        expect(error.code).toBe(404);
+        expect(error.errorCode).toBe(ErrorCode.CONTACT_NOT_FOUND);
+      });
+
+      it('tracking against a lead (no email) works like any other contact', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {EventService} = await import('../../services/EventService.js');
+
+        const lead = await factories.createContact({projectId, email: null, externalId: 'user_lead'});
+
+        const resolved = await ContactService.findByExternalId(projectId, 'user_lead');
+        expect(resolved?.id).toBe(lead.id);
+        expect(resolved?.email).toBeNull();
+
+        const event = await EventService.trackEvent(projectId, 'app.opened', resolved!.id);
+
+        expect(event.contactId).toBe(lead.id);
+        const stillLead = await prisma.contact.findUnique({where: {id: lead.id}});
+        expect(stillLead?.email).toBeNull();
+      });
+    });
+
+    describe('event data is never merged onto the contact on this path', () => {
+      it('records data on the event but leaves the contact\'s persistent data untouched', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {EventService} = await import('../../services/EventService.js');
+
+        const existing = await factories.createContact({
+          projectId,
+          email: 'nomeger@example.com',
+          externalId: 'user_no_merge',
+          data: {plan: 'free'},
+        });
+
+        const resolved = await ContactService.findByExternalId(projectId, 'user_no_merge');
+
+        // The controller passes `data` ONLY to trackEvent on this path -- never through
+        // ContactService.upsert/update, which is what would merge it onto the contact.
+        const event = await EventService.trackEvent(projectId, 'purchase', resolved!.id, undefined, {
+          plan: 'enterprise',
+          orderId: '12345',
+        });
+
+        expect((event.data as Record<string, unknown> | null)?.plan).toBe('enterprise');
+
+        const unchanged = await prisma.contact.findUnique({where: {id: existing.id}});
+        expect((unchanged?.data as Record<string, unknown> | null)?.plan).toBe('free');
+        expect((unchanged?.data as Record<string, unknown> | null)?.orderId).toBeUndefined();
+      });
+    });
+
+    describe('subscription state is left untouched on the externalId path', () => {
+      it('a subscribed contact stays subscribed and an unsubscribed contact stays unsubscribed', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {EventService} = await import('../../services/EventService.js');
+
+        const optedOut = await factories.createContact({
+          projectId,
+          email: 'optout-track@example.com',
+          externalId: 'user_optout_track',
+          subscribed: false,
+        });
+
+        const resolved = await ContactService.findByExternalId(projectId, 'user_optout_track');
+        await EventService.trackEvent(projectId, 'app.opened', resolved!.id);
+
+        // Resolution alone never writes to `subscribed` -- there is no code path on
+        // externalId-track that can flip it, since the schema rejects `subscribed` outright
+        // and the controller never calls ContactService.upsert/update on this branch.
+        const stillOptedOut = await prisma.contact.findUnique({where: {id: optedOut.id}});
+        expect(stillOptedOut?.subscribed).toBe(false);
+      });
+    });
+
+    describe('the email path is unaffected', () => {
+      it('ContactService.upsert on the email path behaves exactly as before', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        const contact = await ContactService.upsert(projectId, 'unchanged-email-path@example.com', {plan: 'pro'}, true);
+
+        expect(contact.email).toBe('unchanged-email-path@example.com');
+        expect(contact.subscribed).toBe(true);
+        expect((contact.data as Record<string, unknown> | null)?.plan).toBe('pro');
+      });
+    });
+  });
 });

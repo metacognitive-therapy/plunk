@@ -312,6 +312,48 @@ export default function ContactDetailPage() {
                     </div>
                   </div>
 
+                  {contact.externalId && (
+                    <div className="flex items-start gap-3">
+                      <Database className="h-5 w-5 text-neutral-500 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-neutral-900">External ID</p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <p className="text-xs text-neutral-500 font-mono break-all flex-1">{contact.externalId}</p>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(contact.externalId!, 'External ID', 'external-id')}
+                            className="flex-shrink-0 text-neutral-400 hover:text-neutral-700 transition-colors"
+                            aria-label="Copy external ID"
+                          >
+                            <AnimatePresence mode="wait" initial={false}>
+                              {copiedId === 'external-id' ? (
+                                <motion.span
+                                  key="copied"
+                                  initial={{opacity: 0, y: 4}}
+                                  animate={{opacity: 1, y: 0}}
+                                  exit={{opacity: 0, y: -4}}
+                                  transition={{duration: 0.15}}
+                                >
+                                  <Check className="h-3 w-3 text-green-600" />
+                                </motion.span>
+                              ) : (
+                                <motion.span
+                                  key="idle"
+                                  initial={{opacity: 0, y: 4}}
+                                  animate={{opacity: 1, y: 0}}
+                                  exit={{opacity: 0, y: -4}}
+                                  transition={{duration: 0.15}}
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <p className="text-sm font-medium text-neutral-900">Created</p>
                     <div className="group relative inline-block cursor-help">

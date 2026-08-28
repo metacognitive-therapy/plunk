@@ -1,5 +1,6 @@
 import {Controller, Middleware, Post} from '@overnightjs/core';
 import {ActionSchemas} from '@plunk/shared';
+import type {Contact} from '@plunk/db';
 import type {NextFunction, Request, Response} from 'express';
 import {requirePublicKey, requireSecretKey} from '../middleware/auth.js';
 import {idempotency} from '../middleware/idempotency.js';
@@ -31,10 +32,23 @@ export class Actions {
    *
    * Request body:
    * - event: string (required) - Event name
-   * - email: string (required) - Contact email
-   * - subscribed: boolean (optional) - Contact subscription status (only updates if explicitly specified)
-   * - data: object (optional) - Event and contact data
-   *   - Simple values are saved to contact (persistent)
+   * - email: string (required unless externalId is given) - Contact email. Resolves-or-creates
+   *   the contact, exactly as before.
+   * - externalId: string (required unless email is given) - Caller-supplied stable id for a
+   *   contact that must ALREADY exist (see docs/issues/03-track-by-external-id.md). Mutually
+   *   exclusive with `email`. This path only ever RESOLVES a contact, never creates one -- the
+   *   public key that authorises this endpoint carries no origin restriction, so "never create"
+   *   is what stops a leaked key from conjuring contacts for arbitrary addresses and mailing
+   *   them. An unknown externalId returns a 404 (distinguishable from a malformed request)
+   *   rather than silently dropping the event. `subscribed` is rejected on this path -- consent
+   *   changes go through /v1/identify only, so recording behaviour can never re-subscribe
+   *   someone who opted out.
+   * - subscribed: boolean (optional, email path only) - Contact subscription status (only
+   *   updates if explicitly specified)
+   * - data: object (optional) - Event data. On the email path, simple values are ALSO saved to
+   *   the contact (persistent), matching existing behaviour. On the externalId path, `data` is
+   *   recorded on the event and available to workflows but is NEVER merged onto the contact --
+   *   identify is the only writer of persistent contact attributes.
    *   - {value: any, persistent: false} are only available to workflows (non-persistent)
    * - occurredAt: string | number (optional) - When the event actually happened (ISO date
    *   string or epoch), as opposed to when Plunk received it. Defaults to now if omitted.
@@ -57,6 +71,13 @@ export class Actions {
    *     receiptUrl: {value: "https://...", persistent: false}  // Non-persistent - workflows only
    *   }
    * }
+   *
+   * Example (externalId, resolve-only):
+   * {
+   *   event: "purchase",
+   *   externalId: "user_8f3a2c",
+   *   data: {orderId: {value: "12345", persistent: false}}
+   * }
    */
   @Post('track')
   @Middleware([requirePublicKey, trackRateLimit, idempotency])
@@ -65,7 +86,9 @@ export class Actions {
     const auth = res.locals.auth;
 
     // Zod validation - errors automatically handled by global error handler
-    const {event, email, subscribed, data, tags, occurredAt} = ActionSchemas.track.parse(req.body);
+    // (the schema itself enforces email/externalId mutual exclusivity, requires one of the
+    // two, and rejects `subscribed` alongside externalId -- see ActionSchemas.track)
+    const {event, email, externalId, subscribed, data, tags, occurredAt} = ActionSchemas.track.parse(req.body);
 
     // Prevent manual tracking of reserved system events
     if (EventService.isReservedEvent(event)) {
@@ -82,16 +105,31 @@ export class Actions {
       );
     }
 
-    // Create or update contact with persistent data only
-    // ContactService.upsert will filter out non-persistent fields
-    // Event tracking should subscribe new contacts by default (subscribed=true in ContactService)
-    // but preserve existing subscription state for existing contacts
-    const contact = await ContactService.upsert(
-      auth.projectId,
-      email,
-      data as Record<string, unknown> | undefined,
-      subscribed,
-    );
+    let contact: Contact;
+    if (externalId) {
+      // externalId path: RESOLVE ONLY, never create (docs/issues/03-track-by-external-id.md).
+      // `data` is intentionally NOT passed to a merge step here -- it flows only to
+      // EventService.trackEvent below, so it's recorded on the event and available to
+      // workflows without ever touching the contact's persistent attributes.
+      const resolved = await ContactService.findByExternalId(auth.projectId, externalId);
+      if (!resolved) {
+        // Distinguishable not-found: an integration can tell "this user isn't in Plunk yet"
+        // apart from a malformed request, instead of the event silently vanishing.
+        throw new NotFound('Contact', externalId);
+      }
+      contact = resolved;
+    } else {
+      // Existing email path, byte-for-byte unchanged: create or update contact with
+      // persistent data only. ContactService.upsert will filter out non-persistent fields.
+      // Event tracking should subscribe new contacts by default (subscribed=true in
+      // ContactService) but preserve existing subscription state for existing contacts.
+      contact = await ContactService.upsert(
+        auth.projectId,
+        email!,
+        data as Record<string, unknown> | undefined,
+        subscribed,
+      );
+    }
 
     // Track the event with ALL data (persistent + non-persistent)
     // Non-persistent data flows to workflows via execution context
