@@ -64,6 +64,15 @@ export class ContactService {
   ): Promise<CursorPaginatedResponse<Contact & {tags: {id: string; name: string}[]}>> {
     const where: Prisma.ContactWhereInput = {
       projectId,
+      // Anonymized contacts are excluded from the dashboard list entirely, not just from the
+      // derived counts below -- an anonymized row has a null email just like a lead, and
+      // without this filter it would render with a "Lead" badge that directly contradicts the
+      // `leads` count (which has always excluded `deletedAt` rows). Excluding them here keeps
+      // every row consistent with every headline number derived from the same `where`. This
+      // does not remove any recovery path: the record is still reachable directly by id (e.g.
+      // from an event's contactId) via `get()`/`getById()`, which are unfiltered -- only
+      // browsing the default list is affected.
+      deletedAt: null,
       // `search` matches BOTH email and externalId (substring, case-insensitive) so a
       // contact can be looked up in the dashboard by whichever identifier the operator has
       // on hand, without needing a second search box.
@@ -277,6 +286,13 @@ export class ContactService {
    * only, never create" is what stops a leaked key from being used to conjure a contact for
    * an email address of the caller's choosing and then mail it. Callers that get `null` back
    * must surface a distinguishable not-found, not fall through to creation.
+   *
+   * Deliberately does NOT filter `deletedAt` here: {@link anonymizeByExternalId} needs to
+   * resolve an already-anonymized row (that's the no-op-repeat-anonymize behaviour), so a
+   * blanket filter on this shared resolver would break it. Instead, each caller that must
+   * refuse an anonymized contact guards explicitly on the returned `deletedAt` -- see the
+   * `/v1/track` externalId branch in Actions.ts, which does exactly that before recording an
+   * event against the resolved contact.
    */
   public static async findByExternalId(projectId: string, externalId: string): Promise<Contact | null> {
     return prisma.contact.findFirst({
@@ -434,21 +450,23 @@ export class ContactService {
    * which is the no-op behaviour anonymization is supposed to have. `identifyAttempt` guards the
    * one place that survival could otherwise be exploited to resurrect the contact.
    *
-   * Idempotent: a contact that is already anonymized is returned unchanged rather than
-   * re-anonymized or rejected.
+   * Idempotent in OUTCOME, not by skipping work: a repeat call on an already-anonymized contact
+   * does NOT early-return. It still re-runs the event-payload strip and identity wipe below, so
+   * anything written onto the row after the first anonymize (e.g. a `/v1/track` call that should
+   * have been refused, or a subsequent identity re-point) is scrubbed too rather than surviving
+   * forever because the method bailed out before reaching it. Only `deletedAt` itself is kept
+   * idempotent -- it is never moved forward on a repeat call, preserving the original erasure
+   * timestamp.
    */
   private static async anonymizeContact(contact: Contact): Promise<Contact> {
-    if (contact.deletedAt != null) {
-      return contact;
-    }
-
     const [anonymized] = await prisma.$transaction([
       prisma.contact.update({
         where: {id: contact.id},
         data: {
           email: null,
           data: Prisma.JsonNull,
-          deletedAt: new Date(),
+          // Keep the original timestamp on a repeat call rather than sliding it forward.
+          deletedAt: contact.deletedAt ?? new Date(),
         },
       }),
       prisma.event.updateMany({
@@ -457,6 +475,8 @@ export class ContactService {
       }),
       // Drop every identity outright -- a live anonymous_id/analytics_distinct_id on an
       // "anonymized" record is exactly the identifying-value leak this criterion forbids.
+      // Re-run on every call (not just the first) so an identity re-pointed onto the row after
+      // it was already anonymized doesn't survive a repeat anonymize.
       prisma.contactIdentity.deleteMany({
         where: {contactId: contact.id},
       }),
@@ -675,15 +695,65 @@ export class ContactService {
 
       if (target) {
         const wasSubscribed = target.subscribed;
-        contact = await prisma.contact.update({
-          where: {id: target.id},
-          data: {
-            ...(bindingExternalId ? {externalId} : {}),
-            ...(normalizedEmail !== undefined ? {email: normalizedEmail} : {}),
-            data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
-            ...(subscribed !== undefined ? {subscribed} : {}),
-          },
-        });
+
+        if (bindingExternalId) {
+          // Conditional write, not `prisma.contact.update({where: {id: target.id}, ...})`: two
+          // concurrent identifies for DIFFERENT external ids racing on the same unbound email
+          // both read `externalId == null` above, and an unconditional update-by-id would let
+          // both writes land on the same row (no unique-constraint collision, since it's the
+          // same row with different values each time) -- last writer silently wins and BOTH
+          // callers get a 200, defeating the 409 the sequential path correctly returns for
+          // exactly this case. Requiring `externalId: null` in the where clause makes only one
+          // of the two writes actually match a row.
+          const bindResult = await prisma.contact.updateMany({
+            where: {id: target.id, externalId: null},
+            data: {
+              externalId,
+              ...(normalizedEmail !== undefined ? {email: normalizedEmail} : {}),
+              data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
+              ...(subscribed !== undefined ? {subscribed} : {}),
+            },
+          });
+
+          if (bindResult.count === 0) {
+            // Lost the race: another identify already bound an external id onto this row
+            // between our lookup and our write. Re-read the settled row.
+            const settled = await prisma.contact.findUnique({where: {id: target.id}});
+            if (settled?.externalId === externalId) {
+              // The winner happened to bind the SAME external id we were trying to bind --
+              // no conflict. Converge on that row, but still apply this call's own attribute
+              // writes: returning the settled row untouched would silently discard them, and
+              // identify is the only writer of persistent attributes, so a dropped write has
+              // no other path back in.
+              contact = await prisma.contact.update({
+                where: {id: target.id},
+                data: {
+                  ...(normalizedEmail !== undefined ? {email: normalizedEmail} : {}),
+                  data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
+                  ...(subscribed !== undefined ? {subscribed} : {}),
+                },
+              });
+            } else {
+              // A different external id won the race -- same refusal the sequential path
+              // returns for case 3 (found by email, externalId already a different value).
+              throw new HttpException(
+                409,
+                `Contact with email "${normalizedEmail}" is already identified with a different external ID`,
+              );
+            }
+          } else {
+            contact = (await prisma.contact.findUnique({where: {id: target.id}}))!;
+          }
+        } else {
+          contact = await prisma.contact.update({
+            where: {id: target.id},
+            data: {
+              ...(normalizedEmail !== undefined ? {email: normalizedEmail} : {}),
+              data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
+              ...(subscribed !== undefined ? {subscribed} : {}),
+            },
+          });
+        }
 
         // Track subscription status change, mirroring upsert/update's convention.
         if (subscribed !== undefined && wasSubscribed !== subscribed) {

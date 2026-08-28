@@ -12,7 +12,7 @@ import {EmailService} from '../services/EmailService.js';
 import {EmailVerificationService} from '../services/EmailVerificationService.js';
 import {EventService} from '../services/EventService.js';
 import {TagService} from '../services/TagService.js';
-import {NotFound, ValidationError} from '../exceptions/index.js';
+import {HttpException, NotFound, ValidationError} from '../exceptions/index.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 import {DASHBOARD_URI} from '../app/constants.js';
 
@@ -116,6 +116,17 @@ export class Actions {
         // Distinguishable not-found: an integration can tell "this user isn't in Plunk yet"
         // apart from a malformed request, instead of the event silently vanishing.
         throw new NotFound('Contact', externalId);
+      }
+      // Mirrors the identify/update guards in ContactService: an anonymized contact must never
+      // regain identifying value. `findByExternalId` deliberately does not filter `deletedAt`
+      // (anonymizeByExternalId needs it to resolve anonymized rows too), so this branch is the
+      // guard for the one caller that must refuse it -- otherwise a caller-supplied `data`
+      // payload would get permanently attached to an "erased" record via the event it triggers.
+      if (resolved.deletedAt != null) {
+        throw new HttpException(
+          409,
+          `Contact with external ID "${externalId}" has been anonymized and can no longer be tracked`,
+        );
       }
       contact = resolved;
     } else {

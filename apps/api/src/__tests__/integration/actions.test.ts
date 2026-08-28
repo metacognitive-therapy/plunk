@@ -1,4 +1,5 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import type {Contact} from '@plunk/db';
 import {ActionSchemas} from '@plunk/shared';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 import {
@@ -1455,6 +1456,40 @@ describe('Actions API Integration Tests', () => {
       });
     });
 
+    describe('concurrent binding race (real concurrency, not a mocked constraint error)', () => {
+      it('lets exactly one of two concurrent identifies for different external ids bind the same unbound email; the other gets a 409', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        // Case 2 setup: one existing contact with an email and a null externalId. Two
+        // concurrent identify() calls for DIFFERENT external ids both resolve this same row via
+        // the email lookup (byEmail.externalId == null) before either has written anything --
+        // the exact interleaving an unconditional `update({where: {id}})` cannot detect, since
+        // both writes target the same row with no unique-constraint collision.
+        await factories.createContact({projectId, email: 'racebind@example.com', subscribed: true});
+
+        const results = await Promise.allSettled([
+          ContactService.identify(projectId, 'user_race_bind_a', undefined, undefined, 'racebind@example.com'),
+          ContactService.identify(projectId, 'user_race_bind_b', undefined, undefined, 'racebind@example.com'),
+        ]);
+
+        const fulfilled = results.filter((r): r is PromiseFulfilledResult<Contact> => r.status === 'fulfilled');
+        const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+
+        // Exactly one caller wins the bind; the other must be refused with the same 409 the
+        // sequential path returns for "already identified with a different external ID" --
+        // never both succeeding (silent last-writer-wins) and never both failing.
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0]?.reason).toMatchObject({code: 409});
+
+        const settled = await prisma.contact.findFirst({where: {projectId, email: 'racebind@example.com'}});
+        expect(['user_race_bind_a', 'user_race_bind_b']).toContain(settled?.externalId);
+        expect(settled?.externalId).toBe(fulfilled[0]?.value.externalId);
+        // No duplicate row was created by the race -- still exactly one contact for this email.
+        expect(await prisma.contact.count({where: {projectId, email: 'racebind@example.com'}})).toBe(1);
+      });
+    });
+
     describe('identify-time tag movement bypasses tag.added and auto-enrolment', () => {
       it('applies tags directly without emitting tag.added or auto-enrolling into a bound sequence', async () => {
         const {ContactService} = await import('../../services/ContactService.js');
@@ -1623,6 +1658,51 @@ describe('Actions API Integration Tests', () => {
         expect(event.contactId).toBe(lead.id);
         const stillLead = await prisma.contact.findUnique({where: {id: lead.id}});
         expect(stillLead?.email).toBeNull();
+      });
+    });
+
+    describe('refuses to track against an anonymized contact (docs/issues/07-anonymize-replaces-hard-delete.md)', () => {
+      it('findByExternalId still resolves the anonymized row -- Actions.track is the guard, not the resolver', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        const contact = await factories.createContact({projectId, email: 'erased_track@example.com', externalId: 'user_erased_track'});
+        await ContactService.delete(projectId, contact.id);
+
+        // findByExternalId is deliberately unfiltered (anonymizeByExternalId needs it to resolve
+        // anonymized rows) -- so this mirrors what Actions.track does: resolve, then check
+        // `deletedAt` itself before recording anything against it.
+        const resolved = await ContactService.findByExternalId(projectId, 'user_erased_track');
+        expect(resolved?.id).toBe(contact.id);
+        expect(resolved?.deletedAt).not.toBeNull();
+      });
+
+      it('a repeat anonymize re-strips an event payload written after the first anonymize, rather than leaving it forever', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {EventService} = await import('../../services/EventService.js');
+
+        const contact = await factories.createContact({projectId, email: 'leaky@example.com', externalId: 'user_leaky'});
+        await ContactService.delete(projectId, contact.id);
+
+        // Simulate the defect: something wrote a personal-data-bearing event onto the already
+        // anonymized row (what the missing Actions.track guard would have allowed).
+        const leaked = await EventService.trackEvent(projectId, 'purchase', contact.id, undefined, {
+          name: 'Real Name',
+          address: '123 Main St',
+        });
+        expect((leaked.data as Record<string, unknown> | null)?.name).toBe('Real Name');
+
+        const firstPass = await prisma.contact.findUnique({where: {id: contact.id}});
+
+        // A second anonymize call must not early-return before stripping this -- it must still
+        // scrub the payload even though `deletedAt` is already set.
+        await ContactService.delete(projectId, contact.id);
+
+        const scrubbedEvent = await prisma.event.findUnique({where: {id: leaked.id}});
+        expect(scrubbedEvent?.data).toBeNull();
+
+        // deletedAt itself is not moved forward by the repeat call.
+        const secondPass = await prisma.contact.findUnique({where: {id: contact.id}});
+        expect(secondPass?.deletedAt?.getTime()).toBe(firstPass?.deletedAt?.getTime());
       });
     });
 

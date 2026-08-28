@@ -534,7 +534,7 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
       expect(unchangedCampaign?.openedCount).toBe(withCounters.openedCount);
     });
 
-    it('excludes the anonymized contact from the mailable count and from the lead count', async () => {
+    it('excludes the anonymized contact from the rows, the total, the mailable count, and the lead count alike', async () => {
       await factories.createContact({projectId}); // mailable
       const lead = await factories.createContact({projectId, email: null});
       const anonymized = await factories.createContact({projectId});
@@ -542,13 +542,18 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
 
       const result = await ContactService.list(projectId);
 
+      // Anonymized contacts have a null email too, but they aren't leads -- a lead is someone
+      // who hasn't given an email yet, not someone whose record was erased. Both the counts and
+      // the rows agree on this: none of them count or list the anonymized contact.
+      expect(result.total).toBe(2);
       expect(result.mailable).toBe(1);
-      // Only the true lead counts -- the anonymized contact also has a null email, but it is not
-      // an uncontacted prospect, so it must not inflate the lead headline.
       expect(result.leads).toBe(1);
       expect(result.data.some(c => c.id === lead.id)).toBe(true);
-      // The row is still listed (it exists), just excluded from both derived counts.
-      expect(result.data.some(c => c.id === anonymized.id)).toBe(true);
+      // The row is excluded from the default list too -- rendering it would show a null-email
+      // row as a "Lead" in the dashboard, directly contradicting the `leads` count above. The
+      // record itself still exists and is reachable directly by id (get()/getById()); it's only
+      // hidden from this default browsing view.
+      expect(result.data.some(c => c.id === anonymized.id)).toBe(false);
     });
 
     it('lets unsubscribe/subscribe and public lookups continue to resolve after anonymization', async () => {
