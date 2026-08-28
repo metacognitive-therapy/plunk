@@ -53,6 +53,21 @@ When implementing features that query or process contacts, segments, or campaign
 **Note**: The API's `dev` script automatically runs both the server and worker process using `concurrently`. If you need
 to run them separately (e.g., for debugging), use `dev:server` and `dev:worker` individually.
 
+### Testing
+
+- **Run the suite**: `npx vitest run` (or `yarn test:run`). Scope it while iterating, e.g.
+  `npx vitest run apps/api/src/services/__tests__/`.
+- **Never run two vitest invocations at once.** Vitest uses `pool: 'forks'` with `maxWorkers: 4` and
+  per-worker databases (`plunk_test_w1..w4`), which isolates *data* but not the *machine* — CPU and
+  the single Postgres container are shared. A second concurrent run makes timing-sensitive tests
+  (the 10k-row performance seeds, throughput assertions, the rate-limiter's token-bucket windows)
+  miss their budgets and fail for reasons that have nothing to do with the code.
+- These false failures impersonate application bugs — foreign-key violations, `expected +0 to be
+  10000`. The tell is that the failure count varies run to run with no code change, and that each
+  failing test passes when its file is run alone. Before concluding a test found a real defect,
+  check `pgrep -f vitest` and re-run that file by itself. See
+  `docs/issues/09-fix-perf-test-fixtures.md`.
+
 ### Database (Prisma)
 
 - **Generate client**: `yarn workspace @plunk/db db:generate`
