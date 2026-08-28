@@ -59,11 +59,11 @@ model Project {
   // Card verification: the onboarding charge is customer-initiated and on-session, which
   // proves nothing about whether the card accepts the merchant-initiated renewal a month
   // later. A second, off-session charge tests that directly. See CardVerificationService.
-  cardVerification       CardVerificationStatus?
-  cardVerificationIntent String? // PaymentIntent of the last attempt, for support/debugging
-  cardVerificationAt     DateTime? // When the current status was set; drives the reconciliation sweep
-  cardVerificationSession String? // Checkout session, so a retry reuses the same Stripe idempotency key
-  cardVerificationAttempts Int @default(0) // Sweep retries spent; bounds them and marks escalation
+  cardVerification         CardVerificationStatus?
+  cardVerificationIntent   String? // PaymentIntent of the last attempt, for support/debugging
+  cardVerificationAt       DateTime? // When the current status was set; drives the reconciliation sweep
+  cardVerificationSession  String? // Checkout session, so a retry reuses the same Stripe idempotency key
+  cardVerificationAttempts Int                     @default(0) // Sweep retries spent; bounds them and marks escalation
 
   // Billing Limits (per calendar month, null = unlimited)
   billingLimitWorkflows     Int? // Max workflow emails per month
@@ -78,18 +78,19 @@ model Project {
   language String @default("en") // Language code for customer-facing content (ISO 639-1)
 
   // Relations
-  members     Membership[]
-  contacts    Contact[]
-  templates   Template[]
-  segments    Segment[]
-  tags        Tag[]
-  workflows   Workflow[]
-  campaigns   Campaign[]
-  sequences   Sequence[]
-  emails      Email[]
-  events      Event[]
-  domains     Domain[]
-  apiRequests ApiRequest[]
+  members           Membership[]
+  contacts          Contact[]
+  contactIdentities ContactIdentity[]
+  templates         Template[]
+  segments          Segment[]
+  tags              Tag[]
+  workflows         Workflow[]
+  campaigns         Campaign[]
+  sequences         Sequence[]
+  emails            Email[]
+  events            Event[]
+  domains           Domain[]
+  apiRequests       ApiRequest[]
 
   idempotencyKeys IdempotencyKey[]
 
@@ -177,6 +178,7 @@ model Contact {
   contactTags           ContactTag[]
   sequenceSubscriptions SequenceSubscription[]
   sequenceStepSends     SequenceStepSend[]
+  identities            ContactIdentity[]
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -190,6 +192,48 @@ model Contact {
   @@index([projectId, subscribed])
   @@index([data(ops: JsonbOps)], type: Gin) // GIN index for fast JSON queries on Contact.data
   @@map("contacts")
+}
+
+// A namespaced child identifier for a contact -- the many-per-person things that don't fit the
+// one-per-person columns on Contact (email, externalId). Anonymous web identifiers and analytics
+// distinct ids today; device push tokens later. Lets the same person on two devices resolve to one
+// contact instead of forking into two. See docs/issues/08-contact-identities.md.
+//
+// Nothing consumes this table yet -- it is not wired into identify, /v1/track, or any ingestion
+// path. This slice only builds the table, `ContactService.recordIdentity`, and its read surface.
+model ContactIdentity {
+  id String @id @default(uuid())
+
+  // Namespaced identifier type, e.g. "anonymous_id", "analytics_distinct_id". A String, not a
+  // Prisma enum: adding an enum value is an ALTER TYPE migration, and the acceptance criterion
+  // requires push_token (later) to be a one-line vocabulary change with no DDL. The vocabulary
+  // lives in application code -- see CONTACT_IDENTITY_TYPES in @plunk/shared. (See
+  // docs/issues/TECH-STRATEGY.md, Finding 6.)
+  type String
+
+  value String
+
+  // Relations
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId String
+
+  // Denormalized onto the identity row: the (projectId, type, value) unique constraint can't be
+  // expressed through the contact relation alone.
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  // Refreshed on every recordIdentity call, including a re-point to a different contact.
+  lastSeenAt DateTime @default(now())
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // The same value under two different types must not collide (e.g. an analytics distinct id
+  // that happens to equal someone else's anonymous id).
+  @@unique([projectId, type, value])
+  @@index([contactId]) // Render a contact's identities on the detail page
+  @@map("contact_identities")
 }
 
 model Template {
@@ -393,15 +437,15 @@ model Campaign {
   scheduledFor DateTime?
 
   // Stats (computed)
-  totalRecipients Int @default(0)
-  sentCount       Int @default(0)
-  deliveredCount  Int @default(0)
-  openedCount     Int @default(0)
-  clickedCount    Int @default(0)
-  bouncedCount    Int @default(0)
+  totalRecipients   Int @default(0)
+  sentCount         Int @default(0)
+  deliveredCount    Int @default(0)
+  openedCount       Int @default(0)
+  clickedCount      Int @default(0)
+  bouncedCount      Int @default(0)
   // Recipients who reported this campaign as spam. Traced to the exact email by
   // the SES complaint webhook, which stamps Email.complainedAt.
-  complainedCount Int @default(0)
+  complainedCount   Int @default(0)
   // Recipients who opted out from this campaign's mail. Counts deliberate
   // unsubscribes only; bounce- and complaint-driven suppression is reported by
   // bouncedCount and complainedCount, and would otherwise be counted twice.
@@ -860,7 +904,7 @@ model Event {
   // createdAt: when Plunk received/ingested the event. Used by the contact/project
   // event feeds and event stats - the instrument for diagnosing delivery lag, so it
   // must never be conflated with occurredAt.
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
   // occurredAt: when the event actually happened, as reported by the caller. Defaults
   // to now() so callers who don't supply it behave exactly as before. Only the segment
   // "triggered since" / "triggered older than" recency predicates (and equivalent

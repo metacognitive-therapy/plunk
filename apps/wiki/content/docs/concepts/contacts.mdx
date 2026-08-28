@@ -119,15 +119,25 @@ A contact can be identified without being email-reachable (a lead), email-reacha
 
 [`POST /v1/track`](/api-reference/public-api/trackEvent) accepts `externalId` in place of `email` to record an event against a contact you've already identified — a lead included. This path **only resolves** an existing contact; it never creates one, and an unknown `externalId` returns `404` rather than silently dropping the event. This is deliberate: the public key that authorises `/v1/track` carries no origin restriction and is extractable from any client bundle that holds it, so letting this path create contacts would let anyone holding a leaked key conjure a contact for an email address of their choosing and mail it. `email` and `externalId` are mutually exclusive on a single request, and `subscribed` cannot be set on the `externalId` path — consent changes go through `/v1/identify` only.
 
+## Contact identities
+
+Email and external id are one-per-person columns on the contact itself. Everything else that can legitimately exist several-per-person — an anonymous web identifier issued before someone is known, a third-party analytics tool's distinct id — lives in a separate, namespaced `identities` list instead, so the same person on two devices resolves to one contact rather than forking into two.
+
+Each identity has a `type` (e.g. `anonymous_id`, `analytics_distinct_id`), a `value`, and a `lastSeenAt` timestamp, and is unique per project on `(type, value)` — the same value under two different types does not collide. Recording an already-known value re-points it to whichever contact it was just seen on and refreshes `lastSeenAt`; it does not merge the two contacts.
+
+`GET /contacts/:id` and the MCP `plunk_get_contact` tool return a contact's identities alongside its external id, so you can see which person a record refers to. This slice ships the table and its read surface only — nothing in the product writes to it yet.
+
 ## Deleting a contact
 
-"Delete" — from the dashboard, `DELETE /contacts/:id`, `DELETE /contacts/external/:externalId`, their bulk equivalents, or the MCP `plunk_delete_contact` tool — **anonymizes** the contact rather than removing its row. The contact's `email` is nulled, its `data` attributes are cleared, and the payload is stripped from every event it fired, then `deletedAt` is set. There is no option to hard-delete instead: every one of those entry points resolves to the same anonymize operation, with no flag to bypass it.
+"Delete" — from the dashboard, `DELETE /contacts/:id`, `DELETE /contacts/external/:externalId`, their bulk equivalents, or the MCP `plunk_delete_contact` tool — **anonymizes** the contact rather than removing its row. The contact's `email` is nulled, its `data` attributes are cleared, the payload is stripped from every event it fired, and every [identity](#contact-identities) recorded against it is deleted outright, then `deletedAt` is set. There is no option to hard-delete instead: every one of those entry points resolves to the same anonymize operation, with no flag to bypass it.
 
 What survives:
 
 - **The contact row itself** — its id, `externalId`, tags, and send history all still exist. Referencing an anonymized contact's id doesn't 404.
 - **Its `Email` rows** — so campaign statistics (`sentCount`, `openedCount`, etc.), which are derived from `Email` rows rather than stored redundantly, don't drift.
 - **Unsubscribe and manage links already delivered in mail** — those links carry the contact's id, and the public unsubscribe/subscribe/lookup endpoints look a contact up by id without requiring it to be reachable. An anonymized contact can still act on a link sent to it before anonymization.
+
+What does **not** survive: its [identities](#contact-identities) — an anonymized contact holding a live `anonymous_id` or `analytics_distinct_id` would be exactly the identifying-value leak anonymization exists to prevent, so every identity row is deleted, not just neutralised.
 
 What an anonymized contact can never do again: it's excluded from every mailable and lead count, and from every audience (campaigns, sequences, transactional/workflow sends) — see [Leads](#leads) above for the underlying `deletedAt` check. Re-identifying it via `/v1/identify` on the same `externalId` is refused with `409` rather than resurrecting it with a new email, and creating a new contact with its old (now-freed) email address creates a genuinely new, unrelated row.
 

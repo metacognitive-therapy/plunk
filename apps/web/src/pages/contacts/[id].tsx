@@ -28,7 +28,15 @@ import {ContactSchemas} from '@plunk/shared';
 import dayjs from 'dayjs';
 import {z} from 'zod';
 
-type ContactWithTags = Contact & {tags: {id: string; name: string}[]};
+interface ContactIdentity {
+  id: string;
+  type: string;
+  value: string;
+  lastSeenAt: string;
+  createdAt: string;
+}
+
+type ContactWithTags = Contact & {tags: {id: string; name: string}[]; identities: ContactIdentity[]};
 
 const contactTagIdsSchema = z.object({tagIds: z.array(z.string())});
 
@@ -349,6 +357,55 @@ export default function ContactDetailPage() {
                               )}
                             </AnimatePresence>
                           </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {contact.identities.length > 0 && (
+                    <div className="flex items-start gap-3">
+                      <Database className="h-5 w-5 text-neutral-500 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-neutral-900">Identities</p>
+                        <div className="mt-1 space-y-1.5">
+                          {contact.identities.map(identity => (
+                            <div key={identity.id} className="flex items-center gap-1.5">
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-neutral-100 text-neutral-700 flex-shrink-0">
+                                {identity.type}
+                              </span>
+                              <p className="text-xs text-neutral-500 font-mono break-all flex-1">{identity.value}</p>
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(identity.value, 'Identity', `identity-${identity.id}`)}
+                                className="flex-shrink-0 text-neutral-400 hover:text-neutral-700 transition-colors"
+                                aria-label="Copy identity value"
+                              >
+                                <AnimatePresence mode="wait" initial={false}>
+                                  {copiedId === `identity-${identity.id}` ? (
+                                    <motion.span
+                                      key="copied"
+                                      initial={{opacity: 0, y: 4}}
+                                      animate={{opacity: 1, y: 0}}
+                                      exit={{opacity: 0, y: -4}}
+                                      transition={{duration: 0.15}}
+                                    >
+                                      <Check className="h-3 w-3 text-green-600" />
+                                    </motion.span>
+                                  ) : (
+                                    <motion.span
+                                      key="idle"
+                                      initial={{opacity: 0, y: 4}}
+                                      animate={{opacity: 1, y: 0}}
+                                      exit={{opacity: 0, y: -4}}
+                                      transition={{duration: 0.15}}
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                    </motion.span>
+                                  )}
+                                </AnimatePresence>
+                              </button>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </div>

@@ -177,11 +177,43 @@
               "$ref": "#/components/schemas/Tag"
             }
           },
+          "identities": {
+            "type": "array",
+            "description": "Namespaced identifiers recorded against this contact (e.g. an anonymous web id or analytics distinct id). Only present on the single-contact response (GET /contacts/:id), not on list pages.",
+            "items": {
+              "$ref": "#/components/schemas/ContactIdentity"
+            }
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
           },
           "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ContactIdentity": {
+        "type": "object",
+        "description": "A namespaced identifier recorded against a contact -- the many-per-person things that don't fit the one-per-person columns on Contact (email, externalId). Unique per project on (type, value); the same value under two different types does not collide.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "The identity's namespace, e.g. \"anonymous_id\" or \"analytics_distinct_id\"."
+          },
+          "value": {
+            "type": "string"
+          },
+          "lastSeenAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Refreshed whenever this identity is recorded again, including a re-point to a different contact."
+          },
+          "createdAt": {
             "type": "string",
             "format": "date-time"
           }

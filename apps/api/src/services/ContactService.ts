@@ -1,6 +1,7 @@
 import {type Contact, Prisma} from '@plunk/db';
 import type {CursorPaginatedResponse, FilterCondition, FilterGroup} from '@plunk/types';
 import {toPrismaJson} from '@plunk/types';
+import {CONTACT_IDENTITY_TYPE_ENUM} from '@plunk/shared';
 import signale from 'signale';
 
 import {mailableContactWhere} from '../database/contact-filters.js';
@@ -8,6 +9,15 @@ import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {EventService} from './EventService.js';
 import {TagService} from './TagService.js';
+
+/** Shape returned for a contact's recorded identities -- see {@link ContactService.get}. */
+export interface ContactIdentitySummary {
+  id: string;
+  type: string;
+  value: string;
+  lastSeenAt: Date;
+  createdAt: Date;
+}
 
 export class ContactService {
   /**
@@ -138,9 +148,14 @@ export class ContactService {
 
   /**
    * Get a single contact by ID, including its current tags (id + name - bound
-   * by id, so a later rename doesn't require the caller to refetch).
+   * by id, so a later rename doesn't require the caller to refetch) and its recorded
+   * identities (most recently seen first), so the contact detail page can show which
+   * person a record refers to alongside the external id.
    */
-  public static async get(projectId: string, contactId: string): Promise<Contact & {tags: {id: string; name: string}[]}> {
+  public static async get(
+    projectId: string,
+    contactId: string,
+  ): Promise<Contact & {tags: {id: string; name: string}[]; identities: ContactIdentitySummary[]}> {
     const contact = await prisma.contact.findFirst({
       where: {
         id: contactId,
@@ -150,6 +165,10 @@ export class ContactService {
         contactTags: {
           include: {tag: {select: {id: true, name: true}}},
         },
+        identities: {
+          select: {id: true, type: true, value: true, lastSeenAt: true, createdAt: true},
+          orderBy: {lastSeenAt: 'desc'},
+        },
       },
     });
 
@@ -157,8 +176,63 @@ export class ContactService {
       throw new HttpException(404, 'Contact not found');
     }
 
-    const {contactTags, ...rest} = contact;
-    return {...rest, tags: contactTags.map(ct => ct.tag)};
+    const {contactTags, identities, ...rest} = contact;
+    return {...rest, tags: contactTags.map(ct => ct.tag), identities};
+  }
+
+  /**
+   * Record (or re-point) a namespaced identity against a contact -- e.g. "this anonymous_id was
+   * just seen on this contact". Upserts on the `(projectId, type, value)` unique constraint:
+   *
+   * - Unseen value -> a new identity row is created against `contactId`.
+   * - Already recorded, on ANY contact -> the row is RE-POINTED to `contactId` and `lastSeenAt`
+   *   is refreshed. This is the normal case, not an anomaly: an anonymous id first seen on a lead
+   *   legitimately moves to the contact it later resolves to. It re-points the identity only --
+   *   it does NOT merge the two contacts, which is out of scope for this slice (see
+   *   docs/issues/TECH-STRATEGY.md, Finding 6).
+   *
+   * Because this always upserts, the unique constraint never throws P2002 in normal operation.
+   *
+   * Nothing in this codebase calls this yet -- wiring it into identify/track/ingestion is out of
+   * scope for this slice.
+   */
+  public static async recordIdentity(
+    projectId: string,
+    contactId: string,
+    type: string,
+    value: string,
+  ): Promise<ContactIdentitySummary> {
+    const parsedType = CONTACT_IDENTITY_TYPE_ENUM.safeParse(type);
+    if (!parsedType.success) {
+      throw new HttpException(
+        400,
+        `Unknown identity type "${type}". Must be one of: ${CONTACT_IDENTITY_TYPE_ENUM.options.join(', ')}`,
+      );
+    }
+
+    const contact = await prisma.contact.findFirst({
+      where: {id: contactId, projectId},
+      select: {deletedAt: true},
+    });
+
+    if (!contact) {
+      throw new HttpException(404, 'Contact not found');
+    }
+
+    // Mirrors the identify/update guard: an anonymized contact must never regain identifying
+    // value, and a live identity re-pointed onto it would be exactly that.
+    if (contact.deletedAt != null) {
+      throw new HttpException(409, `Contact "${contactId}" has been anonymized and can no longer record identities`);
+    }
+
+    const identity = await prisma.contactIdentity.upsert({
+      where: {projectId_type_value: {projectId, type: parsedType.data, value}},
+      create: {projectId, contactId, type: parsedType.data, value},
+      update: {contactId, lastSeenAt: new Date()},
+      select: {id: true, type: true, value: true, lastSeenAt: true, createdAt: true},
+    });
+
+    return identity;
   }
 
   /**
@@ -380,6 +454,11 @@ export class ContactService {
       prisma.event.updateMany({
         where: {contactId: contact.id},
         data: {data: Prisma.JsonNull},
+      }),
+      // Drop every identity outright -- a live anonymous_id/analytics_distinct_id on an
+      // "anonymized" record is exactly the identifying-value leak this criterion forbids.
+      prisma.contactIdentity.deleteMany({
+        where: {contactId: contact.id},
       }),
     ]);
 
@@ -1239,6 +1318,12 @@ export class ContactService {
       prisma.event.updateMany({
         where: {contactId: {in: toAnonymizeIds}},
         data: {data: Prisma.JsonNull},
+      }),
+      // Same leak as the single-contact path (see anonymizeContact) but via a separate
+      // updateMany, not a loop over it -- must be dropped here too or the bulk path leaks
+      // identifying values out of an "anonymized" record.
+      prisma.contactIdentity.deleteMany({
+        where: {contactId: {in: toAnonymizeIds}},
       }),
     ]);
 

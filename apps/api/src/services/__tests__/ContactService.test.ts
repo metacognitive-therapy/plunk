@@ -1002,4 +1002,114 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
       expect(emailField?.coverage).toBe(67); // 2 of 3, rounded
     });
   });
+
+  describe('Contact identities', () => {
+    it('records a new identity against a contact', async () => {
+      const contact = await factories.createContact({projectId});
+
+      const identity = await ContactService.recordIdentity(projectId, contact.id, 'anonymous_id', 'anon-123');
+
+      expect(identity.type).toBe('anonymous_id');
+      expect(identity.value).toBe('anon-123');
+
+      const row = await prisma.contactIdentity.findUnique({
+        where: {projectId_type_value: {projectId, type: 'anonymous_id', value: 'anon-123'}},
+      });
+      expect(row?.contactId).toBe(contact.id);
+    });
+
+    it('lets several identities be recorded against one contact', async () => {
+      const contact = await factories.createContact({projectId});
+
+      await ContactService.recordIdentity(projectId, contact.id, 'anonymous_id', 'anon-1');
+      await ContactService.recordIdentity(projectId, contact.id, 'analytics_distinct_id', 'dist-1');
+
+      const fetched = await ContactService.get(projectId, contact.id);
+      expect(fetched.identities).toHaveLength(2);
+      expect(fetched.identities.map(i => i.type).sort()).toEqual(['analytics_distinct_id', 'anonymous_id']);
+    });
+
+    it('does not collide when the same value is used under two different types', async () => {
+      const contact = await factories.createContact({projectId});
+
+      await ContactService.recordIdentity(projectId, contact.id, 'anonymous_id', 'shared-value');
+      await ContactService.recordIdentity(projectId, contact.id, 'analytics_distinct_id', 'shared-value');
+
+      const rows = await prisma.contactIdentity.findMany({where: {projectId, value: 'shared-value'}});
+      expect(rows).toHaveLength(2);
+    });
+
+    it('re-points an existing identity to a different contact and refreshes lastSeenAt, rather than merging the contacts', async () => {
+      const lead = await factories.createContact({projectId, email: null});
+      const resolved = await factories.createContact({projectId});
+
+      const first = await ContactService.recordIdentity(projectId, lead.id, 'anonymous_id', 'anon-move');
+      const originalSeenAt = first.lastSeenAt;
+
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const second = await ContactService.recordIdentity(projectId, resolved.id, 'anonymous_id', 'anon-move');
+
+      expect(second.id).toBe(first.id); // same identity row, re-pointed -- not a new one
+      expect(second.lastSeenAt.getTime()).toBeGreaterThan(originalSeenAt.getTime());
+
+      const row = await prisma.contactIdentity.findUnique({where: {id: first.id}});
+      expect(row?.contactId).toBe(resolved.id);
+
+      // Re-pointing must not merge the two contacts -- both rows still exist, independently.
+      const leadAfter = await prisma.contact.findUnique({where: {id: lead.id}});
+      const resolvedAfter = await prisma.contact.findUnique({where: {id: resolved.id}});
+      expect(leadAfter).not.toBeNull();
+      expect(resolvedAfter).not.toBeNull();
+    });
+
+    it('rejects an unknown identity type', async () => {
+      const contact = await factories.createContact({projectId});
+
+      await expect(ContactService.recordIdentity(projectId, contact.id, 'push_token', 'device-1')).rejects.toThrow(
+        /unknown identity type/i,
+      );
+    });
+
+    it('404s recording an identity against a nonexistent contact', async () => {
+      await expect(ContactService.recordIdentity(projectId, 'no-such-contact', 'anonymous_id', 'anon-1')).rejects.toThrow(
+        /not found/i,
+      );
+    });
+
+    it('refuses to record an identity on an anonymized contact, with a 409', async () => {
+      const contact = await factories.createContact({projectId});
+      await ContactService.delete(projectId, contact.id);
+
+      await expect(ContactService.recordIdentity(projectId, contact.id, 'anonymous_id', 'anon-1')).rejects.toThrow(
+        /anonymized/i,
+      );
+
+      const rows = await prisma.contactIdentity.findMany({where: {contactId: contact.id}});
+      expect(rows).toHaveLength(0);
+    });
+
+    it('drops identities when a contact is anonymized via delete() (single path)', async () => {
+      const contact = await factories.createContact({projectId});
+      await ContactService.recordIdentity(projectId, contact.id, 'anonymous_id', 'anon-single');
+      await ContactService.recordIdentity(projectId, contact.id, 'analytics_distinct_id', 'dist-single');
+
+      await ContactService.delete(projectId, contact.id);
+
+      const rows = await prisma.contactIdentity.findMany({where: {contactId: contact.id}});
+      expect(rows).toHaveLength(0);
+    });
+
+    it('drops identities when contacts are anonymized via bulkDelete() (bulk path) -- not just the single path', async () => {
+      const contact1 = await factories.createContact({projectId});
+      const contact2 = await factories.createContact({projectId});
+      await ContactService.recordIdentity(projectId, contact1.id, 'anonymous_id', 'anon-bulk-1');
+      await ContactService.recordIdentity(projectId, contact2.id, 'anonymous_id', 'anon-bulk-2');
+
+      const result = await ContactService.bulkDelete(projectId, [contact1.id, contact2.id]);
+      expect(result.deleted).toBe(2);
+
+      const rows = await prisma.contactIdentity.findMany({where: {contactId: {in: [contact1.id, contact2.id]}}});
+      expect(rows).toHaveLength(0); // the bulk updateMany path must drop identities too, not just delete()
+    });
+  });
 });

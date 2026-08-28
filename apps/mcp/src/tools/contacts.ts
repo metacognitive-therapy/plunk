@@ -18,6 +18,10 @@ interface Contact {
   email: string | null;
   subscribed?: boolean;
   externalId?: string | null;
+  // Namespaced identifiers recorded against this contact -- anonymous web ids, analytics
+  // distinct ids, etc. (docs/issues/08-contact-identities.md). Only present on the single-
+  // contact response (plunk_get_contact), not on list pages.
+  identities?: {id: string; type: string; value: string; lastSeenAt: string; createdAt: string}[];
 }
 
 /** Either identifier accepted by the contact tools. Exactly one is required. */
@@ -178,7 +182,9 @@ export function registerContactTools(ctx: ToolContext, client: PlunkClient): voi
         '**NOT for:** Browsing or searching many contacts — use `plunk_list_contacts`.',
         '',
         '**Returns:** The contact record (id, email — `null` for a lead, subscribed, externalId,',
-        'data, timestamps).',
+        'data, timestamps), plus `identities` — namespaced identifiers recorded against this',
+        'contact (e.g. an anonymous web id or analytics distinct id), each with the type, value,',
+        'and when it was last seen.',
         '',
         '**Pass whichever identifier the user gave you** — you do not need to look the ID up first.',
         'Matching on email is exact and case-insensitive; matching on external ID is exact.',

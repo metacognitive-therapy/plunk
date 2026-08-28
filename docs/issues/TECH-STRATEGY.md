@@ -123,3 +123,38 @@ contact is.
 Slices are implemented by Sonnet 5 against this document. Deviation from anything under
 **Non-negotiables** requires escalation rather than a judgement call — each one encodes a
 constraint found in the code whose rationale is not visible from the diff.
+
+## Finding 6 — Slice 08's `type` must be a string column, not a Prisma enum
+
+The acceptance criterion "extensible to push tokens **without a schema migration**" rules out a
+Prisma enum: adding an enum value is an `ALTER TYPE`, i.e. a migration. So `type` is a `String`
+column, and the vocabulary lives in application code (a shared const + Zod enum) where adding
+`push_token` is a one-line change with no DDL.
+
+The unique constraint is `(projectId, type, value)`, which forces `projectId` onto the identity
+row as a denormalized column — the contact relation alone cannot express it.
+
+### The integration point that is easy to miss
+
+Anonymization has **two** implementations, and both must drop identities inside their existing
+transaction:
+
+- `ContactService.anonymizeContact` (single)
+- `ContactService.bulkDelete` (bulk — a separate `updateMany` path, not a loop over the single one)
+
+An anonymized contact holding a live `anonymous_id` is exactly the leak this slice's criterion
+forbids. A test that only covers the single path passes while the bulk path leaks.
+
+### Re-pointing, not merging
+
+`recordIdentity` upserts on `(projectId, type, value)`: an existing row is re-pointed to the given
+contact and its `lastSeenAt` refreshed. That is the normal case, not an anomaly — an anonymous id
+first seen on a lead legitimately moves to the contact it later resolves to. It re-points the
+identity only; **merging the two contacts is out of scope** for this PRD. Upserting also means the
+unique constraint never throws P2002 in normal operation.
+
+### Scope fence
+
+Nothing consumes this table in this slice. Do not wire it into `identify`, `/v1/track`, or any
+ingestion path — web-guest ingestion and the push channel are both out of scope. Email and
+externalId stay as columns on `Contact` and are not migrated in.
