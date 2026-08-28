@@ -12,7 +12,7 @@ interface EmailPreviewModalProps {
   fromName?: string;
   replyTo?: string;
   toName?: string;
-  toEmail?: string;
+  toEmail?: string | null;
 }
 
 type PreviewDevice = 'mobile' | 'tablet' | 'desktop';

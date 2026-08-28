@@ -796,4 +796,42 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
       });
     });
   });
+
+  describe('Leads (contacts without email)', () => {
+    it('list() separates mailable from leads, and neither counts an unsubscribed-but-mailed contact as a lead', async () => {
+      await factories.createContact({projectId, subscribed: true}); // mailable
+      await factories.createContact({projectId, email: null}); // lead
+      await factories.createContact({projectId, subscribed: false}); // has email, just unsubscribed -- not a lead
+
+      const page = await ContactService.list(projectId, 20);
+
+      expect(page.total).toBe(3);
+      expect(page.mailable).toBe(1);
+      expect(page.leads).toBe(1); // Only the null-email contact, not the unsubscribed one too
+    });
+
+    it('mailable/leads are only computed on the first page (cursor omitted)', async () => {
+      const contacts = await factories.createContacts(projectId, 3, {subscribed: true});
+      const first = await ContactService.list(projectId, 1);
+      expect(first.mailable).toBe(3);
+      expect(first.leads).toBe(0);
+
+      const second = await ContactService.list(projectId, 1, first.cursor);
+      expect(second.mailable).toBeUndefined();
+      expect(second.leads).toBeUndefined();
+      expect(contacts.length).toBe(3); // Sanity: factory created what we asked for
+    });
+
+    it('getAvailableFields reports email coverage instead of assuming every contact has one', async () => {
+      await factories.createContact({projectId}); // has email
+      await factories.createContact({projectId}); // has email
+      await factories.createContact({projectId, email: null}); // lead
+
+      const fields = await ContactService.getAvailableFields(projectId);
+      const emailField = fields.find(f => f.field === 'email');
+
+      expect(emailField).toBeDefined();
+      expect(emailField?.coverage).toBe(67); // 2 of 3, rounded
+    });
+  });
 });

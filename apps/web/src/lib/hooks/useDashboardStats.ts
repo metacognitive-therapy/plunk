@@ -7,6 +7,11 @@ type CampaignsResponse = PaginatedResponse<unknown>;
 
 export interface DashboardStats {
   totalContacts: number;
+  // Mailable contacts (email present, subscribed, not deleted) and leads (no email) split out of
+  // totalContacts, so the headline doesn't read as "wrong" to a marketer who can't otherwise see
+  // that some contacts are structurally unreachable. Undefined until the first page loads.
+  mailableContacts: number | undefined;
+  leadContacts: number | undefined;
   totalEmailsSent: number;
   totalCampaigns: number;
   openRate: number;
@@ -46,6 +51,8 @@ export function useDashboardStats(): DashboardStats {
 
   return {
     totalContacts: contactsData?.total ?? 0,
+    mailableContacts: contactsData?.mailable,
+    leadContacts: contactsData?.leads,
     totalEmailsSent: activityStats?.totalEmailsSent ?? 0,
     totalCampaigns: campaignsData?.total ?? 0,
     openRate: activityStats?.openRate ?? 0,

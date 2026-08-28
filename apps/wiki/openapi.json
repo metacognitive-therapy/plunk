@@ -26,7 +26,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "API Key",
-        "description": "API Key authentication. The project is automatically derived from the key.\n\n**`/v1/track` requires a public key (`pk_*`)** — it is the one endpoint intended for client-side use, and a secret key is rejected there with `401`.\n\n**Every other endpoint requires a secret key (`sk_*`)** and rejects public keys with `401`.\n\nSo the two key types are not interchangeable in either direction: pick the key that matches the endpoint you are calling."
+        "description": "API Key authentication. The project is automatically derived from the key.\n\n**`/v1/track` requires a public key (`pk_*`)** \u2014 it is the one endpoint intended for client-side use, and a secret key is rejected there with `401`.\n\n**Every other endpoint requires a secret key (`sk_*`)** and rejects public keys with `401`.\n\nSo the two key types are not interchangeable in either direction: pick the key that matches the endpoint you are calling."
       }
     },
     "schemas": {
@@ -250,7 +250,11 @@
           },
           "type": {
             "type": "string",
-            "enum": ["TRANSACTIONAL", "MARKETING", "HEADLESS"]
+            "enum": [
+              "TRANSACTIONAL",
+              "MARKETING",
+              "HEADLESS"
+            ]
           },
           "projectId": {
             "type": "string"
@@ -299,16 +303,30 @@
           },
           "type": {
             "type": "string",
-            "enum": ["TRANSACTIONAL", "MARKETING", "HEADLESS"],
+            "enum": [
+              "TRANSACTIONAL",
+              "MARKETING",
+              "HEADLESS"
+            ],
             "description": "Content type of the campaign email. Not to be confused with `audienceType`."
           },
           "status": {
             "type": "string",
-            "enum": ["DRAFT", "SCHEDULED", "SENDING", "SENT", "CANCELLED"]
+            "enum": [
+              "DRAFT",
+              "SCHEDULED",
+              "SENDING",
+              "SENT",
+              "CANCELLED"
+            ]
           },
           "audienceType": {
             "type": "string",
-            "enum": ["ALL", "SEGMENT", "FILTERED"]
+            "enum": [
+              "ALL",
+              "SEGMENT",
+              "FILTERED"
+            ]
           },
           "audienceCondition": {
             "allOf": [
@@ -381,7 +399,10 @@
           },
           "type": {
             "type": "string",
-            "enum": ["DYNAMIC", "STATIC"],
+            "enum": [
+              "DYNAMIC",
+              "STATIC"
+            ],
             "description": "`DYNAMIC` segments are evaluated from `condition`. `STATIC` segments hold a manually managed member list."
           },
           "condition": {
@@ -416,7 +437,10 @@
       },
       "Filter": {
         "type": "object",
-        "required": ["field", "operator"],
+        "required": [
+          "field",
+          "operator"
+        ],
         "properties": {
           "field": {
             "type": "string",
@@ -451,14 +475,20 @@
           },
           "unit": {
             "type": "string",
-            "enum": ["days", "hours", "minutes"],
+            "enum": [
+              "days",
+              "hours",
+              "minutes"
+            ],
             "description": "Time unit for window operators (`within`, `olderThan`, `triggeredWithin`, `triggeredOlderThan`, `notTriggeredWithin`)."
           }
         }
       },
       "FilterGroup": {
         "type": "object",
-        "required": ["filters"],
+        "required": [
+          "filters"
+        ],
         "properties": {
           "filters": {
             "type": "array",
@@ -475,12 +505,18 @@
       },
       "FilterCondition": {
         "type": "object",
-        "required": ["logic", "groups"],
+        "required": [
+          "logic",
+          "groups"
+        ],
         "description": "A boolean tree over contact filters. `logic` combines the `groups`; the filters inside each group are always ANDed together.",
         "properties": {
           "logic": {
             "type": "string",
-            "enum": ["AND", "OR"]
+            "enum": [
+              "AND",
+              "OR"
+            ]
           },
           "groups": {
             "type": "array",
@@ -524,7 +560,9 @@
         "properties": {
           "success": {
             "type": "boolean",
-            "enum": [false]
+            "enum": [
+              false
+            ]
           },
           "error": {
             "type": "object",
@@ -613,7 +651,10 @@
         "in": "query",
         "schema": {
           "type": "string",
-          "enum": ["asc", "desc"],
+          "enum": [
+            "asc",
+            "desc"
+          ],
           "default": "desc"
         },
         "description": "Sort direction. Unrecognised values fall back to the default."
@@ -1304,7 +1345,7 @@
           "Sequences"
         ],
         "summary": "Publish sequence step",
-        "description": "Publish a draft step so the sequence starts sending it. This is one-way — a published step can only be deleted, not unpublished. Every contact already caught up on the sequence becomes eligible for it on the next sweep.",
+        "description": "Publish a draft step so the sequence starts sending it. This is one-way \u2014 a published step can only be deleted, not unpublished. Every contact already caught up on the sequence becomes eligible for it on the next sweep.",
         "operationId": "publishSequenceStep",
         "parameters": [
           {
@@ -1549,7 +1590,7 @@
                         },
                         "skippedCount": {
                           "type": "integer",
-                          "description": "Already enrolled — silent no-ops, not failures."
+                          "description": "Already enrolled \u2014 silent no-ops, not failures."
                         }
                       }
                     },
@@ -1577,7 +1618,7 @@
           "Sequences"
         ],
         "summary": "Unenroll contact",
-        "description": "Remove a contact from a sequence. Their send history for the sequence is discarded too, so re-enrolling them later starts the series over. To stop mail without losing their place, unsubscribe the contact instead — the sweep skips unsubscribed contacts but keeps their progress.",
+        "description": "Remove a contact from a sequence. Their send history for the sequence is discarded too, so re-enrolling them later starts the series over. To stop mail without losing their place, unsubscribe the contact instead \u2014 the sweep skips unsubscribed contacts but keeps their progress.",
         "operationId": "unenrollContactFromSequence",
         "parameters": [
           {
@@ -1612,9 +1653,11 @@
     },
     "/v1/send": {
       "post": {
-        "tags": ["Public API"],
+        "tags": [
+          "Public API"
+        ],
         "summary": "Send transactional email",
-        "description": "Send a transactional email via the public API. Automatically creates or updates the recipient contact.\n\n**Required content:** either a `template` ID, **or** both `subject` and `body`. Template fields can be overridden by explicit request fields.\n\n**Sender:** `from` is required unless using a template that already has a `from` configured. The sender's domain must be verified.\n\n**Multiple recipients:** when `to` is an array, each recipient is processed sequentially with its own contact upsert and rendered email — there is no batch-send semantics. Sending is always immediate; for scheduled sends, use a Campaign.\n\n**Attachments:** up to 10 attachments per email and 10 MB total by default. The total message size cannot exceed 40 MB.",
+        "description": "Send a transactional email via the public API. Automatically creates or updates the recipient contact.\n\n**Required content:** either a `template` ID, **or** both `subject` and `body`. Template fields can be overridden by explicit request fields.\n\n**Sender:** `from` is required unless using a template that already has a `from` configured. The sender's domain must be verified.\n\n**Multiple recipients:** when `to` is an array, each recipient is processed sequentially with its own contact upsert and rendered email \u2014 there is no batch-send semantics. Sending is always immediate; for scheduled sends, use a Campaign.\n\n**Attachments:** up to 10 attachments per email and 10 MB total by default. The total message size cannot exceed 40 MB.",
         "operationId": "sendEmail",
         "requestBody": {
           "required": true,
@@ -1622,7 +1665,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["to"],
+                "required": [
+                  "to"
+                ],
                 "properties": {
                   "to": {
                     "oneOf": [
@@ -1633,7 +1678,9 @@
                       },
                       {
                         "type": "object",
-                        "required": ["email"],
+                        "required": [
+                          "email"
+                        ],
                         "properties": {
                           "name": {
                             "type": "string",
@@ -1657,7 +1704,9 @@
                             },
                             {
                               "type": "object",
-                              "required": ["email"],
+                              "required": [
+                                "email"
+                              ],
                               "properties": {
                                 "name": {
                                   "type": "string",
@@ -1702,7 +1751,9 @@
                       },
                       {
                         "type": "object",
-                        "required": ["email"],
+                        "required": [
+                          "email"
+                        ],
                         "properties": {
                           "name": {
                             "type": "string",
@@ -1725,12 +1776,12 @@
                   },
                   "subscribed": {
                     "type": "boolean",
-                    "description": "Subscription state to apply to the recipient. For **new** contacts, defaults to `false` on `/v1/send`. For **existing** contacts, omitting this preserves their current state — pass `true` or `false` to explicitly change it. A change emits `contact.subscribed` or `contact.unsubscribed`."
+                    "description": "Subscription state to apply to the recipient. For **new** contacts, defaults to `false` on `/v1/send`. For **existing** contacts, omitting this preserves their current state \u2014 pass `true` or `false` to explicitly change it. A change emits `contact.subscribed` or `contact.unsubscribed`."
                   },
                   "data": {
                     "type": "object",
                     "additionalProperties": true,
-                    "description": "Variables for template rendering and contact data updates. Each value can be:\n- A primitive (string, number, boolean) — saved on the contact and available as a template variable.\n- `null` — deletes the field from the contact.\n- An empty string — skipped (does not overwrite existing data).\n- An object `{ value, persistent: false }` — used for this send only, not stored on the contact (good for one-shot password reset codes, magic links).\n\nReserved keys (`id`, `plunk_id`, `plunk_email`, `email`, `unsubscribeUrl`, `subscribeUrl`, `manageUrl`) are silently filtered out."
+                    "description": "Variables for template rendering and contact data updates. Each value can be:\n- A primitive (string, number, boolean) \u2014 saved on the contact and available as a template variable.\n- `null` \u2014 deletes the field from the contact.\n- An empty string \u2014 skipped (does not overwrite existing data).\n- An object `{ value, persistent: false }` \u2014 used for this send only, not stored on the contact (good for one-shot password reset codes, magic links).\n\nReserved keys (`id`, `plunk_id`, `plunk_email`, `email`, `unsubscribeUrl`, `subscribeUrl`, `manageUrl`) are silently filtered out."
                   },
                   "headers": {
                     "type": "object",
@@ -1750,7 +1801,11 @@
                     "maxItems": 10,
                     "items": {
                       "type": "object",
-                      "required": ["filename", "content", "contentType"],
+                      "required": [
+                        "filename",
+                        "content",
+                        "contentType"
+                      ],
                       "properties": {
                         "filename": {
                           "type": "string",
@@ -1772,7 +1827,10 @@
                         },
                         "disposition": {
                           "type": "string",
-                          "enum": ["attachment", "inline"],
+                          "enum": [
+                            "attachment",
+                            "inline"
+                          ],
                           "default": "attachment",
                           "description": "Use `inline` together with `contentId` to embed images in the body. Use `attachment` (the default) for downloadable files."
                         }
@@ -2000,7 +2058,9 @@
     },
     "/v1/track": {
       "post": {
-        "tags": ["Public API"],
+        "tags": [
+          "Public API"
+        ],
         "summary": "Track event",
         "description": "Track an event for a contact. Automatically creates or upserts the contact, then records the event. Tracked events can be used as workflow triggers, segment filters, and audience filters.\n\n**Reserved event names** (rejected with `VALIDATION_ERROR` and code `reserved_event`): anything matching `email.*`, `contact.subscribed`, `contact.unsubscribed`, `segment.<slug>.entry`, `segment.<slug>.exit`. These are emitted by Plunk itself.\n\n**Idempotency**: re-tracking the same event creates a new event record. Send an `Idempotency-Key` header to have a repeated request refused with `409` instead.",
         "operationId": "trackEvent",
@@ -2010,7 +2070,10 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["email", "event"],
+                "required": [
+                  "email",
+                  "event"
+                ],
                 "properties": {
                   "email": {
                     "type": "string",
@@ -2028,7 +2091,7 @@
                   "data": {
                     "type": "object",
                     "additionalProperties": true,
-                    "description": "Contact data and one-off event variables. Persistent values (primitives, plain objects) are saved on the contact and become available as template variables. Pass `{ value, persistent: false }` for one-shot variables that should not be stored on the contact (e.g. order IDs, transaction details). `null` deletes a field. Empty strings are ignored. Reserved keys are filtered out — see the contacts concept page."
+                    "description": "Contact data and one-off event variables. Persistent values (primitives, plain objects) are saved on the contact and become available as template variables. Pass `{ value, persistent: false }` for one-shot variables that should not be stored on the contact (e.g. order IDs, transaction details). `null` deletes a field. Empty strings are ignored. Reserved keys are filtered out \u2014 see the contacts concept page."
                   }
                 }
               },
@@ -2093,9 +2156,98 @@
         ]
       }
     },
+    "/v1/identify": {
+      "post": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "Identify contact",
+        "description": "Identify a contact by a project-scoped external id. Minimal form only: given an external id and no email, creates (or updates) a lead \u2014 a contact with no email address. A lead can be tagged, segmented, and tracked like any other contact, but it is never selected into a mailable audience.\n\nRequires a **secret key**, not a public key \u2014 unlike `/v1/track`, this establishes identity and is meant to be called from a trusted backend.",
+        "operationId": "identifyContact",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "externalId"
+                ],
+                "properties": {
+                  "externalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "Caller-supplied stable id for this person, unique per project."
+                  },
+                  "subscribed": {
+                    "type": "boolean",
+                    "description": "Subscription state to apply to the contact. Only updates if explicitly specified."
+                  },
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Contact data. Same merge rules as /v1/track: `null` deletes a field, empty strings are ignored, reserved keys are filtered out."
+                  }
+                }
+              },
+              "example": {
+                "externalId": "user_8f3a2c"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Contact identified successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "contact": {
+                          "type": "string",
+                          "description": "Contact ID"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ]
+      }
+    },
     "/v1/verify": {
       "post": {
-        "tags": ["Public API"],
+        "tags": [
+          "Public API"
+        ],
         "summary": "Verify email address",
         "description": "Verify an email address for validity, check if it's from a disposable domain or personal email provider, verify MX records, and detect potential typos with suggestions.",
         "operationId": "verifyEmail",
@@ -2105,7 +2257,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["email"],
+                "required": [
+                  "email"
+                ],
                 "properties": {
                   "email": {
                     "type": "string",
@@ -2239,7 +2393,9 @@
                         "domainExists": true,
                         "hasWebsite": true,
                         "hasMxRecords": true,
-                        "reasons": ["Email appears to be valid"]
+                        "reasons": [
+                          "Email appears to be valid"
+                        ]
                       }
                     }
                   },
@@ -2281,7 +2437,9 @@
                         "domainExists": true,
                         "hasWebsite": true,
                         "hasMxRecords": true,
-                        "reasons": ["Email appears to be valid"]
+                        "reasons": [
+                          "Email appears to be valid"
+                        ]
                       }
                     }
                   }
@@ -2300,7 +2458,9 @@
     },
     "/contacts": {
       "get": {
-        "tags": ["Contacts"],
+        "tags": [
+          "Contacts"
+        ],
         "summary": "List contacts",
         "description": "Get a paginated list of contacts with cursor-based pagination.",
         "operationId": "listContacts",
@@ -2332,7 +2492,10 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["email", "createdAt"],
+              "enum": [
+                "email",
+                "createdAt"
+              ],
               "default": "createdAt"
             },
             "description": "Column to sort by. Unrecognised values fall back to `createdAt`."
@@ -2386,7 +2549,9 @@
         }
       },
       "post": {
-        "tags": ["Contacts"],
+        "tags": [
+          "Contacts"
+        ],
         "summary": "Create or update contact",
         "description": "Create a new contact or update existing (upsert by email)",
         "operationId": "createContact",
@@ -2396,7 +2561,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["email"],
+                "required": [
+                  "email"
+                ],
                 "properties": {
                   "email": {
                     "type": "string",
@@ -2506,7 +2673,9 @@
     },
     "/contacts/{id}": {
       "get": {
-        "tags": ["Contacts"],
+        "tags": [
+          "Contacts"
+        ],
         "summary": "Get contact",
         "description": "Get a single contact by ID",
         "operationId": "getContact",
@@ -2540,7 +2709,9 @@
         }
       },
       "patch": {
-        "tags": ["Contacts"],
+        "tags": [
+          "Contacts"
+        ],
         "summary": "Update contact",
         "description": "Update an existing contact's email, subscription state, or `data` fields.",
         "operationId": "updateContact",
@@ -2610,7 +2781,9 @@
         }
       },
       "delete": {
-        "tags": ["Contacts"],
+        "tags": [
+          "Contacts"
+        ],
         "summary": "Delete contact",
         "description": "Permanently delete a contact",
         "operationId": "deleteContact",
@@ -2639,7 +2812,9 @@
     },
     "/templates": {
       "get": {
-        "tags": ["Templates"],
+        "tags": [
+          "Templates"
+        ],
         "summary": "List templates",
         "description": "Get a paginated list of email templates.\n\nThis endpoint uses **offset pagination** (`page` / `pageSize`), not the cursor pagination used by `GET /contacts`.",
         "operationId": "listTemplates",
@@ -2655,7 +2830,11 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["TRANSACTIONAL", "MARKETING", "HEADLESS"]
+              "enum": [
+                "TRANSACTIONAL",
+                "MARKETING",
+                "HEADLESS"
+              ]
             },
             "description": "Filter by template type."
           },
@@ -2672,7 +2851,11 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["name", "createdAt", "updatedAt"],
+              "enum": [
+                "name",
+                "createdAt",
+                "updatedAt"
+              ],
               "default": "createdAt"
             },
             "description": "Column to sort by. Unrecognised values fall back to `createdAt`."
@@ -2719,7 +2902,9 @@
         }
       },
       "post": {
-        "tags": ["Templates"],
+        "tags": [
+          "Templates"
+        ],
         "summary": "Create template",
         "description": "Create a new email template.\n\n`from` is required and its domain must already be verified for this project, otherwise the request is rejected.",
         "operationId": "createTemplate",
@@ -2729,7 +2914,12 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["name", "subject", "body", "from"],
+                "required": [
+                  "name",
+                  "subject",
+                  "body",
+                  "from"
+                ],
                 "properties": {
                   "name": {
                     "type": "string",
@@ -2761,7 +2951,11 @@
                   },
                   "type": {
                     "type": "string",
-                    "enum": ["TRANSACTIONAL", "MARKETING", "HEADLESS"],
+                    "enum": [
+                      "TRANSACTIONAL",
+                      "MARKETING",
+                      "HEADLESS"
+                    ],
                     "default": "MARKETING",
                     "description": "Optional. Defaults to `MARKETING` when omitted."
                   }
@@ -2813,7 +3007,9 @@
     },
     "/campaigns": {
       "get": {
-        "tags": ["Campaigns"],
+        "tags": [
+          "Campaigns"
+        ],
         "summary": "List campaigns",
         "description": "Get a paginated list of email campaigns.\n\nThis endpoint uses **offset pagination** (`page` / `pageSize`), not the cursor pagination used by `GET /contacts`.",
         "operationId": "listCampaigns",
@@ -2829,7 +3025,13 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["DRAFT", "SCHEDULED", "SENDING", "SENT", "CANCELLED"]
+              "enum": [
+                "DRAFT",
+                "SCHEDULED",
+                "SENDING",
+                "SENT",
+                "CANCELLED"
+              ]
             },
             "description": "Filter by campaign status. An unrecognised value returns `400`."
           },
@@ -2846,7 +3048,11 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["name", "createdAt", "updatedAt"],
+              "enum": [
+                "name",
+                "createdAt",
+                "updatedAt"
+              ],
               "default": "createdAt"
             },
             "description": "Column to sort by. Unrecognised values fall back to `createdAt`."
@@ -2903,9 +3109,11 @@
         }
       },
       "post": {
-        "tags": ["Campaigns"],
+        "tags": [
+          "Campaigns"
+        ],
         "summary": "Create campaign",
-        "description": "Create a new email campaign. Campaigns are created as `DRAFT`; use `POST /campaigns/{id}/send` to send or schedule one.\n\nThe sender domain must already be verified for this project.\n\n**Audience:** `audienceType` decides which companion field is required — `SEGMENT` requires `segmentId`, `FILTERED` requires `audienceCondition`, and `ALL` requires neither.",
+        "description": "Create a new email campaign. Campaigns are created as `DRAFT`; use `POST /campaigns/{id}/send` to send or schedule one.\n\nThe sender domain must already be verified for this project.\n\n**Audience:** `audienceType` decides which companion field is required \u2014 `SEGMENT` requires `segmentId`, `FILTERED` requires `audienceCondition`, and `ALL` requires neither.",
         "operationId": "createCampaign",
         "requestBody": {
           "required": true,
@@ -2913,7 +3121,13 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["name", "subject", "body", "from", "audienceType"],
+                "required": [
+                  "name",
+                  "subject",
+                  "body",
+                  "from",
+                  "audienceType"
+                ],
                 "properties": {
                   "name": {
                     "type": "string",
@@ -2947,13 +3161,21 @@
                   },
                   "type": {
                     "type": "string",
-                    "enum": ["TRANSACTIONAL", "MARKETING", "HEADLESS"],
+                    "enum": [
+                      "TRANSACTIONAL",
+                      "MARKETING",
+                      "HEADLESS"
+                    ],
                     "default": "MARKETING",
                     "description": "Content type of the campaign email. Defaults to `MARKETING`."
                   },
                   "audienceType": {
                     "type": "string",
-                    "enum": ["ALL", "SEGMENT", "FILTERED"],
+                    "enum": [
+                      "ALL",
+                      "SEGMENT",
+                      "FILTERED"
+                    ],
                     "description": "Target audience type"
                   },
                   "segmentId": {
@@ -3072,7 +3294,9 @@
     },
     "/campaigns/{id}/send": {
       "post": {
-        "tags": ["Campaigns"],
+        "tags": [
+          "Campaigns"
+        ],
         "summary": "Send or schedule campaign",
         "description": "Send a campaign immediately or schedule it for future delivery.",
         "operationId": "sendCampaign",
@@ -3180,9 +3404,11 @@
     },
     "/segments": {
       "get": {
-        "tags": ["Segments"],
+        "tags": [
+          "Segments"
+        ],
         "summary": "List segments",
-        "description": "Get all audience segments for the project, newest first. This endpoint is not paginated — it returns a bare array of every segment.",
+        "description": "Get all audience segments for the project, newest first. This endpoint is not paginated \u2014 it returns a bare array of every segment.",
         "operationId": "listSegments",
         "responses": {
           "200": {
@@ -3204,9 +3430,11 @@
         }
       },
       "post": {
-        "tags": ["Segments"],
+        "tags": [
+          "Segments"
+        ],
         "summary": "Create segment",
-        "description": "Create a new audience segment.\n\n**`DYNAMIC` segments** (the default) are defined by a `condition` — a boolean tree that is re-evaluated against your contacts, so membership changes on its own as contact data changes. `condition` is required for these.\n\n**`STATIC` segments** hold a manually managed member list; `condition` is ignored. Add members with `POST /segments/{id}/members`.",
+        "description": "Create a new audience segment.\n\n**`DYNAMIC` segments** (the default) are defined by a `condition` \u2014 a boolean tree that is re-evaluated against your contacts, so membership changes on its own as contact data changes. `condition` is required for these.\n\n**`STATIC` segments** hold a manually managed member list; `condition` is ignored. Add members with `POST /segments/{id}/members`.",
         "operationId": "createSegment",
         "requestBody": {
           "required": true,
@@ -3214,7 +3442,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["name"],
+                "required": [
+                  "name"
+                ],
                 "properties": {
                   "name": {
                     "type": "string",
@@ -3226,7 +3456,10 @@
                   },
                   "type": {
                     "type": "string",
-                    "enum": ["DYNAMIC", "STATIC"],
+                    "enum": [
+                      "DYNAMIC",
+                      "STATIC"
+                    ],
                     "default": "DYNAMIC",
                     "description": "Defaults to `DYNAMIC` when omitted."
                   },
@@ -3369,9 +3602,11 @@
     },
     "/tags": {
       "get": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "List tags",
-        "description": "Get all tags for the project, newest first. This endpoint is not paginated — it returns a bare array of every tag.",
+        "description": "Get all tags for the project, newest first. This endpoint is not paginated \u2014 it returns a bare array of every tag.",
         "operationId": "listTags",
         "responses": {
           "200": {
@@ -3393,9 +3628,11 @@
         }
       },
       "post": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "Create tag",
-        "description": "Create a new tag. Names are trimmed and must be unique per project, compared case-insensitively — creating a tag whose trimmed, lowercased name already exists returns the existing tag instead of a duplicate.",
+        "description": "Create a new tag. Names are trimmed and must be unique per project, compared case-insensitively \u2014 creating a tag whose trimmed, lowercased name already exists returns the existing tag instead of a duplicate.",
         "operationId": "createTag",
         "requestBody": {
           "required": true,
@@ -3403,7 +3640,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["name"],
+                "required": [
+                  "name"
+                ],
                 "properties": {
                   "name": {
                     "type": "string",
@@ -3454,7 +3693,9 @@
     },
     "/tags/{id}": {
       "get": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "Get tag",
         "description": "Get a single tag by ID.",
         "operationId": "getTag",
@@ -3488,9 +3729,11 @@
         }
       },
       "patch": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "Rename tag",
-        "description": "Rename a tag. Always safe — every reference to a tag (campaign audiences, workflow triggers/steps, segment/filter conditions) binds by ID, never by name.",
+        "description": "Rename a tag. Always safe \u2014 every reference to a tag (campaign audiences, workflow triggers/steps, segment/filter conditions) binds by ID, never by name.",
         "operationId": "renameTag",
         "parameters": [
           {
@@ -3508,7 +3751,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["name"],
+                "required": [
+                  "name"
+                ],
                 "properties": {
                   "name": {
                     "type": "string",
@@ -3549,9 +3794,11 @@
         }
       },
       "delete": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "Delete tag",
-        "description": "Permanently delete a tag and its memberships. Blocked with `409` if the tag is still referenced by an active campaign, an enabled workflow (as a trigger or an `ADD_TAG`/`REMOVE_TAG` step), or a segment/filter condition — the response enumerates what references it.",
+        "description": "Permanently delete a tag and its memberships. Blocked with `409` if the tag is still referenced by an active campaign, an enabled workflow (as a trigger or an `ADD_TAG`/`REMOVE_TAG` step), or a segment/filter condition \u2014 the response enumerates what references it.",
         "operationId": "deleteTag",
         "parameters": [
           {
@@ -3588,7 +3835,9 @@
     },
     "/tags/{id}/contacts": {
       "get": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "List a tag's contacts",
         "description": "Get a paginated list of contacts carrying this tag.",
         "operationId": "listTagContacts",
@@ -3647,9 +3896,11 @@
     },
     "/tags/contacts/{contactId}": {
       "post": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "Apply tags to a contact",
-        "description": "Apply one or more tags (by ID) to a contact. Applying a tag the contact already carries is a silent no-op for that tag — no event, no member count change.",
+        "description": "Apply one or more tags (by ID) to a contact. Applying a tag the contact already carries is a silent no-op for that tag \u2014 no event, no member count change.",
         "operationId": "applyTagsToContact",
         "parameters": [
           {
@@ -3667,7 +3918,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["tagIds"],
+                "required": [
+                  "tagIds"
+                ],
                 "properties": {
                   "tagIds": {
                     "type": "array",
@@ -3700,9 +3953,11 @@
         }
       },
       "delete": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "Remove tags from a contact",
-        "description": "Remove one or more tags (by ID) from a contact. Removing a tag the contact doesn't carry is a silent no-op for that tag — no event, no member count change.",
+        "description": "Remove one or more tags (by ID) from a contact. Removing a tag the contact doesn't carry is a silent no-op for that tag \u2014 no event, no member count change.",
         "operationId": "removeTagsFromContact",
         "parameters": [
           {
@@ -3720,7 +3975,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["tagIds"],
+                "required": [
+                  "tagIds"
+                ],
                 "properties": {
                   "tagIds": {
                     "type": "array",
@@ -3755,9 +4012,11 @@
     },
     "/tags/bulk-apply": {
       "post": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "Bulk apply or remove tags",
-        "description": "Queue a background job to add or remove one or more tags across many contacts. Accepts either an explicit list of contact IDs (`mode: \"ids\"`), or a filter-based selection with optional exclusions (`mode: \"query\"`) — the same \"select all matching\" pattern used by the contacts bulk-action endpoints. Poll `GET /tags/bulk-apply/{jobId}` for progress.",
+        "description": "Queue a background job to add or remove one or more tags across many contacts. Accepts either an explicit list of contact IDs (`mode: \"ids\"`), or a filter-based selection with optional exclusions (`mode: \"query\"`) \u2014 the same \"select all matching\" pattern used by the contacts bulk-action endpoints. Poll `GET /tags/bulk-apply/{jobId}` for progress.",
         "operationId": "bulkApplyTags",
         "requestBody": {
           "required": true,
@@ -3767,11 +4026,18 @@
                 "oneOf": [
                   {
                     "type": "object",
-                    "required": ["mode", "contactIds", "tagIds", "action"],
+                    "required": [
+                      "mode",
+                      "contactIds",
+                      "tagIds",
+                      "action"
+                    ],
                     "properties": {
                       "mode": {
                         "type": "string",
-                        "enum": ["ids"]
+                        "enum": [
+                          "ids"
+                        ]
                       },
                       "contactIds": {
                         "type": "array",
@@ -3787,17 +4053,27 @@
                       },
                       "action": {
                         "type": "string",
-                        "enum": ["add", "remove"]
+                        "enum": [
+                          "add",
+                          "remove"
+                        ]
                       }
                     }
                   },
                   {
                     "type": "object",
-                    "required": ["mode", "filter", "tagIds", "action"],
+                    "required": [
+                      "mode",
+                      "filter",
+                      "tagIds",
+                      "action"
+                    ],
                     "properties": {
                       "mode": {
                         "type": "string",
-                        "enum": ["query"]
+                        "enum": [
+                          "query"
+                        ]
                       },
                       "filter": {
                         "type": "object",
@@ -3831,7 +4107,10 @@
                       },
                       "action": {
                         "type": "string",
-                        "enum": ["add", "remove"]
+                        "enum": [
+                          "add",
+                          "remove"
+                        ]
                       }
                     }
                   }
@@ -3842,8 +4121,13 @@
                   "summary": "Tag a specific list of contacts",
                   "value": {
                     "mode": "ids",
-                    "contactIds": ["ctc_1", "ctc_2"],
-                    "tagIds": ["tag_vip"],
+                    "contactIds": [
+                      "ctc_1",
+                      "ctc_2"
+                    ],
+                    "tagIds": [
+                      "tag_vip"
+                    ],
                     "action": "add"
                   }
                 },
@@ -3855,8 +4139,12 @@
                       "search": "example.com",
                       "subscribed": true
                     },
-                    "excludeIds": ["ctc_keep"],
-                    "tagIds": ["tag_beta"],
+                    "excludeIds": [
+                      "ctc_keep"
+                    ],
+                    "tagIds": [
+                      "tag_beta"
+                    ],
                     "action": "remove"
                   }
                 }
@@ -3894,7 +4182,9 @@
     },
     "/tags/bulk-apply/{jobId}": {
       "get": {
-        "tags": ["Tags"],
+        "tags": [
+          "Tags"
+        ],
         "summary": "Get bulk apply/remove job status",
         "description": "Poll the status of a job queued by `POST /tags/bulk-apply`.",
         "operationId": "getBulkApplyTagsJob",
@@ -3921,7 +4211,12 @@
                     },
                     "state": {
                       "type": "string",
-                      "enum": ["waiting", "active", "completed", "failed"]
+                      "enum": [
+                        "waiting",
+                        "active",
+                        "completed",
+                        "failed"
+                      ]
                     },
                     "progress": {
                       "type": "integer"
@@ -3932,7 +4227,10 @@
                       "properties": {
                         "action": {
                           "type": "string",
-                          "enum": ["add", "remove"]
+                          "enum": [
+                            "add",
+                            "remove"
+                          ]
                         },
                         "totalRequested": {
                           "type": "integer"
@@ -3942,7 +4240,7 @@
                         },
                         "unchangedCount": {
                           "type": "integer",
-                          "description": "Contacts already in the target state — silent no-ops, not counted as failures."
+                          "description": "Contacts already in the target state \u2014 silent no-ops, not counted as failures."
                         },
                         "failureCount": {
                           "type": "integer"

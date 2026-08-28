@@ -4,7 +4,11 @@ import {compileTemplate} from '@plunk/shared';
 import signale from 'signale';
 
 import {DASHBOARD_URI} from '../app/constants.js';
-import {mailableContactWhere} from '../database/contact-filters.js';
+import {
+  isTransactionallyMailableContact,
+  mailableContactWhere,
+  transactionalMailableContactWhere,
+} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {ConflictError, NotFound} from '../exceptions/index.js';
 
@@ -13,7 +17,7 @@ import {EmailService} from './EmailService.js';
 
 export interface SequenceEnrollOutcome {
   enrolled: number;
-  skipped: number; // Already enrolled
+  skipped: number; // Already enrolled, or ineligible (lead / deleted contact) -- enrollMany only
 }
 
 export interface SequenceSweepOutcome {
@@ -268,10 +272,15 @@ export class SequenceService {
 
     const contact = await prisma.contact.findFirst({
       where: {id: contactId, projectId},
-      select: {id: true},
+      select: {id: true, email: true, subscribed: true, deletedAt: true},
     });
     if (!contact) {
       throw new NotFound('contact');
+    }
+    // A lead (no email) or a deleted contact can never be sent to, so enrolling one would just
+    // create a subscription row the sweep silently filters forever. Reject up front instead.
+    if (!isTransactionallyMailableContact(contact)) {
+      throw new ConflictError('Contact has no email on file and cannot be enrolled in a sequence');
     }
 
     try {
@@ -290,6 +299,11 @@ export class SequenceService {
   /**
    * Enroll many contacts at once (already resolved to ids and validated as
    * belonging to the project by the caller). Idempotent via skipDuplicates.
+   *
+   * Leads (no email) and deleted contacts are excluded with a single batched query rather than
+   * per-id -- same reasoning as `enroll`, just filtered instead of thrown, since this path is
+   * meant for background bulk enrollment where one ineligible id shouldn't fail the whole batch.
+   * They're folded into `skipped` alongside already-enrolled duplicates.
    */
   public static async enrollMany(projectId: string, sequenceId: string, contactIds: string[]): Promise<SequenceEnrollOutcome> {
     const sequence = await this.getRaw(projectId, sequenceId);
@@ -302,8 +316,18 @@ export class SequenceService {
       return {enrolled: 0, skipped: 0};
     }
 
+    const mailable = await prisma.contact.findMany({
+      where: {id: {in: contactIds}, projectId, ...transactionalMailableContactWhere()},
+      select: {id: true},
+    });
+    const mailableIds = mailable.map(contact => contact.id);
+
+    if (mailableIds.length === 0) {
+      return {enrolled: 0, skipped: contactIds.length};
+    }
+
     const result = await prisma.sequenceSubscription.createMany({
-      data: contactIds.map(contactId => ({sequenceId: sequence.id, contactId})),
+      data: mailableIds.map(contactId => ({sequenceId: sequence.id, contactId})),
       skipDuplicates: true,
     });
 
@@ -463,7 +487,18 @@ export class SequenceService {
         const anchor = progress?.lastSentAt || subscription.enrolledAt.getTime();
         if (now - anchor < next.delayMinutes * 60_000) continue;
 
-        const result = await this.claimAndSend(sequence, next, subscription.contact, compiled);
+        // `mailableContactWhere()` above already filters out null-email contacts, so this is
+        // provably unreachable -- but the type system can't see across the query boundary.
+        // Guard defensively (skip this contact, keep sweeping the rest) rather than assert.
+        if (!subscription.contact.email) {
+          signale.warn(
+            `[SEQUENCE] Skipping contact ${subscription.contact.id} with no email in sequence ${sequence.id}`,
+          );
+          continue;
+        }
+
+        const contact = {...subscription.contact, email: subscription.contact.email};
+        const result = await this.claimAndSend(sequence, next, contact, compiled);
         if (result === 'sent') outcome.sent += 1;
         if (result === 'failed') outcome.failed += 1;
       }

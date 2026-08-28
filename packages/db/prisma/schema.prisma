@@ -46,6 +46,12 @@ model Project {
   disabled       Boolean                @default(false)
   disabledReason ProjectDisabledReason?
 
+  // Sending pause: a separate brake from `disabled`. Only the email processor
+  // consults this -- never the auth middleware -- so a paused project keeps
+  // accepting requests, ingesting events, and progressing workflows/sequences
+  // while no email actually goes out. See docs/issues/05-project-sending-pause.md.
+  sendingPaused Boolean @default(false)
+
   // Billing
   customer     String? @unique
   subscription String? @unique
@@ -144,11 +150,21 @@ model Contact {
   id String @id @default(uuid())
 
   // Details
-  email String
+  // Nullable: a contact with no email is a "lead" — identified (has an externalId) or merely
+  // tracked, but structurally unmailable (see apps/api/src/database/contact-filters.ts).
+  email String?
   data  Json? // Custom fields: { firstName: "John", plan: "pro", ... }
+
+  // A project-scoped stable identifier supplied by the caller (e.g. an internal user id),
+  // independent of email. Lets a lead be re-identified later without an email round-trip.
+  externalId String?
 
   // Subscription
   subscribed Boolean @default(true)
+
+  // Soft-delete / anonymization marker. A non-null deletedAt makes a contact unmailable on
+  // every path, including transactional (see contact-filters.ts's `universal` scope).
+  deletedAt DateTime?
 
   // Relations
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -166,7 +182,10 @@ model Contact {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Postgres treats NULLs as distinct in a unique index, so multiple leads (null email) coexist
+  // under this constraint without collision.
   @@unique([projectId, email])
+  @@unique([projectId, externalId])
   @@index([projectId])
   @@index([projectId, subscribed])
   @@index([data(ops: JsonbOps)], type: Gin) // GIN index for fast JSON queries on Contact.data
@@ -1056,4 +1075,6 @@ enum EmailStatus {
   BOUNCED // Bounced (hard or soft)
   COMPLAINED // Marked as spam
   FAILED // Failed to send
+  SUPPRESSED // Held back by a project sending pause -- not cancelled, not failed;
+  // an operator can inspect exactly what would have gone out and unpause to release it
 }

@@ -30,4 +30,9 @@ export interface CursorPaginatedResponse<T> {
   cursor?: string;
   hasMore: boolean;
   total?: number; // Optional: computed on first page only for performance
+  // Contact-list only, computed on first page only for performance (see ContactService.list):
+  // `total` split into mailable contacts (email present, subscribed, not deleted) and leads
+  // (no email). Lets the dashboard headline show "correct-and-filtered" rather than "wrong".
+  mailable?: number;
+  leads?: number;
 }

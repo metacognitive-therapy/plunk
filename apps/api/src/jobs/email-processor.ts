@@ -132,6 +132,30 @@ export async function createEmailWorker() {
         return;
       }
 
+      // Check if project sending is paused. Unlike `disabled`, this is NOT an
+      // authentication-layer gate -- ingestion, workflows, and sequences all keep
+      // running. It only stops the send, and it stops it as SUPPRESSED rather than
+      // FAILED or CANCELLED so an operator can see exactly what would have gone out
+      // and reason about the blast radius before unpausing. See
+      // docs/issues/05-project-sending-pause.md.
+      if (email.project.sendingPaused) {
+        signale.warn(`[EMAIL-PROCESSOR] Project ${email.projectId} sending is paused, suppressing email ${emailId}`);
+        await prisma.email.update({
+          where: {id: emailId},
+          data: {
+            status: EmailStatus.SUPPRESSED,
+            error: 'Project sending is paused',
+          },
+        });
+
+        // Suppressed emails are terminal for the campaign for the same reason
+        // cancelled ones are -- finalize so it doesn't stay stuck in SENDING.
+        if (email.campaignId) {
+          await CampaignService.finalizeIfDone(email.campaignId);
+        }
+        return;
+      }
+
       try {
         // Update status to sending
         await prisma.email.update({
@@ -183,8 +207,16 @@ export async function createEmailWorker() {
             ? (email.headers as Record<string, string>)
             : undefined;
 
-        // Check for custom recipient override in headers
+        // Check for custom recipient override in headers. A contact with no email (a lead) can
+        // only reach this point via such an override -- the send chokepoints (contact-filters.ts)
+        // refuse to enroll/select a null-email contact otherwise -- so a miss here is a bug
+        // upstream, not a case to paper over with a fallback address.
         const recipientEmail = customHeaders?.['X-Plunk-Recipient-Override'] || email.contact.email;
+        if (!recipientEmail) {
+          throw new Error(
+            `Email ${emailId} has no recipient address: contact ${email.contact.id} has no email and no recipient override header was set`,
+          );
+        }
 
         // Remove internal headers before sending
         const publicHeaders = customHeaders ? {...customHeaders} : undefined;

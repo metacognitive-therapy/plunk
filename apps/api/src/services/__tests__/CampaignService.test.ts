@@ -1,5 +1,5 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {CampaignAudienceType, CampaignStatus} from '@plunk/db';
+import {CampaignAudienceType, CampaignStatus, EmailStatus, TemplateType} from '@plunk/db';
 import {CampaignService} from '../CampaignService';
 import {TagService} from '../TagService';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
@@ -484,6 +484,36 @@ describe('CampaignService', () => {
       expect(sentCampaign.totalRecipients).toBe(5);
     });
 
+    // Chokepoint: a lead (no email) and a deleted contact are never selected into a campaign
+    // audience, while an equivalent reachable contact is -- true for a marketing campaign (which
+    // additionally requires `subscribed`) and for a transactional campaign (exempt from
+    // `subscribed`, but not from email presence / deletion).
+    it('never selects a lead or a deleted contact into the recipient count, marketing or transactional', async () => {
+      await factories.createContact({projectId, subscribed: true}); // reachable
+      await factories.createContact({projectId, email: null}); // lead
+      await factories.createContact({projectId, deletedAt: new Date()}); // deleted
+      await factories.createContact({projectId, subscribed: false}); // unsubscribed: excluded from marketing only
+
+      const marketing = await factories.createCampaign({
+        projectId,
+        status: CampaignStatus.DRAFT,
+        audienceType: CampaignAudienceType.ALL,
+      });
+      const sentMarketing = await CampaignService.send(projectId, marketing.id);
+      expect(sentMarketing.totalRecipients).toBe(1); // Only the reachable, subscribed contact
+
+      const transactional = await factories.createCampaign({
+        projectId,
+        status: CampaignStatus.DRAFT,
+        audienceType: CampaignAudienceType.ALL,
+        type: TemplateType.TRANSACTIONAL,
+      });
+      const sentTransactional = await CampaignService.send(projectId, transactional.id);
+      // Transactional is exempt from `subscribed` (picks up the unsubscribed contact too) but
+      // still excludes the lead and the deleted contact.
+      expect(sentTransactional.totalRecipients).toBe(2);
+    });
+
     it('should throw 403 error when campaign would exceed billing limit', async () => {
       // Set billing limit for campaigns to 10
       await prisma.project.update({
@@ -820,6 +850,48 @@ describe('CampaignService', () => {
       });
 
       expect(campaign.totalRecipients).toBe(1);
+    });
+  });
+
+  describe('finalizeIfDone', () => {
+    // Regression test for the sending-pause slice: SUPPRESSED must count as a
+    // terminal email status, the same as FAILED, or a campaign where every
+    // recipient's email was suppressed by a project pause would stay stuck in
+    // SENDING forever. See docs/issues/05-project-sending-pause.md.
+    it('finalizes a campaign as SENT when every email is FAILED or SUPPRESSED', async () => {
+      const contactA = await factories.createContact({projectId});
+      const contactB = await factories.createContact({projectId});
+
+      const campaign = await CampaignService.create(projectId, {
+        name: 'Paused mid-send',
+        subject: 'Subject',
+        body: '<p>Body</p>',
+        from: 'test@example.com',
+        audienceType: CampaignAudienceType.ALL,
+      });
+
+      await prisma.campaign.update({
+        where: {id: campaign.id},
+        data: {status: CampaignStatus.SENDING, totalRecipients: 2},
+      });
+
+      await factories.createEmail({
+        projectId,
+        contactId: contactA.id,
+        campaignId: campaign.id,
+        status: EmailStatus.FAILED,
+      });
+      await factories.createEmail({
+        projectId,
+        contactId: contactB.id,
+        campaignId: campaign.id,
+        status: EmailStatus.SUPPRESSED,
+      });
+
+      await CampaignService.finalizeIfDone(campaign.id);
+
+      const finalized = await prisma.campaign.findUnique({where: {id: campaign.id}});
+      expect(finalized?.status).toBe(CampaignStatus.SENT);
     });
   });
 });

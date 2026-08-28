@@ -379,6 +379,50 @@ export class Actions {
   }
 
   /**
+   * POST /v1/identify
+   *
+   * Minimal form only (docs/issues/01-leads-contacts-without-email.md): given an external id and
+   * no email, creates (or updates) a lead -- a contact with no email address. It can be tagged,
+   * segmented, and tracked like any other contact, but it is never selected into a mailable
+   * audience (see apps/api/src/database/contact-filters.ts).
+   *
+   * Requires a SECRET key, not a public key -- unlike /v1/track, this is meant to be called from
+   * a trusted backend, not client-side code, since it establishes identity.
+   *
+   * Request body:
+   * - externalId: string (required) - Caller-supplied stable id for this person, unique per project
+   * - subscribed: boolean (optional) - Contact subscription status (only updates if explicitly specified)
+   * - data: object (optional) - Contact data
+   *
+   * Response:
+   * - success: boolean
+   * - data: object with contact ID and timestamp
+   */
+  @Post('identify')
+  @Middleware([requireSecretKey, trackRateLimit, idempotency])
+  @CatchAsync
+  public async identify(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+
+    const {externalId, subscribed, data} = ActionSchemas.identify.parse(req.body);
+
+    const contact = await ContactService.identify(
+      auth.projectId,
+      externalId,
+      data as Record<string, unknown> | undefined,
+      subscribed,
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        contact: contact.id,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  }
+
+  /**
    * POST /v1/verify
    * Verify an email address
    *

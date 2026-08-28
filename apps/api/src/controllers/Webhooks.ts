@@ -401,7 +401,7 @@ export class Webhooks {
             };
 
             // Send notification about permanent bounce
-            await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+            await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email ?? '(no email on file)', bounceType);
           } else if (isTransientBounce) {
             // Soft bounce (e.g., out-of-office, mailbox full) - don't count toward bounce rate
             signale.info(
@@ -431,7 +431,7 @@ export class Webhooks {
               bouncedAt: now.toISOString(),
             };
 
-            await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+            await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email ?? '(no email on file)', bounceType);
           }
           break;
         }
@@ -451,7 +451,7 @@ export class Webhooks {
           };
 
           // Send notification about complaint
-          await NtfyService.notifyEmailComplaint(email.project.name, email.projectId, email.contact.email);
+          await NtfyService.notifyEmailComplaint(email.project.name, email.projectId, email.contact.email ?? '(no email on file)');
           break;
 
         default:

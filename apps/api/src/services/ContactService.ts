@@ -3,6 +3,7 @@ import type {CursorPaginatedResponse, FilterCondition, FilterGroup} from '@plunk
 import {toPrismaJson} from '@plunk/types';
 import signale from 'signale';
 
+import {mailableContactWhere} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {EventService} from './EventService.js';
@@ -80,8 +81,17 @@ export class ContactService {
     const results = hasMore ? contacts.slice(0, -1) : contacts;
     const nextCursor = hasMore ? results[results.length - 1]?.id : undefined;
 
-    // Get total count only on first page for better performance
+    // Get total count only on first page for better performance. `mailable`/`leads` split it so
+    // the dashboard headline reads as correct-and-filtered rather than wrong (see
+    // contact-filters.ts and the `contacts_mailable_idx`/`contacts_leads_idx` partial indexes
+    // that back these two counts).
+    //
+    // `leads` counts contacts with no email specifically -- NOT "everything that isn't
+    // mailable". An unsubscribed contact who still has an email is neither mailable nor a lead;
+    // conflating the two would make the headline math wrong the moment someone unsubscribes.
     const total = !cursor ? await prisma.contact.count({where}) : 0;
+    const mailable = !cursor ? await prisma.contact.count({where: {...where, ...mailableContactWhere()}}) : undefined;
+    const leads = !cursor ? await prisma.contact.count({where: {...where, email: null}}) : undefined;
 
     // Batch-fetch tags for the page in one query rather than per-contact, to
     // avoid N+1s.
@@ -103,6 +113,8 @@ export class ContactService {
     return {
       data: results.map(c => ({...c, tags: tagsByContact.get(c.id) ?? []})),
       total,
+      mailable,
+      leads,
       cursor: nextCursor,
       hasMore,
     };
@@ -390,6 +402,67 @@ export class ContactService {
   }
 
   /**
+   * PUBLIC: Identify a contact by a project-scoped external id.
+   *
+   * This is the minimal form of identify (docs/issues/01-leads-contacts-without-email.md): given
+   * only an external id, it creates (or updates) a contact with no email -- a lead. It is
+   * idempotent on `externalId` within a project. Resolving an external id against an existing
+   * email-bearing contact, and binding the two together, is slice 02's job; this method never
+   * touches `email` and never will on its own -- that binding needs its own P2002-retry handling
+   * (strategy finding 4) that this slice doesn't implement.
+   */
+  public static async identify(
+    projectId: string,
+    externalId: string,
+    data?: Record<string, unknown>,
+    subscribed?: boolean,
+  ): Promise<Contact> {
+    const existing = await prisma.contact.findFirst({
+      where: {projectId, externalId},
+    });
+
+    const mergedData = ContactService.mergeContactData(existing?.data ?? null, data ?? {});
+
+    if (existing) {
+      try {
+        return await prisma.contact.update({
+          where: {id: existing.id},
+          data: {
+            data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
+            ...(subscribed !== undefined ? {subscribed} : {}),
+          },
+        });
+      } catch (error) {
+        throw new HttpException(
+          500,
+          `Failed to update contact: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
+    }
+
+    try {
+      return await prisma.contact.create({
+        data: {
+          projectId,
+          externalId,
+          data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
+          subscribed: subscribed ?? true,
+        },
+      });
+    } catch (error) {
+      // Check if this is a unique constraint violation (P2002) -- e.g. a concurrent identify for
+      // the same external id. Slice 02 owns retrying this; here it just surfaces as a conflict.
+      if (error instanceof Error && 'code' in error && error.code === 'P2002') {
+        throw new HttpException(409, 'Contact with this external ID already exists in this project');
+      }
+      throw new HttpException(
+        500,
+        `Failed to create contact: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  /**
    * Get the full merged data for a contact including non-persistent fields
    * This is useful for template rendering
    */
@@ -589,9 +662,16 @@ export class ContactService {
       where: {projectId},
     });
 
-    // Standard fields with known types (always 100% coverage)
+    // Email is no longer guaranteed on every contact -- a lead has none -- so its coverage is
+    // measured like a custom field's rather than assumed 100%. Every other standard field is
+    // still set on every row.
+    const contactsWithEmail = await prisma.contact.count({
+      where: {projectId, email: {not: null}},
+    });
+    const emailCoverage = totalContacts > 0 ? Math.round((contactsWithEmail / totalContacts) * 100) : 0;
+
     const standardFields = [
-      {field: 'email', type: 'string' as const, coverage: 100},
+      {field: 'email', type: 'string' as const, coverage: emailCoverage},
       {field: 'subscribed', type: 'boolean' as const, coverage: 100},
       {field: 'createdAt', type: 'date' as const, coverage: 100},
       {field: 'updatedAt', type: 'date' as const, coverage: 100},
@@ -785,10 +865,13 @@ export class ContactService {
           AND data->${jsonField} IS NOT NULL
       `;
       contactCount = Number(result[0]?.count || 0);
-    } else if (field === 'email' || field === 'subscribed' || field === 'createdAt' || field === 'updatedAt') {
-      // Standard fields exist on all contacts
-      const result = await prisma.contact.count({where: {projectId}});
-      contactCount = result;
+    } else if (field === 'email') {
+      // Unlike the other standard fields, email is not guaranteed on every contact -- a lead has
+      // none -- so its usage count is scoped to contacts that actually have one.
+      contactCount = await prisma.contact.count({where: {projectId, email: {not: null}}});
+    } else if (field === 'subscribed' || field === 'createdAt' || field === 'updatedAt') {
+      // These standard fields exist on all contacts
+      contactCount = await prisma.contact.count({where: {projectId}});
     }
 
     const canDelete = usedInSegments.length === 0 && usedInCampaigns.length === 0;

@@ -35,6 +35,7 @@ export interface UserFactoryOptions {
 export interface ProjectFactoryOptions {
   name?: string;
   disabled?: boolean;
+  sendingPaused?: boolean;
   tracking?: TrackingMode;
   billingLimitWorkflows?: number | null;
   billingLimitCampaigns?: number | null;
@@ -43,7 +44,11 @@ export interface ProjectFactoryOptions {
 
 export interface ContactFactoryOptions {
   projectId: string;
-  email?: string;
+  // Pass `null` explicitly (as opposed to omitting the field) to create a lead — a contact
+  // with no email address. Omitting it still defaults to a generated test email.
+  email?: string | null;
+  externalId?: string;
+  deletedAt?: Date | null;
   data?: Record<string, unknown>;
   subscribed?: boolean;
 }
@@ -131,6 +136,7 @@ export class TestFactories {
         public: `pk_${uniqueId()}`,
         secret: `sk_${uniqueId()}`,
         disabled: options.disabled || false,
+        sendingPaused: options.sendingPaused || false,
         tracking: options.tracking ?? TrackingMode.ENABLED,
         billingLimitWorkflows: options.billingLimitWorkflows,
         billingLimitCampaigns: options.billingLimitCampaigns,
@@ -164,7 +170,11 @@ export class TestFactories {
     return this.prisma.contact.create({
       data: {
         projectId: options.projectId,
-        email: options.email || `contact-${uniqueId()}@test.com`,
+        // `undefined` (field omitted) falls back to a generated email; `null` (explicitly
+        // passed) creates a lead with no email on file.
+        email: options.email === undefined ? `contact-${uniqueId()}@test.com` : options.email,
+        externalId: options.externalId,
+        deletedAt: options.deletedAt,
         data: options.data || {},
         subscribed: options.subscribed ?? true,
       },

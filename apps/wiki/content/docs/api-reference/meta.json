@@ -5,6 +5,7 @@
     "---Public API---",
     "public-api/sendEmail",
     "public-api/trackEvent",
+    "public-api/identifyContact",
     "public-api/verifyEmail",
     "---Resources---",
     "contacts",

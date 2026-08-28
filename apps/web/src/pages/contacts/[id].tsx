@@ -76,7 +76,7 @@ export default function ContactDetailPage() {
 
   useEffect(() => {
     if (contact) {
-      setEmail(contact.email);
+      setEmail(contact.email ?? '');
       setSubscribed(contact.subscribed);
       setCustomData(contact.data as Record<string, string | number | boolean> | null);
     }
@@ -154,7 +154,7 @@ export default function ContactDetailPage() {
 
   return (
     <>
-      <NextSeo title={contact.email} />
+      <NextSeo title={contact.email ?? 'Lead (no email)'} />
       <DashboardLayout>
         <div className="space-y-6">
           {/* Header */}
@@ -164,8 +164,15 @@ export default function ContactDetailPage() {
                 <Link href="/contacts"><ArrowLeft className="h-4 w-4" /></Link>
               </Button>
               <div className="min-w-0">
-                <h1 className="text-2xl sm:text-3xl font-bold text-neutral-900 truncate">{contact.email}</h1>
-                <p className="mt-1">
+                <h1 className="text-2xl sm:text-3xl font-bold text-neutral-900 truncate">
+                  {contact.email ?? 'Lead (no email)'}
+                </h1>
+                <p className="mt-1 space-x-2">
+                  {!contact.email && (
+                    <span className="inline-flex items-center px-2 sm:px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                      Lead
+                    </span>
+                  )}
                   <span
                     className={`inline-flex items-center px-2 sm:px-2.5 py-0.5 rounded-full text-xs font-medium ${
                       contact.subscribed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'

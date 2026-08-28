@@ -66,6 +66,7 @@ import {
   Tag as TagIcon,
   Trash2,
   Upload,
+  UserPlus,
   X,
   XCircle,
 } from 'lucide-react';
@@ -376,7 +377,7 @@ export default function ContactsPage() {
         ),
         cell: ({row}) => (
           <Checkbox
-            aria-label={`Select ${row.original.email}`}
+            aria-label={`Select ${row.original.email ?? 'lead (no email)'}`}
             checked={isContactSelected(row.original.id)}
             onClick={e => e.stopPropagation()}
             onCheckedChange={() => handleSelectContact(row.original.id)}
@@ -391,7 +392,9 @@ export default function ContactsPage() {
         header: ({column}) => <DataTableColumnHeader column={column}>Email</DataTableColumnHeader>,
         cell: ({row}) => (
           <div className="flex items-center gap-2">
-            {row.original.subscribed ? (
+            {!row.original.email ? (
+              <UserPlus className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+            ) : row.original.subscribed ? (
               <MailCheck className="h-4 w-4 shrink-0 text-green-600" aria-hidden="true" />
             ) : (
               <MailX className="h-4 w-4 shrink-0 text-red-600" aria-hidden="true" />
@@ -400,7 +403,9 @@ export default function ContactsPage() {
               href={`/contacts/${row.original.id}`}
               className="text-sm font-medium text-neutral-900 hover:text-neutral-700 focus-visible:outline-none focus-visible:underline"
             >
-              {row.original.email}
+              {/* A lead has no email -- it can't be mailed (see contact-filters.ts), so it's
+                  marked distinctly rather than shown as a blank/broken row. */}
+              {row.original.email ?? <span className="italic text-neutral-500">Lead (no email)</span>}
             </Link>
           </div>
         ),
@@ -426,11 +431,14 @@ export default function ContactsPage() {
             Status
           </DataTableColumnHeader>
         ),
-        cell: ({row}) => (
-          <Badge variant={row.original.subscribed ? 'success' : 'destructive'}>
-            {row.original.subscribed ? 'Subscribed' : 'Unsubscribed'}
-          </Badge>
-        ),
+        cell: ({row}) =>
+          !row.original.email ? (
+            <Badge variant="warning">Lead</Badge>
+          ) : (
+            <Badge variant={row.original.subscribed ? 'success' : 'destructive'}>
+              {row.original.subscribed ? 'Subscribed' : 'Unsubscribed'}
+            </Badge>
+          ),
       },
       {
         id: 'tags',
@@ -725,7 +733,7 @@ export default function ContactsPage() {
                             className="mt-0.5 shrink-0"
                             checked={selected}
                             onCheckedChange={() => handleSelectContact(contact.id)}
-                            aria-label={`Select ${contact.email}`}
+                            aria-label={`Select ${contact.email ?? 'lead (no email)'}`}
                           />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-3">
@@ -733,16 +741,26 @@ export default function ContactsPage() {
                                 href={`/contacts/${contact.id}`}
                                 className="flex min-w-0 items-center gap-2 text-sm font-medium text-neutral-900 hover:text-neutral-700 focus-visible:outline-none focus-visible:underline"
                               >
-                                {contact.subscribed ? (
+                                {!contact.email ? (
+                                  <UserPlus className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+                                ) : contact.subscribed ? (
                                   <MailCheck className="h-4 w-4 shrink-0 text-green-600" aria-hidden="true" />
                                 ) : (
                                   <MailX className="h-4 w-4 shrink-0 text-red-600" aria-hidden="true" />
                                 )}
-                                <span className="truncate">{contact.email}</span>
+                                <span className="truncate">
+                                  {contact.email ?? <span className="italic text-neutral-500">Lead (no email)</span>}
+                                </span>
                               </Link>
-                              <Badge variant={contact.subscribed ? 'success' : 'destructive'} className="shrink-0">
-                                {contact.subscribed ? 'Subscribed' : 'Unsubscribed'}
-                              </Badge>
+                              {!contact.email ? (
+                                <Badge variant="warning" className="shrink-0">
+                                  Lead
+                                </Badge>
+                              ) : (
+                                <Badge variant={contact.subscribed ? 'success' : 'destructive'} className="shrink-0">
+                                  {contact.subscribed ? 'Subscribed' : 'Unsubscribed'}
+                                </Badge>
+                              )}
                             </div>
                             {contact.tags.length > 0 && (
                               <div className="mt-2">

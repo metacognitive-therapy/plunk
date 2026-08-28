@@ -84,7 +84,9 @@ export function ContactPicker({
     {revalidateOnFocus: false},
   );
 
-  const contacts = data?.data ?? [];
+  // The `search` param matches on email, so a lead (no email) can never appear here in
+  // practice -- filter defensively rather than assume, since this picker works in emails only.
+  const contacts = (data?.data ?? []).filter((c): c is Contact & {email: string} => c.email != null);
 
   const toggle = (email: string) => {
     if (selected.includes(email)) {

@@ -4,7 +4,7 @@ description: Manage and organize your contacts effectively
 icon: Users
 ---
 
-Contacts in Plunk represent an individual email recipient. Each contact has an identifier and is linked to an email address.
+Contacts in Plunk represent an individual person. Most contacts are linked to an email address, but a contact **doesn't have to have one** — see [Leads](#leads) below.
 
 ## Adding contacts
 
@@ -91,6 +91,33 @@ The last three are auto-generated per-recipient at send time and exposed as temp
 | Key    | Description                                                                                                                                                                                  |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | locale | The contact's preferred locale in ISO 639 (e.g. 'en', 'fr', 'es'). Specifying the locale field on a contact will override the project-wide locale for contact-facing pages and email footers |
+
+## Leads
+
+A **lead** is a contact with no email address — a person you've identified (e.g. by an internal user id) but don't yet have a way to email. You get one by calling [`POST /v1/identify`](/api-reference/public-api/identifyContact) with an `externalId` and no email:
+
+```json
+{
+  "externalId": "user_8f3a2c"
+}
+```
+
+A lead can be tagged, put in segments, and tracked with events exactly like any other contact. What it **can't** do is receive mail: campaigns, sequences, and transactional/workflow sends all skip it, because there's no address to deliver to — even transactional email, which is otherwise exempt from subscription checks, is not exempt from needing an email at all.
+
+Two independent, computed properties describe a contact — neither is a stored column, so they're always in sync with the contact's actual state:
+
+| Property           | Meaning                                                            |
+| ------------------ | ------------------------------------------------------------------- |
+| **Identified**      | `externalId` is set.                                                |
+| **Email-reachable** | `email` is set, `subscribed` is `true`, and the contact isn't deleted/anonymized. |
+
+A contact can be identified without being email-reachable (a lead), email-reachable without being identified (a typical contact created via `/v1/track` or `POST /contacts`), both, or neither. The dashboard's contact list marks leads distinctly, and the headline contact count is split into mailable contacts and leads so the number you see matches the number a campaign will actually reach.
+
+<Callout title="Adding an email to a lead" type="info">
+  This version of `/v1/identify` only covers the simplest case — creating a lead from an external id.
+  Resolving an external id against an existing email-bearing contact (or adding an email to an
+  existing lead) is a separate, more involved operation and isn't covered here yet.
+</Callout>
 
 ## Subscription State
 

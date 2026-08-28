@@ -5,7 +5,7 @@ import type {CreateCampaignData, FilterCondition, PaginatedResponse, UpdateCampa
 import {fromPrismaJson, toPrismaJson} from '@plunk/types';
 import signale from 'signale';
 
-import {mailableContactWhere} from '../database/contact-filters.js';
+import {mailableContactWhere, transactionalMailableContactWhere} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {redis} from '../database/redis.js';
 import {HttpException} from '../exceptions/index.js';
@@ -827,9 +827,11 @@ export class CampaignService {
 
   /**
    * Finalize a SENDING campaign if every email has reached a terminal state.
-   * Terminal = sentAt is set OR status is FAILED. Counting FAILED as terminal
-   * unsticks campaigns where some emails couldn't be delivered (e.g. the project
-   * was disabled mid-send), so the campaign moves to SENT with a partial sentCount.
+   * Terminal = sentAt is set OR status is FAILED OR status is SUPPRESSED. Counting
+   * FAILED/SUPPRESSED as terminal unsticks campaigns where some emails couldn't be
+   * delivered (e.g. the project was disabled mid-send) or were held back by a
+   * sending pause, so the campaign moves to SENT with a partial sentCount instead
+   * of hanging in SENDING forever. See docs/issues/05-project-sending-pause.md.
    */
   public static async finalizeIfDone(campaignId: string): Promise<void> {
     const campaign = await prisma.campaign.findUnique({
@@ -849,8 +851,9 @@ export class CampaignService {
     }
 
     // Cheap completion probe: an unprocessed campaign email is always PENDING or
-    // SENDING (any other status either has sentAt set or is FAILED, both terminal),
-    // so a single index-only LIMIT 1 lookup tells us whether the campaign is done.
+    // SENDING (any other status either has sentAt set or is FAILED/SUPPRESSED, all
+    // terminal), so a single index-only LIMIT 1 lookup tells us whether the
+    // campaign is done.
     // This runs on every sent email, so it must stay O(log N) — the full counts
     // below only run once the campaign has actually finished. See the (campaignId,
     // status) index on Email.
@@ -867,7 +870,7 @@ export class CampaignService {
       prisma.email.count({
         where: {
           campaignId,
-          OR: [{sentAt: {not: null}}, {status: EmailStatus.FAILED}],
+          OR: [{sentAt: {not: null}}, {status: {in: [EmailStatus.FAILED, EmailStatus.SUPPRESSED]}}],
         },
       }),
       prisma.email.count({where: {campaignId, sentAt: {not: null}}}),
@@ -1111,8 +1114,10 @@ export class CampaignService {
   ): Promise<Prisma.ContactWhereInput> {
     const baseWhere: Prisma.ContactWhereInput = {
       projectId,
-      // Transactional campaigns send to all contacts regardless of subscription status
-      ...(campaign.type !== TemplateType.TRANSACTIONAL && mailableContactWhere()),
+      // Transactional campaigns send to all contacts regardless of subscription status, but a
+      // lead (no email) or a deleted contact is unmailable on every path -- so they still take
+      // the universal-only fragment rather than being skipped entirely.
+      ...(campaign.type === TemplateType.TRANSACTIONAL ? transactionalMailableContactWhere() : mailableContactWhere()),
     };
 
     switch (campaign.audienceType) {

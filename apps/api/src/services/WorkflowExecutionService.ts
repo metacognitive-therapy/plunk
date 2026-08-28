@@ -290,7 +290,7 @@ export class WorkflowExecutionService {
         failedExecution.workflow.name,
         failedExecution.workflow.project.name,
         failedExecution.workflow.project.id,
-        failedExecution.contact.email,
+        failedExecution.contact.email ?? '(no email on file)',
         error instanceof Error ? error.message : 'Unknown error',
       );
 

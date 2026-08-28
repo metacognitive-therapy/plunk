@@ -30,7 +30,8 @@ export interface Activity {
   id: string;
   type: ActivityType;
   timestamp: Date;
-  contactEmail?: string;
+  // A lead (a contact with no email) has no address to show here.
+  contactEmail?: string | null;
   contactId?: string;
   metadata: Record<string, unknown>;
 }

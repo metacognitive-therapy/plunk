@@ -186,6 +186,89 @@ describe('EmailService', () => {
       });
     });
 
+    // Chokepoint: a lead (no email) and a deleted contact are never sent to by either send
+    // guard -- universal, so it applies even to the transactional path that's otherwise exempt
+    // from the subscription check above -- while an equivalent reachable contact is.
+    describe('Lead / Deleted Contact Exemption (universal, even for transactional)', () => {
+      it('sendTransactionalEmail rejects a lead and a deleted contact, but sends to a reachable one', async () => {
+        const lead = await factories.createContact({projectId, email: null});
+        const deleted = await factories.createContact({projectId, deletedAt: new Date()});
+        const reachable = await factories.createContact({projectId});
+
+        await expect(
+          EmailService.sendTransactionalEmail({
+            projectId,
+            contactId: lead.id,
+            subject: 'Receipt',
+            body: 'Thanks for your purchase',
+            from: 'noreply@example.com',
+          }),
+        ).rejects.toThrow(/no email on file/i);
+
+        await expect(
+          EmailService.sendTransactionalEmail({
+            projectId,
+            contactId: deleted.id,
+            subject: 'Receipt',
+            body: 'Thanks for your purchase',
+            from: 'noreply@example.com',
+          }),
+        ).rejects.toThrow(/no email on file/i);
+
+        const email = await EmailService.sendTransactionalEmail({
+          projectId,
+          contactId: reachable.id,
+          subject: 'Receipt',
+          body: 'Thanks for your purchase',
+          from: 'noreply@example.com',
+        });
+        expect(email.status).toBe(EmailStatus.PENDING);
+      });
+
+      it('sendWorkflowEmail silently FAILs for a lead and a deleted contact, but sends to a reachable one', async () => {
+        const lead = await factories.createContact({projectId, email: null});
+        const deleted = await factories.createContact({projectId, deletedAt: new Date()});
+        const reachable = await factories.createContact({projectId});
+
+        const workflow = await factories.createWorkflow({projectId});
+        const leadExecution = await factories.createWorkflowExecution(workflow.id, lead.id);
+        const deletedExecution = await factories.createWorkflowExecution(workflow.id, deleted.id);
+        const reachableExecution = await factories.createWorkflowExecution(workflow.id, reachable.id);
+
+        const leadEmail = await EmailService.sendWorkflowEmail({
+          projectId,
+          contactId: lead.id,
+          subject: 'Welcome',
+          body: 'Content',
+          from: 'test@example.com',
+          workflowExecutionId: leadExecution.id,
+        });
+        expect(leadEmail.status).toBe(EmailStatus.FAILED);
+        expect(leadEmail.error).toMatch(/no email on file/i);
+
+        const deletedEmail = await EmailService.sendWorkflowEmail({
+          projectId,
+          contactId: deleted.id,
+          subject: 'Welcome',
+          body: 'Content',
+          from: 'test@example.com',
+          workflowExecutionId: deletedExecution.id,
+        });
+        expect(deletedEmail.status).toBe(EmailStatus.FAILED);
+        expect(deletedEmail.error).toMatch(/no email on file/i);
+
+        const reachableEmail = await EmailService.sendWorkflowEmail({
+          projectId,
+          contactId: reachable.id,
+          subject: 'Welcome',
+          body: 'Content',
+          from: 'test@example.com',
+          workflowExecutionId: reachableExecution.id,
+        });
+        expect(reachableEmail.status).toBe(EmailStatus.PENDING);
+      });
+    });
+
     describe('Headless Email Behaviour', () => {
       it('should NOT send headless workflow emails to unsubscribed contacts', async () => {
         const unsubscribedContact = await factories.createContact({

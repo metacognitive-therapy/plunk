@@ -275,7 +275,8 @@ const DISABLED_COPY_FALLBACK = {
 
 export default function Index() {
   const {activeProject} = useActiveProject();
-  const {totalContacts, totalEmailsSent, totalCampaigns, openRate, isLoading} = useDashboardStats();
+  const {totalContacts, mailableContacts, leadContacts, totalEmailsSent, totalCampaigns, openRate, isLoading} =
+    useDashboardStats();
   const {setupState, isLoading: isLoadingSetupState} = useProjectSetupState(activeProject?.id);
   const {securityMetrics} = useProjectSecurity(activeProject?.id);
   const {data: config} = useConfig();
@@ -363,12 +364,21 @@ export default function Index() {
   // totalCampaigns intentionally unused — replaced by Deliverability card below
   void totalCampaigns;
 
+  // Contacts that can't be mailed (leads: no email on file) would otherwise make the headline
+  // count look wrong to a marketer sending a campaign to fewer people than "Total contacts"
+  // implies. Surface the split whenever there's at least one lead.
+  const leadsSubtitle =
+    leadContacts !== undefined && leadContacts > 0
+      ? `${(mailableContacts ?? 0).toLocaleString()} mailable · ${leadContacts.toLocaleString()} ${leadContacts === 1 ? 'lead' : 'leads'}`
+      : undefined;
+
   const stats = [
     {
       name: 'Total contacts',
       value: totalContacts,
       icon: Users,
       format: (n: number) => n.toLocaleString(),
+      subtitle: leadsSubtitle,
     },
     {
       name: 'Emails sent',
@@ -567,6 +577,9 @@ export default function Index() {
                       </CardTitle>
                       {isEmails && !isLoading && previousStats && <TrendChip trend={emailsTrend} />}
                       {isOpenRate && !isLoading && previousStats && <TrendChip trend={openRateTrend} />}
+                      {stat.subtitle && !isLoading && (
+                        <p className="text-xs text-neutral-500">{stat.subtitle}</p>
+                      )}
                     </CardHeader>
                   </Card>
                 </motion.div>

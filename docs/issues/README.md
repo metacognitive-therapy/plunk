@@ -20,6 +20,12 @@ Source: `docs/prds/contact-identity-and-leads.md`
 | 07 | Anonymize replaces hard delete | 01 | 29, 30, 31, 32, 33, 34, 35 |
 | 08 | Contact identities | 01 | 14, 15 |
 
+## Test infrastructure
+
+| # | Issue | Blocked by | Notes |
+|---|---|---|---|
+| 09 | Fix the performance-test fixtures | — | Pre-existing failure on `next`, unrelated to the PRD. CI runs perf tests, so the safety net is currently red. |
+
 Story 44 (wiki documentation) is distributed across the slices that change behaviour, rather than deferred to a slice of its own.
 
 04, 05, and 06 are independent of the identity chain and of each other. 06 is a prerequisite for sending behavioural events at product volume, so it should not be left until last despite having no blocker.

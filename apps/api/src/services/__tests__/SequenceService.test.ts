@@ -151,6 +151,32 @@ describe('SequenceService', () => {
       await expect(SequenceService.enroll(projectId, sequence.id, foreign.id)).rejects.toBeInstanceOf(NotFound);
     });
 
+    // Chokepoint: a lead (no email) or a deleted contact is never enrolled, while an
+    // equivalent reachable contact is -- single-contact `enroll` rejects outright, and the
+    // batch `enrollMany` silently excludes them (see `sweep selection` below for the send side).
+    it('never enrolls a lead or a deleted contact, only a reachable one', async () => {
+      const sequence = await createActiveSequence();
+      const reachable = await factories.createContact({projectId});
+      const lead = await factories.createContact({projectId, email: null});
+      const deleted = await factories.createContact({projectId, deletedAt: new Date()});
+
+      await expect(SequenceService.enroll(projectId, sequence.id, lead.id)).rejects.toBeInstanceOf(ConflictError);
+      await expect(SequenceService.enroll(projectId, sequence.id, deleted.id)).rejects.toBeInstanceOf(ConflictError);
+      const outcome = await SequenceService.enroll(projectId, sequence.id, reachable.id);
+      expect(outcome).toEqual({enrolled: 1, skipped: 0});
+
+      expect(await prisma.sequenceSubscription.count({where: {sequenceId: sequence.id}})).toBe(1);
+      expect(
+        await prisma.sequenceSubscription.findUnique({
+          where: {sequenceId_contactId: {sequenceId: sequence.id, contactId: reachable.id}},
+        }),
+      ).not.toBeNull();
+
+      const bulk = await SequenceService.enrollMany(projectId, sequence.id, [lead.id, deleted.id]);
+      expect(bulk).toEqual({enrolled: 0, skipped: 2});
+      expect(await prisma.sequenceSubscription.count({where: {sequenceId: sequence.id}})).toBe(1); // Unchanged
+    });
+
     it('unenroll wipes the contact sent-set so re-enrollment restarts at step one', async () => {
       const sends = stubSends();
       const sequence = await createActiveSequence();
@@ -329,6 +355,23 @@ describe('SequenceService', () => {
       await prisma.contact.update({where: {id: contact.id}, data: {subscribed: true}});
       await SequenceService.sweepAllDue();
       expect(sends).toHaveBeenCalledTimes(1);
+    });
+
+    // Chokepoint: a contact that becomes unreachable (deleted) after enrollment is never sent
+    // to by the sweep, without being unenrolled -- mirrors the unsubscribed case above.
+    it('skips a contact deleted after enrollment, without unenrolling them', async () => {
+      const sends = stubSends();
+      const sequence = await createActiveSequence();
+      const step = await SequenceService.createStep(projectId, sequence.id, {subject: 'S1', body: 'b', delayMinutes: 0});
+      await SequenceService.publishStep(projectId, sequence.id, step.id);
+
+      const contact = await factories.createContact({projectId});
+      await SequenceService.enroll(projectId, sequence.id, contact.id);
+      await prisma.contact.update({where: {id: contact.id}, data: {deletedAt: new Date()}});
+
+      await SequenceService.sweepAllDue();
+      expect(sends).not.toHaveBeenCalled();
+      expect(await prisma.sequenceSubscription.count({where: {sequenceId: sequence.id, contactId: contact.id}})).toBe(1);
     });
 
     it('skips PAUSED and DRAFT sequences entirely, preserving progress across a pause', async () => {

@@ -1,4 +1,4 @@
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {ActionSchemas} from '@plunk/shared';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 import {
@@ -1042,6 +1042,75 @@ describe('Actions API Integration Tests', () => {
 
         expect(updated?.subscribed).toBe(false);
       });
+    });
+  });
+
+  // ========================================
+  // /v1/identify (LEADS) — minimal slice: externalId only, no email
+  // ========================================
+  describe('ContactService.identify (leads)', () => {
+    it('validates the minimal identify payload shape', () => {
+      expect(ActionSchemas.identify.safeParse({}).success).toBe(false); // externalId required
+      expect(ActionSchemas.identify.safeParse({externalId: ''}).success).toBe(false); // non-empty
+      expect(ActionSchemas.identify.safeParse({externalId: 'user_123'}).success).toBe(true);
+      expect(ActionSchemas.identify.safeParse({externalId: 'user_123', subscribed: true}).success).toBe(true);
+    });
+
+    it('creates a lead (no email) from an external id alone', async () => {
+      const {ContactService} = await import('../../services/ContactService.js');
+
+      const contact = await ContactService.identify(projectId, 'user_8f3a2c');
+
+      expect(contact.email).toBeNull();
+      expect(contact.externalId).toBe('user_8f3a2c');
+      expect(contact.subscribed).toBe(true); // Default, same as track/upsert
+
+      const stored = await prisma.contact.findUnique({where: {id: contact.id}});
+      expect(stored?.email).toBeNull();
+    });
+
+    it('is idempotent: re-identifying the same external id updates rather than duplicates', async () => {
+      const {ContactService} = await import('../../services/ContactService.js');
+
+      const first = await ContactService.identify(projectId, 'user_repeat', {plan: 'free'});
+      const second = await ContactService.identify(projectId, 'user_repeat', {plan: 'pro'});
+
+      expect(second.id).toBe(first.id);
+      expect(await prisma.contact.count({where: {projectId, externalId: 'user_repeat'}})).toBe(1);
+      expect((second.data as Record<string, unknown> | null)?.plan).toBe('pro');
+    });
+
+    it('surfaces a concurrent duplicate external id as a 409 conflict, not a 500', async () => {
+      const {ContactService} = await import('../../services/ContactService.js');
+      const {Prisma} = await import('@plunk/db');
+
+      // A real race (two overlapping first-time identifies for the same external id) is what
+      // triggers this in production: both pass the find-first check before either has inserted,
+      // so the loser's create() hits the (projectId, externalId) unique-constraint violation.
+      // Reproduce that deterministically by making create() throw the same P2002 shape, rather
+      // than relying on genuine timing -- this asserts identify()'s own catch/translate logic.
+      const {prisma: apiPrisma} = await import('../../database/prisma.js');
+      const createSpy = vi.spyOn(apiPrisma.contact, 'create').mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`projectId`,`externalId`)', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(ContactService.identify(projectId, 'user_racy')).rejects.toMatchObject({
+        code: 409,
+      });
+
+      createSpy.mockRestore();
+    });
+
+    it('never touches email — identify has no path that accepts or sets one in this slice', async () => {
+      const {ContactService} = await import('../../services/ContactService.js');
+
+      const contact = await ContactService.identify(projectId, 'user_no_email', {}, false);
+
+      expect(contact.email).toBeNull();
+      expect(contact.subscribed).toBe(false);
     });
   });
 });

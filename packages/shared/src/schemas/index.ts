@@ -87,6 +87,10 @@ export const ProjectSchemas = {
       .string()
       .regex(/^[a-z]{2}(-[A-Z]{2})?$/)
       .optional(),
+    // Sending pause: distinct from `disabled`. Stops sending only -- ingestion,
+    // workflows, and sequence progression are unaffected. See
+    // docs/issues/05-project-sending-pause.md.
+    sendingPaused: z.boolean().optional(),
   }),
 } as const;
 
@@ -694,6 +698,14 @@ export const ActionSchemas = {
     }),
   verify: z.object({
     email,
+  }),
+  // Minimal form only (docs/issues/01-leads-contacts-without-email.md): an external id with no
+  // email, creating a lead. Resolving an external id against an existing email-bearing contact
+  // is slice 02's job -- this schema deliberately has no `email` field yet.
+  identify: z.object({
+    externalId: z.string().min(1).max(255),
+    subscribed: z.boolean().optional(),
+    data: jsonSchema.optional(),
   }),
 } as const;
 

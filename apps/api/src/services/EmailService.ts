@@ -4,7 +4,7 @@ import {toPrismaJson} from '@plunk/types';
 import signale from 'signale';
 
 import {DASHBOARD_URI, LANDING_URI, STRIPE_ENABLED} from '../app/constants.js';
-import {isMailableContact} from '../database/contact-filters.js';
+import {isMailableContact, isTransactionallyMailableContact} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {createTranslatorSync, renderTemplate} from '@plunk/shared';
@@ -52,6 +52,18 @@ export class EmailService {
    * Send a transactional email via API
    */
   public static async sendTransactionalEmail(params: SendEmailParams): Promise<Email> {
+    // Universal guard: even a transactional send cannot reach a contact with no email on file (a
+    // lead) or one marked deleted/anonymized -- you cannot send to an address that doesn't exist.
+    // This applies regardless of template, unlike the marketing-subscription check below.
+    const contact = await prisma.contact.findUnique({
+      where: {id: params.contactId},
+      select: {subscribed: true, email: true, deletedAt: true},
+    });
+
+    if (!isTransactionallyMailableContact(contact)) {
+      throw new HttpException(400, `Cannot send to contact ${params.contactId}: no email on file for this contact.`);
+    }
+
     // Check if a template is used and if it's a marketing template
     // Marketing templates should not be sent to unsubscribed contacts even via the transactional API
     if (params.templateId) {
@@ -60,19 +72,13 @@ export class EmailService {
         select: {type: true},
       });
 
-      // If using a marketing template, check subscription status
-      if (template?.type === 'MARKETING') {
-        const contact = await prisma.contact.findUnique({
-          where: {id: params.contactId},
-          select: {subscribed: true, email: true},
-        });
-
-        if (!isMailableContact(contact)) {
-          throw new HttpException(
-            400,
-            `Cannot send marketing template to unsubscribed contact ${contact?.email || params.contactId}. Use a transactional template or send without a template.`,
-          );
-        }
+      // If using a marketing template, check subscription status too (on top of the universal
+      // checks above, which this contact already passed).
+      if (template?.type === 'MARKETING' && !isMailableContact(contact)) {
+        throw new HttpException(
+          400,
+          `Cannot send marketing template to unsubscribed contact ${contact?.email || params.contactId}. Use a transactional template or send without a template.`,
+        );
       }
     }
 
@@ -204,16 +210,47 @@ export class EmailService {
       }
     }
 
-    // Check subscription status for marketing emails
-    // Transactional emails should always be sent regardless of subscription status
-    // Custom recipient emails also bypass subscription checks (they're not in the contact list)
-    if (sourceType !== EmailSourceType.TRANSACTIONAL && !params.recipientEmail) {
+    // Custom recipient emails bypass every contact-derived check below (universal and
+    // marketing-only alike) -- they carry their own address and aren't sent to the contact's.
+    if (!params.recipientEmail) {
       const contact = await prisma.contact.findUnique({
         where: {id: params.contactId},
-        select: {subscribed: true},
+        select: {subscribed: true, email: true, deletedAt: true},
       });
 
-      if (!isMailableContact(contact)) {
+      // Universal: a lead (no email) or a deleted/anonymized contact is unmailable on every
+      // path, transactional included. Checked before the subscription branch below so a lead
+      // is skipped regardless of sourceType.
+      if (!isTransactionallyMailableContact(contact)) {
+        signale.info(
+          `[WORKFLOW] Skipping email to contact ${params.contactId} with no email on file in workflow execution ${params.workflowExecutionId}`,
+        );
+        // Silently skip, same as the unsubscribed-marketing case below: return a placeholder
+        // email record that won't be sent, rather than fail the workflow step.
+        return await prisma.email.create({
+          data: {
+            projectId: params.projectId,
+            contactId: params.contactId,
+            subject: params.subject,
+            body: params.body,
+            from: params.from,
+            fromName: params.fromName,
+            replyTo: params.replyTo,
+            headers: params.headers ? toPrismaJson(params.headers) : undefined,
+            attachments: params.attachments ? toPrismaJson(params.attachments) : undefined,
+            sourceType,
+            templateId: params.templateId,
+            workflowExecutionId: params.workflowExecutionId,
+            workflowStepExecutionId: params.workflowStepExecutionId,
+            status: EmailStatus.FAILED,
+            error: 'Contact has no email on file',
+          },
+        });
+      }
+
+      // Marketing-only: transactional emails are exempt from the subscription flag (but not
+      // from the universal check above).
+      if (sourceType !== EmailSourceType.TRANSACTIONAL && !isMailableContact(contact)) {
         signale.info(
           `[WORKFLOW] Skipping marketing email to unsubscribed contact ${params.contactId} in workflow execution ${params.workflowExecutionId}`,
         );

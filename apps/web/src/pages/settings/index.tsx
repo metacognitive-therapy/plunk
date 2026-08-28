@@ -32,6 +32,7 @@ import {
   SelectItemWithDescription,
   SelectTrigger,
   SelectValue,
+  Switch,
   Tabs,
   TabsContent,
   TabsList,
@@ -174,6 +175,7 @@ export default function Settings() {
       name: activeProject?.name || '',
       tracking: activeProject?.tracking ?? TrackingMode.ENABLED,
       language: activeProject?.language || 'en',
+      sendingPaused: activeProject?.sendingPaused ?? false,
     },
   });
 
@@ -184,6 +186,7 @@ export default function Settings() {
         name: activeProject.name,
         tracking: activeProject.tracking ?? TrackingMode.ENABLED,
         language: activeProject.language || 'en',
+        sendingPaused: activeProject.sendingPaused ?? false,
       });
     }
   }, [activeProject, form]);
@@ -457,6 +460,29 @@ export default function Settings() {
                           )}
                         />
                       )}
+
+                      {/* Sending pause - emergency brake, distinct from disabling the project */}
+                      <FormField
+                        control={form.control}
+                        name="sendingPaused"
+                        render={({field}) => (
+                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                            <div className="space-y-0.5">
+                              <FormLabel>Pause sending</FormLabel>
+                              <FormDescription>
+                                Stops all outgoing email (campaigns, sequences, workflows, and transactional sends)
+                                without affecting anything else. The project keeps accepting API requests, ingesting
+                                events, and progressing workflows and sequences — paused sends are marked
+                                &quot;Suppressed&quot; instead of being sent, so you can inspect exactly what would
+                                have gone out before unpausing.
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <Switch checked={field.value ?? false} onCheckedChange={field.onChange} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
 
                       {/* Language Selection */}
                       <FormField

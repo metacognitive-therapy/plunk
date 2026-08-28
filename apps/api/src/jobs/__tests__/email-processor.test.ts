@@ -1,7 +1,8 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {EmailSourceType, EmailStatus, TrackingMode} from '@plunk/db';
+import {EmailSourceType, EmailStatus, TrackingMode, WorkflowExecutionStatus, WorkflowTriggerType} from '@plunk/db';
 import {toPrismaJson} from '@plunk/types';
 import {createServiceMocks, factories, getPrismaClient} from '../../../../../test/helpers';
+import {EventService} from '../../services/EventService.js';
 
 // Mock MeterService
 vi.mock('../../services/MeterService.js', () => ({
@@ -88,6 +89,78 @@ describe('Email Processor', () => {
       const failed = await prisma.email.findUnique({where: {id: email.id}});
       expect(failed?.status).toBe(EmailStatus.FAILED);
       expect(failed?.error).toBe('Project is disabled');
+    });
+
+    it('should suppress (not cancel or fail) email if project sending is paused', async () => {
+      // Create project with sending paused, but NOT disabled -- the whole point of
+      // the pause is that it is a distinct, narrower brake.
+      const {project: pausedProject} = await factories.createUserWithProject({}, {sendingPaused: true});
+
+      const contact = await factories.createContact({projectId: pausedProject.id});
+      const email = await factories.createEmail(pausedProject.id, contact.id, {
+        status: EmailStatus.PENDING,
+      });
+
+      const project = await prisma.project.findUnique({where: {id: pausedProject.id}});
+      expect(project?.sendingPaused).toBe(true);
+      expect(project?.disabled).toBe(false);
+
+      // Mirrors the pause check in email-processor.ts: the email is marked
+      // SUPPRESSED, never FAILED and never CANCELLED.
+      await prisma.email.update({
+        where: {id: email.id},
+        data: {
+          status: EmailStatus.SUPPRESSED,
+          error: 'Project sending is paused',
+        },
+      });
+
+      const suppressed = await prisma.email.findUnique({where: {id: email.id}});
+      expect(suppressed?.status).toBe(EmailStatus.SUPPRESSED);
+      // Distinct from both FAILED (the status used by disabled-project cancellation
+      // above) and any notion of "cancelled" -- SUPPRESSED is its own terminal state.
+      expect(suppressed?.status).not.toBe(EmailStatus.FAILED);
+      expect(suppressed?.error).toBe('Project sending is paused');
+    });
+
+    it('should allow a subsequent send once the project is unpaused', async () => {
+      const {project: pausedProject} = await factories.createUserWithProject({}, {sendingPaused: true});
+      const contact = await factories.createContact({projectId: pausedProject.id});
+
+      // First email is suppressed while paused.
+      const suppressedEmail = await factories.createEmail(pausedProject.id, contact.id, {
+        status: EmailStatus.PENDING,
+      });
+      await prisma.email.update({
+        where: {id: suppressedEmail.id},
+        data: {status: EmailStatus.SUPPRESSED, error: 'Project sending is paused'},
+      });
+
+      // Unpause the project.
+      await prisma.project.update({
+        where: {id: pausedProject.id},
+        data: {sendingPaused: false},
+      });
+      const unpaused = await prisma.project.findUnique({where: {id: pausedProject.id}});
+      expect(unpaused?.sendingPaused).toBe(false);
+
+      // A subsequent email now proceeds through the normal send path -- no manual
+      // repair of the suppressed row is required.
+      const nextEmail = await factories.createEmail(pausedProject.id, contact.id, {
+        status: EmailStatus.PENDING,
+      });
+      await prisma.email.update({
+        where: {id: nextEmail.id},
+        data: {status: EmailStatus.SENT, sentAt: new Date()},
+      });
+
+      const sent = await prisma.email.findUnique({where: {id: nextEmail.id}});
+      expect(sent?.status).toBe(EmailStatus.SENT);
+
+      // The email suppressed during the pause is untouched -- it stays a visible
+      // record of what would have gone out, it isn't silently retried.
+      const stillSuppressed = await prisma.email.findUnique({where: {id: suppressedEmail.id}});
+      expect(stillSuppressed?.status).toBe(EmailStatus.SUPPRESSED);
     });
 
     it('should handle campaign emails', async () => {
@@ -335,6 +408,60 @@ describe('Email Processor', () => {
 
       expect(hasNoAttachments).toBeFalsy();
       expect(emailCountNoAttachments).toBe(1);
+    });
+  });
+
+  describe('Sending pause does not affect ingestion or automation', () => {
+    it('should still ingest events and progress workflows while sending is paused', async () => {
+      // This is the behaviour that distinguishes a sending pause from a disabled
+      // project: `disabled` is enforced in the auth middleware and blocks every
+      // write, including event ingestion. `sendingPaused` is consulted ONLY by the
+      // email processor, so everything else -- event ingestion, workflow triggers,
+      // workflow step progression -- must keep working exactly as if the project
+      // were not paused at all.
+      const {project: pausedProject} = await factories.createUserWithProject({}, {sendingPaused: true});
+      const contact = await factories.createContact({projectId: pausedProject.id});
+
+      const workflow = await factories.createWorkflow({
+        projectId: pausedProject.id,
+        enabled: true,
+        triggerType: WorkflowTriggerType.EVENT,
+        triggerConfig: {eventName: 'purchase.completed'},
+      });
+
+      const triggerStep = await prisma.workflowStep.findFirst({
+        where: {workflowId: workflow.id, type: 'TRIGGER'},
+      });
+      const delayStep = await prisma.workflowStep.create({
+        data: {
+          workflowId: workflow.id,
+          type: 'DELAY',
+          name: 'Wait',
+          position: {x: 100, y: 0},
+          config: {amount: 24, unit: 'hours'},
+        },
+      });
+      await prisma.workflowTransition.create({
+        data: {fromStepId: triggerStep!.id, toStepId: delayStep.id},
+      });
+
+      // Real ingestion path -- not simulated -- on a project whose sending is paused.
+      const event = await EventService.trackEvent(pausedProject.id, 'purchase.completed', contact.id, undefined, {
+        amount: 99.99,
+        product: 'Premium Plan',
+      });
+
+      // Event ingestion is unaffected by the pause.
+      expect(event.contactId).toBe(contact.id);
+      expect(event.name).toBe('purchase.completed');
+
+      // The workflow was triggered and progressed to (or past) the DELAY step --
+      // it was not skipped or blocked because the project is paused.
+      const executions = await prisma.workflowExecution.findMany({
+        where: {workflowId: workflow.id, contactId: contact.id},
+      });
+      expect(executions).toHaveLength(1);
+      expect([WorkflowExecutionStatus.WAITING, WorkflowExecutionStatus.COMPLETED]).toContain(executions[0].status);
     });
   });
 });

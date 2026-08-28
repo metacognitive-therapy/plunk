@@ -34,7 +34,7 @@ export interface WorkflowWithDetails extends Workflow {
  */
 export interface WorkflowExecutionWithDetails extends WorkflowExecution {
   workflow: Workflow;
-  contact: {id: string; email: string};
+  contact: {id: string; email: string | null};
   currentStep?: WorkflowStep | null;
   stepExecutions: WorkflowStepExecution[];
 }

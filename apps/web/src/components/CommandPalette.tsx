@@ -255,11 +255,11 @@ export function CommandPalette() {
               {contacts.map(contact => (
                 <CommandItem
                   key={contact.id}
-                  value={`contact-${contact.id}-${contact.email}`}
-                  onSelect={() => navigate(`/contacts/${contact.id}`, contact.email)}
+                  value={`contact-${contact.id}-${contact.email ?? contact.id}`}
+                  onSelect={() => navigate(`/contacts/${contact.id}`, contact.email ?? 'Lead (no email)')}
                 >
                   <Users className="mr-3 h-4 w-4 text-neutral-400 shrink-0" />
-                  <span>{contact.email}</span>
+                  <span>{contact.email ?? 'Lead (no email)'}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

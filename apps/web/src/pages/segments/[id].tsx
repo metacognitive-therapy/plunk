@@ -325,7 +325,7 @@ export default function SegmentDetailPage() {
                     selected={pickedEmails}
                     onChange={setPickedEmails}
                     onAdd={handleAddMembers}
-                    existing={contactsData?.data.map(c => c.email) ?? []}
+                    existing={contactsData?.data.map(c => c.email).filter((email): email is string => email != null) ?? []}
                     placeholder="Search contacts to add…"
                   />
                   {pickedEmails.length > 0 && (
@@ -382,17 +382,17 @@ export default function SegmentDetailPage() {
                             ) : (
                               <MailX className="h-4 w-4 text-red-600" />
                             )}
-                            <span className="text-sm font-medium">{contact.email}</span>
+                            <span className="text-sm font-medium">{contact.email ?? 'Lead (no email)'}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <Button asChild variant="ghost" size="sm">
                               <Link href={`/contacts/${contact.id}`}>View</Link>
                             </Button>
-                            {isStatic && (
+                            {isStatic && contact.email && (
                               <Button
                                 variant="destructiveGhost"
                                 size="sm"
-                                onClick={() => handleRemoveMember(contact.email)}
+                                onClick={() => handleRemoveMember(contact.email!)}
                                 disabled={removingEmail === contact.email}
                               >
                                 <UserMinus className="h-4 w-4" />

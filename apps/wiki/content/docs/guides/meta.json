@@ -4,6 +4,7 @@
     "verifying-domains",
     "receiving-emails",
     "tracking",
+    "sending-pause",
     "api-keys",
     "mcp-server",
     "idempotency",
