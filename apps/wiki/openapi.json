@@ -2062,7 +2062,7 @@
           "Public API"
         ],
         "summary": "Track event",
-        "description": "Track an event for a contact. Automatically creates or upserts the contact, then records the event. Tracked events can be used as workflow triggers, segment filters, and audience filters.\n\n**Reserved event names** (rejected with `VALIDATION_ERROR` and code `reserved_event`): anything matching `email.*`, `contact.subscribed`, `contact.unsubscribed`, `segment.<slug>.entry`, `segment.<slug>.exit`. These are emitted by Plunk itself.\n\n**Idempotency**: re-tracking the same event creates a new event record. Send an `Idempotency-Key` header to have a repeated request refused with `409` instead.\n\n**Two timestamps**: every event has an ingestion time (`createdAt` — when Plunk received it, always \"now\") and an occurrence time (`occurredAt` — when it actually happened). `occurredAt` defaults to the current time if you don't pass it. Segment \"triggered since\" / \"triggered older than\" conditions and campaign-audience event filters evaluate against `occurredAt`, so a retried or delayed request still lands in the correct audience window instead of being judged by when it happened to arrive.",
+        "description": "Track an event for a contact. Automatically creates or upserts the contact, then records the event. Tracked events can be used as workflow triggers, segment filters, and audience filters.\n\n**Reserved event names** (rejected with `VALIDATION_ERROR` and code `reserved_event`): anything matching `email.*`, `contact.subscribed`, `contact.unsubscribed`, `segment.<slug>.entry`, `segment.<slug>.exit`. These are emitted by Plunk itself.\n\n**Idempotency**: re-tracking the same event creates a new event record. Send an `Idempotency-Key` header to have a repeated request refused with `409` instead.\n\n**Two timestamps**: every event has an ingestion time (`createdAt` \u2014 when Plunk received it, always \"now\") and an occurrence time (`occurredAt` \u2014 when it actually happened). `occurredAt` defaults to the current time if you don't pass it. Segment \"triggered since\" / \"triggered older than\" conditions and campaign-audience event filters evaluate against `occurredAt`, so a retried or delayed request still lands in the correct audience window instead of being judged by when it happened to arrive.",
         "operationId": "trackEvent",
         "requestBody": {
           "required": true,
@@ -2167,7 +2167,7 @@
           "Public API"
         ],
         "summary": "Identify contact",
-        "description": "Identify a contact by a project-scoped external id. Minimal form only: given an external id and no email, creates (or updates) a lead \u2014 a contact with no email address. A lead can be tagged, segmented, and tracked like any other contact, but it is never selected into a mailable audience.\n\nRequires a **secret key**, not a public key \u2014 unlike `/v1/track`, this establishes identity and is meant to be called from a trusted backend.",
+        "description": "Identify a contact by a project-scoped external id, resolving and binding against an email as needed. Resolution order is external id first, then email:\n\n- Neither found -> creates the contact (a lead, if no email is given).\n- Found by external id -> updates that row, including adopting a changed or first-time email onto the SAME row (fixes the email-change defect: tags, sequence position, and history are never abandoned).\n- Found by email with a null external id -> binds the external id onto that contact. This is the normal path for every contact already in Plunk -- there is no backfill.\n- Found by email with a DIFFERENT non-null external id -> refuses with 409. Two identified people are never silently merged.\n\nA contact with no email is a lead: it can be tagged, segmented, and tracked like any other contact, but it is never selected into a mailable audience.\n\nRequires a **secret key**, not a public key -- unlike `/v1/track`, this establishes identity and is meant to be called from a trusted backend.",
         "operationId": "identifyContact",
         "requestBody": {
           "required": true,
@@ -2193,11 +2193,27 @@
                     "type": "object",
                     "additionalProperties": true,
                     "description": "Contact data. Same merge rules as /v1/track: `null` deletes a field, empty strings are ignored, reserved keys are filtered out."
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "description": "Contact email. Normalized (trimmed, lowercased) before lookup/storage. Omit to keep the minimal lead-only form."
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "maxItems": 20,
+                    "description": "Tag names to apply to the contact (auto-created if missing, matched case-insensitively). Applied as a direct write -- does not emit `tag.added` and does not trigger sequence auto-enrolment."
                   }
                 }
               },
               "example": {
-                "externalId": "user_8f3a2c"
+                "externalId": "user_8f3a2c",
+                "email": "user@example.com"
               }
             }
           }
@@ -2235,7 +2251,14 @@
             "$ref": "#/components/responses/Unauthorized"
           },
           "409": {
-            "$ref": "#/components/responses/IdempotencyConflict"
+            "description": "Conflict. Either the `Idempotency-Key` was already used, or the given email already belongs to a different contact that is identified with a different external id -- identify refuses rather than silently merging two identified people.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"

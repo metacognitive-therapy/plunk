@@ -266,6 +266,44 @@ export class TagService {
   }
 
   /**
+   * Apply one or more tags to a contact WITHOUT emitting `tag.added`.
+   *
+   * Used exclusively by `ContactService.identify`: applying a tag through the normal
+   * event-emitting path (`applyTags`) routes into `SequenceEnrollmentService.handleTagAdded`,
+   * which would auto-enrol the contact into every sequence bound to any of the tags,
+   * simultaneously. That's fine for tags earned one at a time over the contact's lifetime, but
+   * identify-time tag movement can apply several tags in a single call (e.g. a guest converting
+   * with tags earned as a lead), and firing enrolment for all of them at once would flood a
+   * brand-new contact with automations. Otherwise identical to `applyTags`: same
+   * already-tagged no-op, same `memberCount` bookkeeping.
+   */
+  public static async applyTagsDirect(projectId: string, contactId: string, tagIds: string[]): Promise<void> {
+    if (tagIds.length === 0) return;
+
+    const uniqueTagIds = [...new Set(tagIds)];
+    const existingMemberships = await prisma.contactTag.findMany({
+      where: {contactId, tagId: {in: uniqueTagIds}},
+      select: {tagId: true},
+    });
+    const alreadyTagged = new Set(existingMemberships.map(m => m.tagId));
+    const toAdd = uniqueTagIds.filter(id => !alreadyTagged.has(id));
+
+    if (toAdd.length === 0) return;
+
+    const tags = await prisma.tag.findMany({where: {id: {in: toAdd}, projectId}});
+    if (tags.length === 0) return;
+
+    await prisma.contactTag.createMany({
+      data: tags.map(tag => ({contactId, tagId: tag.id})),
+      skipDuplicates: true,
+    });
+    await prisma.tag.updateMany({
+      where: {id: {in: tags.map(t => t.id)}},
+      data: {memberCount: {increment: 1}},
+    });
+  }
+
+  /**
    * Remove one or more tags from a contact. Removing a tag the contact
    * doesn't have is a silent no-op.
    */

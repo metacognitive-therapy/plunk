@@ -1145,14 +1145,21 @@ describe('Actions API Integration Tests', () => {
   });
 
   // ========================================
-  // /v1/identify (LEADS) — minimal slice: externalId only, no email
+  // /v1/identify — full resolution and binding (docs/issues/02-identify-resolution-and-binding.md)
   // ========================================
   describe('ContactService.identify (leads)', () => {
-    it('validates the minimal identify payload shape', () => {
+    it('validates the identify payload shape', () => {
       expect(ActionSchemas.identify.safeParse({}).success).toBe(false); // externalId required
       expect(ActionSchemas.identify.safeParse({externalId: ''}).success).toBe(false); // non-empty
       expect(ActionSchemas.identify.safeParse({externalId: 'user_123'}).success).toBe(true);
       expect(ActionSchemas.identify.safeParse({externalId: 'user_123', subscribed: true}).success).toBe(true);
+      expect(ActionSchemas.identify.safeParse({externalId: 'user_123', email: 'user@example.com'}).success).toBe(
+        true,
+      );
+      expect(ActionSchemas.identify.safeParse({externalId: 'user_123', email: 'not-an-email'}).success).toBe(false);
+      expect(
+        ActionSchemas.identify.safeParse({externalId: 'user_123', tags: ['vip', 'newsletter']}).success,
+      ).toBe(true);
     });
 
     it('creates a lead (no email) from an external id alone', async () => {
@@ -1179,37 +1186,291 @@ describe('Actions API Integration Tests', () => {
       expect((second.data as Record<string, unknown> | null)?.plan).toBe('pro');
     });
 
-    it('surfaces a concurrent duplicate external id as a 409 conflict, not a 500', async () => {
-      const {ContactService} = await import('../../services/ContactService.js');
-      const {Prisma} = await import('@plunk/db');
+    // ---- Case 1: neither found -> create ----
+    describe('case: neither externalId nor email found', () => {
+      it('creates a fully-identified contact when email is supplied', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
 
-      // A real race (two overlapping first-time identifies for the same external id) is what
-      // triggers this in production: both pass the find-first check before either has inserted,
-      // so the loser's create() hits the (projectId, externalId) unique-constraint violation.
-      // Reproduce that deterministically by making create() throw the same P2002 shape, rather
-      // than relying on genuine timing -- this asserts identify()'s own catch/translate logic.
-      const {prisma: apiPrisma} = await import('../../database/prisma.js');
-      const createSpy = vi.spyOn(apiPrisma.contact, 'create').mockRejectedValueOnce(
-        new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`projectId`,`externalId`)', {
-          code: 'P2002',
-          clientVersion: 'test',
-        }),
-      );
+        const contact = await ContactService.identify(projectId, 'user_new', {plan: 'pro'}, undefined, 'New@Example.com');
 
-      await expect(ContactService.identify(projectId, 'user_racy')).rejects.toMatchObject({
-        code: 409,
+        expect(contact.externalId).toBe('user_new');
+        expect(contact.email).toBe('new@example.com'); // normalized
+        expect(contact.subscribed).toBe(true); // default
+
+        // Never a lead to begin with, so no conversion event.
+        const events = await prisma.event.findMany({where: {projectId, contactId: contact.id, name: 'contact.identified'}});
+        expect(events).toHaveLength(0);
       });
 
-      createSpy.mockRestore();
+      it('takes subscription state from the request, defaulting when absent', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        const unsubscribed = await ContactService.identify(projectId, 'user_opt_out', undefined, false, 'optout@example.com');
+        expect(unsubscribed.subscribed).toBe(false);
+
+        const defaulted = await ContactService.identify(projectId, 'user_default', undefined, undefined, 'default@example.com');
+        expect(defaulted.subscribed).toBe(true);
+      });
     });
 
-    it('never touches email — identify has no path that accepts or sets one in this slice', async () => {
-      const {ContactService} = await import('../../services/ContactService.js');
+    // ---- Case 2: found by externalId -> update, including adopting a changed email ----
+    describe('case: found by externalId', () => {
+      it('adopts a changed email onto the same row, retaining tags/segments/sequences/events/history', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {TagService} = await import('../../services/TagService.js');
+        const {SequenceService} = await import('../../services/SequenceService.js');
+        const {EventService} = await import('../../services/EventService.js');
 
-      const contact = await ContactService.identify(projectId, 'user_no_email', {}, false);
+        // A lead, tagged, segmented, mid-sequence, with prior events and a send.
+        const lead = await factories.createContact({projectId, email: null, externalId: 'user_lifecycle'});
+        const tag = await TagService.create(projectId, 'VIP');
+        await TagService.applyTags(projectId, lead.id, [tag.id]);
 
-      expect(contact.email).toBeNull();
-      expect(contact.subscribed).toBe(false);
+        const segment = await prisma.segment.create({
+          data: {projectId, name: 'VIP segment', type: 'STATIC', condition: undefined},
+        });
+        await prisma.segmentMembership.create({data: {contactId: lead.id, segmentId: segment.id}});
+
+        const from = await factories.createDomain({projectId});
+        const sequence = await SequenceService.create(projectId, {name: 'Onboarding', from: `hello@${from.domain}`});
+        await prisma.sequence.update({where: {id: sequence.id}, data: {status: 'ACTIVE'}});
+        await prisma.sequenceSubscription.create({data: {sequenceId: sequence.id, contactId: lead.id}});
+        const step = await prisma.sequenceStep.create({
+          data: {sequenceId: sequence.id, order: 0, delayMinutes: 0, subject: 'Hi', body: 'Hi', published: true},
+        });
+        await prisma.sequenceStepSend.create({data: {sequenceId: sequence.id, sequenceStepId: step.id, contactId: lead.id}});
+
+        const priorEvent = await EventService.trackEvent(projectId, 'app.opened', lead.id);
+        const email = await factories.createEmail({projectId, contactId: lead.id, status: 'DELIVERED'});
+
+        const updated = await ContactService.identify(
+          projectId,
+          'user_lifecycle',
+          {plan: 'pro'},
+          undefined,
+          'Converted@Example.com',
+        );
+
+        // Same row.
+        expect(updated.id).toBe(lead.id);
+        expect(updated.email).toBe('converted@example.com');
+        expect(await prisma.contact.count({where: {projectId, externalId: 'user_lifecycle'}})).toBe(1);
+
+        // Everything on the old row survives, untouched.
+        const tags = await prisma.contactTag.findMany({where: {contactId: lead.id}});
+        expect(tags.map(t => t.tagId)).toEqual([tag.id]);
+
+        const membership = await prisma.segmentMembership.findUnique({
+          where: {contactId_segmentId: {contactId: lead.id, segmentId: segment.id}},
+        });
+        expect(membership).not.toBeNull();
+
+        const subscription = await prisma.sequenceSubscription.findUnique({
+          where: {sequenceId_contactId: {sequenceId: sequence.id, contactId: lead.id}},
+        });
+        expect(subscription).not.toBeNull();
+
+        const stepSend = await prisma.sequenceStepSend.findFirst({where: {contactId: lead.id, sequenceStepId: step.id}});
+        expect(stepSend).not.toBeNull();
+
+        const events = await prisma.event.findMany({where: {contactId: lead.id}});
+        expect(events.map(e => e.id)).toContain(priorEvent.id);
+
+        const emailRow = await prisma.email.findUnique({where: {id: email.id}});
+        expect(emailRow?.contactId).toBe(lead.id);
+      });
+
+      it('emits contact.identified exactly once when a lead first gains an email', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        const lead = await factories.createContact({projectId, email: null, externalId: 'user_convert'});
+
+        await ContactService.identify(projectId, 'user_convert', undefined, undefined, 'convert@example.com');
+        // Calling again with the same email must not re-fire the event.
+        await ContactService.identify(projectId, 'user_convert', undefined, undefined, 'convert@example.com');
+
+        const events = await prisma.event.findMany({
+          where: {projectId, contactId: lead.id, name: 'contact.identified'},
+        });
+        expect(events).toHaveLength(1);
+      });
+
+      it('does not emit contact.identified for a genuine email CHANGE (contact already had one)', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        await factories.createContact({projectId, email: 'old@example.com', externalId: 'user_change'});
+
+        await ContactService.identify(projectId, 'user_change', undefined, undefined, 'new@example.com');
+
+        const events = await prisma.event.findMany({where: {projectId, name: 'contact.identified'}});
+        expect(events).toHaveLength(0);
+      });
+
+      it('leaves email untouched when identify is called without one', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        await factories.createContact({projectId, email: 'keep@example.com', externalId: 'user_keep'});
+
+        const updated = await ContactService.identify(projectId, 'user_keep', {plan: 'pro'});
+
+        expect(updated.email).toBe('keep@example.com');
+      });
+    });
+
+    // ---- Case 3: found by email, externalId is null -> bind ----
+    describe('case: found by email with a null externalId', () => {
+      it('binds the externalId onto the existing contact, leaving everything else untouched', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {TagService} = await import('../../services/TagService.js');
+
+        const existing = await factories.createContact({
+          projectId,
+          email: 'bindme@example.com',
+          subscribed: false,
+          data: {plan: 'free'},
+        });
+        const tag = await TagService.create(projectId, 'Existing');
+        await TagService.applyTags(projectId, existing.id, [tag.id]);
+
+        const bound = await ContactService.identify(projectId, 'user_bound', undefined, undefined, 'BindMe@Example.com');
+
+        expect(bound.id).toBe(existing.id);
+        expect(bound.externalId).toBe('user_bound');
+        expect(bound.email).toBe('bindme@example.com');
+        // Untouched: subscription state and prior data are not clobbered by the bind.
+        expect(bound.subscribed).toBe(false);
+        expect((bound.data as Record<string, unknown> | null)?.plan).toBe('free');
+
+        const tags = await prisma.contactTag.findMany({where: {contactId: existing.id}});
+        expect(tags.map(t => t.tagId)).toEqual([tag.id]);
+
+        // Already had an email -- binding is not "gaining an email".
+        const events = await prisma.event.findMany({where: {projectId, name: 'contact.identified'}});
+        expect(events).toHaveLength(0);
+      });
+    });
+
+    // ---- Case 4: found by email, externalId is a DIFFERENT non-null value -> 409 ----
+    describe('case: found by email with a conflicting externalId', () => {
+      it('refuses with a 409 conflict rather than merging or guessing', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        await factories.createContact({
+          projectId,
+          email: 'taken@example.com',
+          externalId: 'user_owner',
+        });
+
+        await expect(
+          ContactService.identify(projectId, 'user_impostor', undefined, undefined, 'taken@example.com'),
+        ).rejects.toMatchObject({code: 409});
+
+        // Refused, not merged: the original contact keeps its own externalId.
+        const original = await prisma.contact.findFirst({where: {projectId, email: 'taken@example.com'}});
+        expect(original?.externalId).toBe('user_owner');
+        expect(await prisma.contact.count({where: {projectId, email: 'taken@example.com'}})).toBe(1);
+      });
+    });
+
+    describe('normalizeEmail on the identify path', () => {
+      it('treats case-variant emails as the same contact rather than creating a duplicate', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+
+        await ContactService.identify(projectId, 'user_case_a', undefined, undefined, 'Person@Example.com');
+        const second = await ContactService.identify(projectId, 'user_case_a', undefined, undefined, 'PERSON@EXAMPLE.COM');
+
+        expect(second.email).toBe('person@example.com');
+        expect(await prisma.contact.count({where: {projectId, email: 'person@example.com'}})).toBe(1);
+      });
+    });
+
+    describe('P2002 race handling', () => {
+      it('retries once and converges when a concurrent identify wins the externalId race', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {Prisma} = await import('@plunk/db');
+        const {prisma: apiPrisma} = await import('../../database/prisma.js');
+
+        // Simulate the real race: another request's identify() actually inserts the row between
+        // our find-first and our create, and our create() hits the resulting unique-constraint
+        // violation. The retry's fresh find-first must see that real row and update it rather
+        // than erroring.
+        const createSpy = vi.spyOn(apiPrisma.contact, 'create').mockImplementationOnce(async () => {
+          await apiPrisma.contact.create({
+            data: {projectId, externalId: 'user_race', email: null, subscribed: true},
+          });
+          throw new Prisma.PrismaClientKnownRequestError(
+            'Unique constraint failed on the fields: (`projectId`,`externalId`)',
+            {code: 'P2002', clientVersion: 'test'},
+          );
+        });
+
+        const result = await ContactService.identify(projectId, 'user_race', {plan: 'pro'});
+
+        expect(result.externalId).toBe('user_race');
+        expect(await prisma.contact.count({where: {projectId, externalId: 'user_race'}})).toBe(1);
+        expect((result.data as Record<string, unknown> | null)?.plan).toBe('pro');
+
+        createSpy.mockRestore();
+      });
+
+      it('surfaces a 409 (not a 500) when the retry ALSO fails', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {Prisma} = await import('@plunk/db');
+        const {prisma: apiPrisma} = await import('../../database/prisma.js');
+
+        const conflict = () =>
+          new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`projectId`,`externalId`)', {
+            code: 'P2002',
+            clientVersion: 'test',
+          });
+        const createSpy = vi
+          .spyOn(apiPrisma.contact, 'create')
+          .mockRejectedValueOnce(conflict())
+          .mockRejectedValueOnce(conflict());
+
+        await expect(ContactService.identify(projectId, 'user_stuck_race')).rejects.toMatchObject({code: 409});
+
+        createSpy.mockRestore();
+      });
+    });
+
+    describe('identify-time tag movement bypasses tag.added and auto-enrolment', () => {
+      it('applies tags directly without emitting tag.added or auto-enrolling into a bound sequence', async () => {
+        const {ContactService} = await import('../../services/ContactService.js');
+        const {TagService} = await import('../../services/TagService.js');
+        const {SequenceService} = await import('../../services/SequenceService.js');
+
+        const tag = await TagService.create(projectId, 'Onboarded');
+        const from = await factories.createDomain({projectId});
+        const sequence = await SequenceService.create(projectId, {
+          name: 'Tag-triggered',
+          from: `hello@${from.domain}`,
+          enrollTagId: tag.id,
+        });
+        await prisma.sequence.update({where: {id: sequence.id}, data: {status: 'ACTIVE'}});
+
+        const contact = await ContactService.identify(
+          projectId,
+          'user_tagged',
+          undefined,
+          undefined,
+          'tagged@example.com',
+          [tag.name],
+        );
+
+        const membership = await prisma.contactTag.findUnique({
+          where: {contactId_tagId: {contactId: contact.id, tagId: tag.id}},
+        });
+        expect(membership).not.toBeNull();
+
+        const tagAddedEvents = await prisma.event.findMany({where: {projectId, contactId: contact.id, name: 'tag.added'}});
+        expect(tagAddedEvents).toHaveLength(0);
+
+        const enrollment = await prisma.sequenceSubscription.findUnique({
+          where: {sequenceId_contactId: {sequenceId: sequence.id, contactId: contact.id}},
+        });
+        expect(enrollment).toBeNull();
+      });
     });
   });
 });

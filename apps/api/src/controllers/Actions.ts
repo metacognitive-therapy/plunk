@@ -387,22 +387,37 @@ export class Actions {
   /**
    * POST /v1/identify
    *
-   * Minimal form only (docs/issues/01-leads-contacts-without-email.md): given an external id and
-   * no email, creates (or updates) a lead -- a contact with no email address. It can be tagged,
-   * segmented, and tracked like any other contact, but it is never selected into a mailable
-   * audience (see apps/api/src/database/contact-filters.ts).
+   * The authoritative entry point for contact identity (docs/issues/02-identify-resolution-and-binding.md).
+   * Given an external id and resolves against it first, then against email. Four cases:
+   * - Neither found -> creates the contact (a lead, if no email is given).
+   * - Found by external id -> updates that row, including adopting a changed/first-time email
+   *   onto the SAME row (fixes the email-change defect: tags, sequence position, and history
+   *   are never abandoned).
+   * - Found by email with a null external id -> binds the external id onto that contact. This
+   *   is the normal path for every contact already in Plunk -- there is no backfill.
+   * - Found by email with a DIFFERENT non-null external id -> refuses with 409. Two identified
+   *   people are never silently merged.
+   *
+   * It can be tagged, segmented, and tracked like any other contact; a contact with no email is
+   * a lead, never selected into a mailable audience (see apps/api/src/database/contact-filters.ts).
    *
    * Requires a SECRET key, not a public key -- unlike /v1/track, this is meant to be called from
    * a trusted backend, not client-side code, since it establishes identity.
    *
    * Request body:
    * - externalId: string (required) - Caller-supplied stable id for this person, unique per project
+   * - email: string (optional) - Contact email. Normalized (trimmed, lowercased) before lookup/storage.
    * - subscribed: boolean (optional) - Contact subscription status (only updates if explicitly specified)
-   * - data: object (optional) - Contact data
+   * - data: object (optional) - Contact data (identify is the only path that writes persistent contact attributes)
+   * - tags: string[] (optional) - Tag names to apply (auto-created if missing). Applied as a
+   *   direct write -- does not emit `tag.added` and does not trigger sequence auto-enrolment.
    *
    * Response:
    * - success: boolean
    * - data: object with contact ID and timestamp
+   *
+   * Errors:
+   * - 409 Conflict: the email already belongs to a different identified contact
    */
   @Post('identify')
   @Middleware([requireSecretKey, trackRateLimit, idempotency])
@@ -410,13 +425,15 @@ export class Actions {
   public async identify(req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
 
-    const {externalId, subscribed, data} = ActionSchemas.identify.parse(req.body);
+    const {externalId, email, subscribed, data, tags} = ActionSchemas.identify.parse(req.body);
 
     const contact = await ContactService.identify(
       auth.projectId,
       externalId,
       data as Record<string, unknown> | undefined,
       subscribed,
+      email,
+      tags,
     );
 
     return res.status(200).json({

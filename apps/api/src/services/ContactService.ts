@@ -7,6 +7,7 @@ import {mailableContactWhere} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {EventService} from './EventService.js';
+import {TagService} from './TagService.js';
 
 export class ContactService {
   /**
@@ -402,62 +403,162 @@ export class ContactService {
   }
 
   /**
-   * PUBLIC: Identify a contact by a project-scoped external id.
+   * PUBLIC: Identify a contact by a project-scoped external id, resolving and binding against an
+   * email as needed (docs/issues/02-identify-resolution-and-binding.md).
    *
-   * This is the minimal form of identify (docs/issues/01-leads-contacts-without-email.md): given
-   * only an external id, it creates (or updates) a contact with no email -- a lead. It is
-   * idempotent on `externalId` within a project. Resolving an external id against an existing
-   * email-bearing contact, and binding the two together, is slice 02's job; this method never
-   * touches `email` and never will on its own -- that binding needs its own P2002-retry handling
-   * (strategy finding 4) that this slice doesn't implement.
+   * This is the ONLY path permitted to write persistent contact attributes (`data`) and the
+   * ONLY path permitted to move tags/attributes without going through the normal event-emitting
+   * routes -- see `TagService.applyTagsDirect`.
+   *
+   * Resolution order is external id FIRST, then email:
+   * 1. Found by external id -> update that row, including adopting a changed (or first-time)
+   *    email onto the SAME row. This is the fix for the email-change defect: nothing about tags,
+   *    segment membership, sequence subscriptions, step sends, workflow executions, events, or
+   *    send history moves, because it's the same contact id throughout.
+   * 2. Not found by external id, found by email, and that contact's `externalId` is null ->
+   *    BIND the external id onto it. This is the primary path for every contact already in
+   *    Plunk -- there is no backfill, so contacts adopt their external id lazily, here.
+   * 3. Not found by external id, found by email, and that contact's `externalId` is a
+   *    DIFFERENT non-null value -> REFUSE with a 409. Silently moving a subscription between two
+   *    identified people is never correct.
+   * 4. Found by neither -> create. Subscription state comes from the request; absent that, the
+   *    existing default (subscribed) applies.
+   *
+   * `upsert`'s find-then-write is not atomic, and neither is this: two concurrent identifies for
+   * a project-new email or external id can both miss the initial lookup and then race on the
+   * same unique constraint. Rather than surface that race as a 500, a P2002 on either
+   * `(projectId, email)` or `(projectId, externalId)` is retried ONCE from a fresh read -- by
+   * then the losing writer's row exists, so the retry resolves it as an update instead of
+   * colliding again. A `allowRetry`-gated failure means the underlying cause wasn't a fleeting
+   * race but a real conflict, so it still surfaces as a 409 rather than a 500.
    */
   public static async identify(
     projectId: string,
     externalId: string,
     data?: Record<string, unknown>,
     subscribed?: boolean,
+    email?: string,
+    tagNames?: string[],
   ): Promise<Contact> {
-    const existing = await prisma.contact.findFirst({
-      where: {projectId, externalId},
-    });
+    return this.identifyAttempt(projectId, externalId, data, subscribed, email, tagNames, true);
+  }
 
-    const mergedData = ContactService.mergeContactData(existing?.data ?? null, data ?? {});
+  private static async identifyAttempt(
+    projectId: string,
+    externalId: string,
+    data: Record<string, unknown> | undefined,
+    subscribed: boolean | undefined,
+    email: string | undefined,
+    tagNames: string[] | undefined,
+    allowRetry: boolean,
+  ): Promise<Contact> {
+    // normalizeEmail MUST run on every path accepting an email (TECH-STRATEGY.md non-negotiable)
+    // -- identify is no exception, or case-variant addresses fork into duplicate contacts.
+    const normalizedEmail = email !== undefined ? ContactService.normalizeEmail(email) : undefined;
 
-    if (existing) {
-      try {
-        return await prisma.contact.update({
-          where: {id: existing.id},
+    const byExternalId = await prisma.contact.findFirst({where: {projectId, externalId}});
+
+    let target = byExternalId;
+    let bindingExternalId = false;
+
+    if (!target && normalizedEmail !== undefined) {
+      const byEmail = await prisma.contact.findFirst({where: {projectId, email: normalizedEmail}});
+      if (byEmail) {
+        if (byEmail.externalId != null && byEmail.externalId !== externalId) {
+          // Case 3: refuse. This contact is already identified as someone else.
+          throw new HttpException(
+            409,
+            `Contact with email "${normalizedEmail}" is already identified with a different external ID`,
+          );
+        }
+        // byEmail.externalId is null: bind (case 2).
+        target = byEmail;
+        bindingExternalId = true;
+      }
+    }
+
+    // A lead (no email on file yet) gaining an email for the first time on this call ->
+    // contact.identified fires exactly once, after the write succeeds. A brand-new contact
+    // created with an email from the start was never a lead, so it doesn't qualify; nor does a
+    // contact that already had a (possibly different) email.
+    const isGainingEmail = target != null && target.email == null && normalizedEmail !== undefined;
+
+    const mergedData = ContactService.mergeContactData(target?.data ?? null, data ?? {});
+
+    try {
+      let contact: Contact;
+
+      if (target) {
+        const wasSubscribed = target.subscribed;
+        contact = await prisma.contact.update({
+          where: {id: target.id},
           data: {
+            ...(bindingExternalId ? {externalId} : {}),
+            ...(normalizedEmail !== undefined ? {email: normalizedEmail} : {}),
             data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
             ...(subscribed !== undefined ? {subscribed} : {}),
           },
         });
-      } catch (error) {
-        throw new HttpException(
-          500,
-          `Failed to update contact: ${error instanceof Error ? error.message : 'Unknown error'}`,
+
+        // Track subscription status change, mirroring upsert/update's convention.
+        if (subscribed !== undefined && wasSubscribed !== subscribed) {
+          await EventService.trackEvent(
+            projectId,
+            subscribed ? 'contact.subscribed' : 'contact.unsubscribed',
+            contact.id,
+          );
+        }
+      } else {
+        // Case 4: neither found -- create.
+        contact = await prisma.contact.create({
+          data: {
+            projectId,
+            externalId,
+            email: normalizedEmail ?? null,
+            data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
+            subscribed: subscribed ?? true,
+          },
+        });
+      }
+
+      // Identify-time tag movement writes directly -- bypasses `tag.added` and therefore
+      // sequence auto-enrolment. See TagService.applyTagsDirect for why: a converted lead
+      // gaining several tags at once must not flood it into every sequence bound to any of
+      // them. The contact still becomes eligible for anything its new state (email, subscribed,
+      // tags) qualifies it for through the normal eligibility path -- every send chokepoint
+      // (campaign audience, sequence sweep) re-evaluates `mailableContactWhere()` at send time,
+      // not at identify time.
+      if (tagNames && tagNames.length > 0) {
+        const tags = await TagService.resolveOrCreateByNames(projectId, tagNames);
+        await TagService.applyTagsDirect(
+          projectId,
+          contact.id,
+          tags.map(tag => tag.id),
         );
       }
-    }
 
-    try {
-      return await prisma.contact.create({
-        data: {
-          projectId,
-          externalId,
-          data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
-          subscribed: subscribed ?? true,
-        },
-      });
+      if (isGainingEmail) {
+        await EventService.trackEvent(projectId, 'contact.identified', contact.id);
+      }
+
+      return contact;
     } catch (error) {
-      // Check if this is a unique constraint violation (P2002) -- e.g. a concurrent identify for
-      // the same external id. Slice 02 owns retrying this; here it just surfaces as a conflict.
+      if (allowRetry && error instanceof Error && 'code' in error && error.code === 'P2002') {
+        // Concurrent identify raced us on (projectId, email) or (projectId, externalId) --
+        // re-read and retry once (TECH-STRATEGY.md finding 4) rather than surfacing a 500.
+        return this.identifyAttempt(projectId, externalId, data, subscribed, email, tagNames, false);
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       if (error instanceof Error && 'code' in error && error.code === 'P2002') {
-        throw new HttpException(409, 'Contact with this external ID already exists in this project');
+        // Retry exhausted: this wasn't a fleeting race, it's a real conflict (e.g. the email or
+        // external id now belongs to a different contact than the one we resolved against).
+        throw new HttpException(409, 'Contact with this email or external ID already exists in this project');
       }
       throw new HttpException(
         500,
-        `Failed to create contact: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to identify contact: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
     }
   }

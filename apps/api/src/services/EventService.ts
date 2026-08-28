@@ -374,7 +374,7 @@ export class EventService {
    * Check if an event name is reserved for system use
    * Reserved patterns:
    * - email.* (email.sent, email.delivery, email.open, email.click, email.bounce, email.complaint)
-   * - contact.subscribed, contact.unsubscribed
+   * - contact.subscribed, contact.unsubscribed, contact.identified
    * - segment.*.entry, segment.*.exit
    *
    * @param eventName - The event name to check
@@ -386,8 +386,12 @@ export class EventService {
       return true;
     }
 
-    // Contact events: contact.subscribed, contact.unsubscribed
-    if (eventName === 'contact.subscribed' || eventName === 'contact.unsubscribed') {
+    // Contact events: contact.subscribed, contact.unsubscribed, contact.identified
+    if (
+      eventName === 'contact.subscribed' ||
+      eventName === 'contact.unsubscribed' ||
+      eventName === 'contact.identified'
+    ) {
       return true;
     }
 

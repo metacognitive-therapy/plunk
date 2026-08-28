@@ -729,13 +729,18 @@ export const ActionSchemas = {
   verify: z.object({
     email,
   }),
-  // Minimal form only (docs/issues/01-leads-contacts-without-email.md): an external id with no
-  // email, creating a lead. Resolving an external id against an existing email-bearing contact
-  // is slice 02's job -- this schema deliberately has no `email` field yet.
+  // Full resolution (docs/issues/02-identify-resolution-and-binding.md): resolves by external id
+  // first, then by email. `email` is optional -- omitting it keeps the minimal lead-only form
+  // from slice 01 working unchanged.
   identify: z.object({
     externalId: z.string().min(1).max(255),
+    email: email.optional(),
     subscribed: z.boolean().optional(),
     data: jsonSchema.optional(),
+    // Tag names to apply to the contact (auto-created if missing, matched case-insensitively).
+    // Applied as a direct write, bypassing `tag.added` and sequence auto-enrolment -- see
+    // ContactService.identify.
+    tags: z.array(z.string().min(1).max(100)).max(20).optional(),
   }),
 } as const;
 
