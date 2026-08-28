@@ -1141,10 +1141,11 @@ export class CampaignService {
         // Use the SegmentService to build the where clause from the condition
         const segmentWhere = await SegmentService.buildConditionClause(condition);
 
-        return {
-          ...baseWhere,
-          ...segmentWhere,
-        };
+        // Compose as a nested AND rather than spreading. `baseWhere` carries the mailable rules
+        // under an `AND` key, and `buildConditionClause` returns `{AND: [...]}` for AND-logic
+        // conditions -- spreading one over the other silently dropped every mailable rule and
+        // mailed unsubscribed, anonymized, and null-email contacts.
+        return {AND: [baseWhere, segmentWhere]};
       }
 
       case CampaignAudienceType.TAG: {
@@ -1199,9 +1200,10 @@ export class CampaignService {
     const condition = fromPrismaJson<FilterCondition>(segment.condition);
     const segmentWhere = await SegmentService.buildConditionClause(condition);
 
-    return {
-      ...baseWhere,
-      ...segmentWhere,
-    };
+    // Compose as a nested AND rather than spreading. `baseWhere` carries the mailable rules
+    // under an `AND` key, and `buildConditionClause` returns `{AND: [...]}` for AND-logic
+    // conditions -- spreading one over the other silently dropped every mailable rule and
+    // mailed unsubscribed, anonymized, and null-email contacts.
+    return {AND: [baseWhere, segmentWhere]};
   }
 }

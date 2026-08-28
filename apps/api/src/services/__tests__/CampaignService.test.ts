@@ -894,4 +894,75 @@ describe('CampaignService', () => {
       expect(finalized?.status).toBe(CampaignStatus.SENT);
     });
   });
+
+  // Regression: the mailable rules sit under an `AND` key on the base where-clause, and
+  // SegmentService.buildConditionClause returns `{AND: [...]}` for AND-logic conditions.
+  // Composing the two by object spread let the second `AND` overwrite the first, silently
+  // dropping every mailable rule -- segment and filtered campaigns then queued unsubscribed,
+  // anonymized, and null-email contacts. These tests go through the real audience selection
+  // rather than filtering contacts by hand, which is why the defect survived the tests above.
+  describe('audience selection keeps the mailable rules alongside the segment condition', () => {
+    const condition = {
+      logic: 'AND' as const,
+      groups: [{filters: [{field: 'data.vip', operator: 'equals', value: true}]}],
+    };
+
+    // Four contacts that all match the segment condition, but only one of which is mailable.
+    async function seedAudience() {
+      const mailable = await factories.createContact({projectId, subscribed: true, data: {vip: true}});
+      await factories.createContact({projectId, subscribed: false, data: {vip: true}});
+      await factories.createContact({projectId, subscribed: true, email: null, data: {vip: true}});
+      const anonymized = await factories.createContact({projectId, subscribed: true, data: {vip: true}});
+      await prisma.contact.update({where: {id: anonymized.id}, data: {email: null, deletedAt: new Date()}});
+      return {mailable};
+    }
+
+    const countRecipients = (campaign: unknown) =>
+      (
+        CampaignService as unknown as {
+          getRecipientCount(projectId: string, campaign: unknown): Promise<number>;
+        }
+      ).getRecipientCount(projectId, campaign);
+
+    it('excludes unsubscribed, lead, and anonymized contacts from a dynamic-segment campaign', async () => {
+      await seedAudience();
+      const segment = await factories.createSegment(projectId, {condition});
+      const created = await factories.createCampaign({projectId, segmentId: segment.id});
+      const campaign = await prisma.campaign.update({
+        where: {id: created.id},
+        data: {audienceType: CampaignAudienceType.SEGMENT},
+      });
+
+      // Before the fix this returned 4 -- every contact matching the segment, mailable or not.
+      expect(await countRecipients(campaign)).toBe(1);
+    });
+
+    it('excludes unsubscribed, lead, and anonymized contacts from a filtered campaign', async () => {
+      await seedAudience();
+      const created = await factories.createCampaign({projectId});
+      const campaign = await prisma.campaign.update({
+        where: {id: created.id},
+        data: {
+          audienceType: CampaignAudienceType.FILTERED,
+          audienceCondition: condition as unknown as object,
+        },
+      });
+
+      expect(await countRecipients(campaign)).toBe(1);
+    });
+
+    it('keeps a transactional campaign exempt from the subscription rule but not the others', async () => {
+      await seedAudience();
+      const segment = await factories.createSegment(projectId, {condition});
+      const created = await factories.createCampaign({projectId, segmentId: segment.id});
+      const campaign = await prisma.campaign.update({
+        where: {id: created.id},
+        data: {audienceType: CampaignAudienceType.SEGMENT, type: TemplateType.TRANSACTIONAL},
+      });
+
+      // The mailable contact plus the unsubscribed one -- but still not the lead or the
+      // anonymized contact, which are unmailable on every path.
+      expect(await countRecipients(campaign)).toBe(2);
+    });
+  });
 });
