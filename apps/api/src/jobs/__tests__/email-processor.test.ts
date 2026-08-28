@@ -1,8 +1,10 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {EmailSourceType, EmailStatus, TrackingMode, WorkflowExecutionStatus, WorkflowTriggerType} from '@plunk/db';
 import {toPrismaJson} from '@plunk/types';
-import {createServiceMocks, factories, getPrismaClient} from '../../../../../test/helpers';
+import {createMockJob, factories, getPrismaClient} from '../../../../../test/helpers';
 import {EventService} from '../../services/EventService.js';
+import {sendRawEmail} from '../../services/SESService.js';
+import {processEmailJob} from '../email-processor.js';
 
 // Mock MeterService
 vi.mock('../../services/MeterService.js', () => ({
@@ -11,14 +13,24 @@ vi.mock('../../services/MeterService.js', () => ({
   },
 }));
 
+// Mock SES so no real network call is attempted; processEmailJob is otherwise
+// exercised for real (Prisma, EmailService, header/classification logic).
+// `messageId` is unique-constrained on Email, and several tests (the batch test in
+// particular) send more than one email per test, so each call must return a distinct id.
+let mockMessageIdCounter = 0;
+vi.mock('../../services/SESService.js', () => ({
+  sendRawEmail: vi.fn().mockImplementation(async () => ({messageId: `mock-message-id-${mockMessageIdCounter++}`})),
+  getSendingQuota: vi.fn().mockResolvedValue(null),
+}));
+
 describe('Email Processor', () => {
   let projectId: string;
   const prisma = getPrismaClient();
-  const _serviceMocks = createServiceMocks();
 
   beforeEach(async () => {
     const {project} = await factories.createUserWithProject({}, {tracking: TrackingMode.ENABLED});
     projectId = project.id;
+    vi.mocked(sendRawEmail).mockClear();
   });
 
   describe('Email Processing', () => {
@@ -30,25 +42,12 @@ describe('Email Processor', () => {
         status: EmailStatus.PENDING,
       });
 
-
-      // Simulate processing
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {status: EmailStatus.SENDING},
-      });
-
-      // Simulate successful send
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {
-          status: EmailStatus.SENT,
-          sentAt: new Date(),
-        },
-      });
+      await processEmailJob(createMockJob({emailId: email.id}));
 
       const processed = await prisma.email.findUnique({where: {id: email.id}});
       expect(processed?.status).toBe(EmailStatus.SENT);
       expect(processed?.sentAt).toBeDefined();
+      expect(sendRawEmail).toHaveBeenCalledTimes(1);
     });
 
     it('should skip emails that are not pending', async () => {
@@ -57,9 +56,11 @@ describe('Email Processor', () => {
         status: EmailStatus.SENT, // Already sent
       });
 
-      // Processor should skip this email
-      const shouldProcess = email.status === EmailStatus.PENDING;
-      expect(shouldProcess).toBe(false);
+      await processEmailJob(createMockJob({emailId: email.id}));
+
+      expect(sendRawEmail).not.toHaveBeenCalled();
+      const unchanged = await prisma.email.findUnique({where: {id: email.id}});
+      expect(unchanged?.status).toBe(EmailStatus.SENT);
     });
 
     it('should fail email if project is disabled', async () => {
@@ -71,27 +72,15 @@ describe('Email Processor', () => {
         status: EmailStatus.PENDING,
       });
 
-      // Verify project is disabled
-      const project = await prisma.project.findUnique({
-        where: {id: disabledProject.id},
-      });
-      expect(project?.disabled).toBe(true);
-
-      // Processor should fail this email
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {
-          status: EmailStatus.FAILED,
-          error: 'Project is disabled',
-        },
-      });
+      await processEmailJob(createMockJob({emailId: email.id}));
 
       const failed = await prisma.email.findUnique({where: {id: email.id}});
       expect(failed?.status).toBe(EmailStatus.FAILED);
       expect(failed?.error).toBe('Project is disabled');
+      expect(sendRawEmail).not.toHaveBeenCalled();
     });
 
-    it('should suppress (not cancel or fail) email if project sending is paused', async () => {
+    it('should hold (not suppress) a pending email and delay the job while sending is paused', async () => {
       // Create project with sending paused, but NOT disabled -- the whole point of
       // the pause is that it is a distinct, narrower brake.
       const {project: pausedProject} = await factories.createUserWithProject({}, {sendingPaused: true});
@@ -101,66 +90,52 @@ describe('Email Processor', () => {
         status: EmailStatus.PENDING,
       });
 
-      const project = await prisma.project.findUnique({where: {id: pausedProject.id}});
-      expect(project?.sendingPaused).toBe(true);
-      expect(project?.disabled).toBe(false);
+      const job = createMockJob({emailId: email.id});
+      job.moveToDelayed = vi.fn().mockResolvedValue(undefined);
 
-      // Mirrors the pause check in email-processor.ts: the email is marked
-      // SUPPRESSED, never FAILED and never CANCELLED.
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {
-          status: EmailStatus.SUPPRESSED,
-          error: 'Project sending is paused',
-        },
-      });
+      // BullMQ's own pause primitive: the processor calls job.moveToDelayed then
+      // throws DelayedError, which the Worker treats specially (not a failure, no
+      // retry consumed). We only assert the primitive was invoked correctly and
+      // that the email itself was left untouched -- Worker-level DelayedError
+      // handling is BullMQ's own contract, not ours to re-test.
+      await expect(processEmailJob(job, 'test-token')).rejects.toThrow();
 
-      const suppressed = await prisma.email.findUnique({where: {id: email.id}});
-      expect(suppressed?.status).toBe(EmailStatus.SUPPRESSED);
-      // Distinct from both FAILED (the status used by disabled-project cancellation
-      // above) and any notion of "cancelled" -- SUPPRESSED is its own terminal state.
-      expect(suppressed?.status).not.toBe(EmailStatus.FAILED);
-      expect(suppressed?.error).toBe('Project sending is paused');
+      expect(job.moveToDelayed).toHaveBeenCalledTimes(1);
+      const [delayTimestamp, token] = vi.mocked(job.moveToDelayed).mock.calls[0]!;
+      expect(delayTimestamp).toBeGreaterThan(Date.now());
+      expect(token).toBe('test-token');
+
+      // The email stays PENDING -- not SUPPRESSED, FAILED, or CANCELLED -- because
+      // it will be delivered once the project is unpaused, not lost.
+      const held = await prisma.email.findUnique({where: {id: email.id}});
+      expect(held?.status).toBe(EmailStatus.PENDING);
+      expect(held?.error).toBeNull();
+      expect(sendRawEmail).not.toHaveBeenCalled();
     });
 
-    it('should allow a subsequent send once the project is unpaused', async () => {
+    it('should send held email once the project is unpaused', async () => {
       const {project: pausedProject} = await factories.createUserWithProject({}, {sendingPaused: true});
       const contact = await factories.createContact({projectId: pausedProject.id});
 
-      // First email is suppressed while paused.
-      const suppressedEmail = await factories.createEmail(pausedProject.id, contact.id, {
+      const email = await factories.createEmail(pausedProject.id, contact.id, {
         status: EmailStatus.PENDING,
       });
-      await prisma.email.update({
-        where: {id: suppressedEmail.id},
-        data: {status: EmailStatus.SUPPRESSED, error: 'Project sending is paused'},
-      });
 
-      // Unpause the project.
-      await prisma.project.update({
-        where: {id: pausedProject.id},
-        data: {sendingPaused: false},
-      });
-      const unpaused = await prisma.project.findUnique({where: {id: pausedProject.id}});
-      expect(unpaused?.sendingPaused).toBe(false);
+      const job = createMockJob({emailId: email.id});
+      job.moveToDelayed = vi.fn().mockResolvedValue(undefined);
+      await expect(processEmailJob(job)).rejects.toThrow();
 
-      // A subsequent email now proceeds through the normal send path -- no manual
-      // repair of the suppressed row is required.
-      const nextEmail = await factories.createEmail(pausedProject.id, contact.id, {
-        status: EmailStatus.PENDING,
-      });
-      await prisma.email.update({
-        where: {id: nextEmail.id},
-        data: {status: EmailStatus.SENT, sentAt: new Date()},
-      });
+      const stillHeld = await prisma.email.findUnique({where: {id: email.id}});
+      expect(stillHeld?.status).toBe(EmailStatus.PENDING);
 
-      const sent = await prisma.email.findUnique({where: {id: nextEmail.id}});
+      // Unpause, then re-run the same job (BullMQ would redeliver it once the
+      // delay elapses) -- no manual repair of the row is required.
+      await prisma.project.update({where: {id: pausedProject.id}, data: {sendingPaused: false}});
+      await processEmailJob(createMockJob({emailId: email.id}));
+
+      const sent = await prisma.email.findUnique({where: {id: email.id}});
       expect(sent?.status).toBe(EmailStatus.SENT);
-
-      // The email suppressed during the pause is untouched -- it stays a visible
-      // record of what would have gone out, it isn't silently retried.
-      const stillSuppressed = await prisma.email.findUnique({where: {id: suppressedEmail.id}});
-      expect(stillSuppressed?.status).toBe(EmailStatus.SUPPRESSED);
+      expect(sendRawEmail).toHaveBeenCalledTimes(1);
     });
 
     it('should handle campaign emails', async () => {
@@ -173,11 +148,7 @@ describe('Email Processor', () => {
 
       expect(email.campaignId).toBe(campaign.id);
 
-      // Process the email
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {status: EmailStatus.SENT, sentAt: new Date()},
-      });
+      await processEmailJob(createMockJob({emailId: email.id}));
 
       const sent = await prisma.email.findUnique({where: {id: email.id}});
       expect(sent?.status).toBe(EmailStatus.SENT);
@@ -190,12 +161,96 @@ describe('Email Processor', () => {
         type: 'TRANSACTIONAL',
       });
 
-      await factories.createEmail(projectId, contact.id, {
+      const email = await factories.createEmail(projectId, contact.id, {
         templateId: template.id,
+        sourceType: EmailSourceType.TRANSACTIONAL,
         status: EmailStatus.PENDING,
       });
 
       expect(template.type).toBe('TRANSACTIONAL');
+
+      await processEmailJob(createMockJob({emailId: email.id}));
+
+      const call = vi.mocked(sendRawEmail).mock.calls[0]![0];
+      expect(call.content.html).not.toContain('unsubscribe');
+    });
+  });
+
+  describe('Contact-safety gate immediately before the SES call', () => {
+    it('suppresses (and does not send) a marketing email to a contact who unsubscribed after the job was queued', async () => {
+      const contact = await factories.createContact({projectId, subscribed: true});
+      const campaign = await factories.createCampaign({projectId});
+      const email = await factories.createEmail(projectId, contact.id, {
+        campaignId: campaign.id,
+        sourceType: EmailSourceType.CAMPAIGN,
+        status: EmailStatus.PENDING,
+      });
+
+      // Unsubscribe happens after the job is queued but before it is processed.
+      await prisma.contact.update({where: {id: contact.id}, data: {subscribed: false}});
+
+      await processEmailJob(createMockJob({emailId: email.id}));
+
+      const result = await prisma.email.findUnique({where: {id: email.id}});
+      expect(result?.status).toBe(EmailStatus.SUPPRESSED);
+      expect(result?.error).toBeTruthy();
+      expect(sendRawEmail).not.toHaveBeenCalled();
+    });
+
+    it('suppresses (and does not send) an email to a contact anonymized after the job was queued', async () => {
+      const contact = await factories.createContact({projectId});
+      const email = await factories.createEmail(projectId, contact.id, {
+        status: EmailStatus.PENDING,
+      });
+
+      // Anonymization happens after the job is queued but before it is processed:
+      // email cleared and deletedAt stamped, mirroring ContactService's anonymize path.
+      await prisma.contact.update({
+        where: {id: contact.id},
+        data: {email: null, deletedAt: new Date()},
+      });
+
+      await processEmailJob(createMockJob({emailId: email.id}));
+
+      const result = await prisma.email.findUnique({where: {id: email.id}});
+      expect(result?.status).toBe(EmailStatus.SUPPRESSED);
+      expect(result?.error).toBeTruthy();
+      expect(sendRawEmail).not.toHaveBeenCalled();
+    });
+
+    it('still sends a transactional email to a contact who unsubscribed (transactional is exempt from the subscription rule)', async () => {
+      const contact = await factories.createContact({projectId, subscribed: true});
+      const email = await factories.createEmail(projectId, contact.id, {
+        sourceType: EmailSourceType.TRANSACTIONAL,
+        status: EmailStatus.PENDING,
+      });
+
+      await prisma.contact.update({where: {id: contact.id}, data: {subscribed: false}});
+
+      await processEmailJob(createMockJob({emailId: email.id}));
+
+      const result = await prisma.email.findUnique({where: {id: email.id}});
+      expect(result?.status).toBe(EmailStatus.SENT);
+      expect(sendRawEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not send a transactional email to a contact anonymized after the job was queued', async () => {
+      const contact = await factories.createContact({projectId});
+      const email = await factories.createEmail(projectId, contact.id, {
+        sourceType: EmailSourceType.TRANSACTIONAL,
+        status: EmailStatus.PENDING,
+      });
+
+      await prisma.contact.update({
+        where: {id: contact.id},
+        data: {email: null, deletedAt: new Date()},
+      });
+
+      await processEmailJob(createMockJob({emailId: email.id}));
+
+      const result = await prisma.email.findUnique({where: {id: email.id}});
+      expect(result?.status).toBe(EmailStatus.SUPPRESSED);
+      expect(sendRawEmail).not.toHaveBeenCalled();
     });
   });
 
@@ -208,22 +263,9 @@ describe('Email Processor', () => {
 
       expect(email.status).toBe(EmailStatus.PENDING);
 
-      // Transition to SENDING
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {status: EmailStatus.SENDING},
-      });
+      await processEmailJob(createMockJob({emailId: email.id}));
 
-      let updated = await prisma.email.findUnique({where: {id: email.id}});
-      expect(updated?.status).toBe(EmailStatus.SENDING);
-
-      // Transition to SENT
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {status: EmailStatus.SENT, sentAt: new Date()},
-      });
-
-      updated = await prisma.email.findUnique({where: {id: email.id}});
+      const updated = await prisma.email.findUnique({where: {id: email.id}});
       expect(updated?.status).toBe(EmailStatus.SENT);
       expect(updated?.sentAt).toBeDefined();
     });
@@ -234,20 +276,9 @@ describe('Email Processor', () => {
         status: EmailStatus.PENDING,
       });
 
-      // Transition to SENDING
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {status: EmailStatus.SENDING},
-      });
+      vi.mocked(sendRawEmail).mockRejectedValueOnce(new Error('SES send failed: Invalid email address'));
 
-      // Fail with error
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {
-          status: EmailStatus.FAILED,
-          error: 'SES send failed: Invalid email address',
-        },
-      });
+      await expect(processEmailJob(createMockJob({emailId: email.id}))).rejects.toThrow('SES send failed');
 
       const failed = await prisma.email.findUnique({where: {id: email.id}});
       expect(failed?.status).toBe(EmailStatus.FAILED);
@@ -273,15 +304,7 @@ describe('Email Processor', () => {
       expect(emails).toHaveLength(10);
       expect(emails.every(e => e.campaignId === campaign.id)).toBe(true);
 
-      // Simulate processing all emails
-      await Promise.all(
-        emails.map(email =>
-          prisma.email.update({
-            where: {id: email.id},
-            data: {status: EmailStatus.SENT, sentAt: new Date()},
-          }),
-        ),
-      );
+      await Promise.all(emails.map(email => processEmailJob(createMockJob({emailId: email.id}))));
 
       const processed = await prisma.email.findMany({
         where: {campaignId: campaign.id},
@@ -298,15 +321,10 @@ describe('Email Processor', () => {
         status: EmailStatus.PENDING,
       });
 
-      // Simulate failure
       const errorMessage = 'Failed to send: Rate limit exceeded';
-      await prisma.email.update({
-        where: {id: email.id},
-        data: {
-          status: EmailStatus.FAILED,
-          error: errorMessage,
-        },
-      });
+      vi.mocked(sendRawEmail).mockRejectedValueOnce(new Error(errorMessage));
+
+      await expect(processEmailJob(createMockJob({emailId: email.id}))).rejects.toThrow(errorMessage);
 
       const failed = await prisma.email.findUnique({where: {id: email.id}});
       expect(failed?.status).toBe(EmailStatus.FAILED);

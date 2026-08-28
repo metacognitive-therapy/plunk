@@ -30,10 +30,12 @@ Go to **Settings → General** and toggle **Pause sending**. The change takes ef
 
 ## What happens to paused email
 
-Any email that is queued for sending while the project is paused is marked **Suppressed** rather than sent, failed, or cancelled. This is a distinct status from a hard failure: nothing about the email was wrong, and it wasn't dropped — it's held so you can review exactly what would have gone out before deciding whether to unpause.
+Any email that is queued for sending while the project is paused stays **Pending** rather than being marked sent, failed, cancelled, or suppressed. The email processor holds the job and checks back periodically, so nothing about the email is treated as wrong or dropped — it's simply waiting for the pause to lift.
 
-Suppressed emails are not automatically retried when you unpause. Sends that occur after unpausing go through normally; anything suppressed during the pause stays suppressed as a record of what was held back.
+Held email is automatically retried once you unpause — nothing needs to be replayed by hand. As soon as the pause is lifted, the next check picks the email back up and sends it through the normal path.
+
+Immediately before actually sending, the processor also re-checks the contact: if it unsubscribed, was anonymized, or otherwise became unmailable while the email was held, that send is suppressed at that point instead of going out — a pause never forces a send that would otherwise have been blocked.
 
 ## Unpausing
 
-Toggle **Pause sending** off from the same settings page. Sending resumes immediately for new email — no manual repair step is required.
+Toggle **Pause sending** off from the same settings page. Held email resumes sending within about a minute — no manual repair step is required.
