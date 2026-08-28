@@ -318,6 +318,60 @@ describe('EventService', () => {
   });
 
   // ========================================
+  // OCCURRENCE TIME (occurredAt vs createdAt)
+  // ========================================
+  describe('trackEvent - occurredAt', () => {
+    it('should default occurredAt to now when not supplied', async () => {
+      const contact = await factories.createContact({projectId});
+      const before = new Date();
+
+      const event = await EventService.trackEvent(projectId, 'user.signup', contact.id);
+
+      const after = new Date();
+      expect(event.occurredAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
+      expect(event.occurredAt.getTime()).toBeLessThanOrEqual(after.getTime() + 1000);
+    });
+
+    it('should store a caller-supplied occurredAt', async () => {
+      const contact = await factories.createContact({projectId});
+      const occurredAt = new Date('2026-01-15T10:00:00.000Z');
+
+      const event = await EventService.trackEvent(
+        projectId,
+        'user.signup',
+        contact.id,
+        undefined,
+        undefined,
+        occurredAt,
+      );
+
+      expect(event.occurredAt.toISOString()).toBe(occurredAt.toISOString());
+      // createdAt (ingestion time) is independent and still defaults to now
+      expect(event.createdAt.getTime()).not.toBe(occurredAt.getTime());
+    });
+
+    it('should keep createdAt as ingestion time even when occurredAt is backdated', async () => {
+      const contact = await factories.createContact({projectId});
+      const longAgo = new Date('2020-01-01T00:00:00.000Z');
+      const before = new Date();
+
+      const event = await EventService.trackEvent(
+        projectId,
+        'purchase.completed',
+        contact.id,
+        undefined,
+        undefined,
+        longAgo,
+      );
+
+      const after = new Date();
+      expect(event.occurredAt.toISOString()).toBe(longAgo.toISOString());
+      expect(event.createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
+      expect(event.createdAt.getTime()).toBeLessThanOrEqual(after.getTime() + 1000);
+    });
+  });
+
+  // ========================================
   // EVENT RETRIEVAL
   // ========================================
   describe('getContactEvents', () => {
@@ -349,6 +403,30 @@ describe('EventService', () => {
       expect(events[0].name).toBe('third'); // Newest
       expect(events[1].name).toBe('second');
       expect(events[2].name).toBe('first'); // Oldest
+    });
+
+    it('should order by createdAt (ingestion time), ignoring occurredAt', async () => {
+      const contact = await factories.createContact({projectId});
+
+      // "old-occurrence" is ingested FIRST but claims to have happened a year ago.
+      // "new-occurrence" is ingested SECOND with an occurredAt of right now.
+      // The feed answers "what did Plunk receive, and when" - it must still show
+      // ingestion order (old-occurrence first, new-occurrence second), not occurrence order.
+      await EventService.trackEvent(
+        projectId,
+        'old-occurrence',
+        contact.id,
+        undefined,
+        undefined,
+        new Date('2020-01-01T00:00:00.000Z'),
+      );
+      await new Promise(resolve => setTimeout(resolve, 10));
+      await EventService.trackEvent(projectId, 'new-occurrence', contact.id);
+
+      const events = await EventService.getContactEvents(projectId, contact.id);
+
+      expect(events[0].name).toBe('new-occurrence'); // Ingested most recently
+      expect(events[1].name).toBe('old-occurrence'); // Ingested first, despite its old occurredAt
     });
 
     it('should respect limit parameter', async () => {
@@ -482,6 +560,39 @@ describe('EventService', () => {
 
       expect(stats).toHaveLength(1);
       expect(stats[0].name).toBe('recent.event');
+    });
+
+    it('should filter by createdAt (ingestion time) even when occurredAt disagrees', async () => {
+      const contact = await factories.createContact({projectId});
+
+      // Ingested inside the query window, but claims to have occurred long before it.
+      // Stats answer "what did Plunk receive, and when" - it must be counted here.
+      await prisma.event.create({
+        data: {
+          projectId,
+          contactId: contact.id,
+          name: 'late.ingested',
+          createdAt: new Date('2024-06-01'),
+          occurredAt: new Date('2020-01-01'),
+        },
+      });
+
+      // Ingested outside the query window (old createdAt), but claims to have just
+      // occurred. It must NOT be counted, because stats track ingestion, not occurrence.
+      await prisma.event.create({
+        data: {
+          projectId,
+          contactId: contact.id,
+          name: 'early.ingested',
+          createdAt: new Date('2024-01-01'),
+          occurredAt: new Date(),
+        },
+      });
+
+      const stats = await EventService.getEventStats(projectId, new Date('2024-05-01'), new Date('2024-07-01'));
+
+      expect(stats).toHaveLength(1);
+      expect(stats[0].name).toBe('late.ingested');
     });
 
     it('should handle empty result', async () => {

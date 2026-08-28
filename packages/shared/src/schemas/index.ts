@@ -585,6 +585,32 @@ export const CampaignSchemas = {
   }),
 } as const;
 
+// Callers report occurrence time as an ISO string or epoch millis; z.coerce.date() also
+// rejects anything that isn't a parseable date (e.g. "not-a-date") with a normal ZodError,
+// which is what "validate it" in the issue asks for.
+//
+// Bound: reject anything more than 5 minutes in the future. A real occurrence can never be
+// in the future, but clocks drift a little between caller and server, so a small allowance
+// avoids rejecting legitimate near-real-time tracking calls. Anything further out is far
+// more likely a caller bug (e.g. a unix-seconds timestamp misread as milliseconds, landing
+// decades in the future) than a genuine event, and letting it through would silently corrupt
+// segment recency windows - the exact failure mode this field exists to prevent.
+const MAX_OCCURRED_AT_CLOCK_SKEW_MS = 5 * 60 * 1000;
+const occurredAt = z.preprocess(
+  // A client that omits the field by serializing it as `null` (common for optional fields in
+  // some JSON serializers) would otherwise reach z.coerce.date() as `null`, which JS Date
+  // happily coerces to the epoch (1970-01-01) instead of failing validation - silently
+  // pinning the event permanently outside every "triggered within" window. Normalize null to
+  // undefined first so it's treated the same as a genuinely omitted field.
+  value => (value === null ? undefined : value),
+  z.coerce
+    .date()
+    .refine(date => date.getTime() <= Date.now() + MAX_OCCURRED_AT_CLOCK_SKEW_MS, {
+      message: 'occurredAt cannot be in the future',
+    })
+    .optional(),
+);
+
 export const ActionSchemas = {
   track: z.object({
     event: z.string().min(1),
@@ -593,6 +619,10 @@ export const ActionSchemas = {
     data: jsonSchema.optional(),
     // Tag names to apply to the contact (auto-created if missing, matched case-insensitively).
     tags: z.array(z.string().min(1).max(100)).max(20).optional(),
+    // When the event actually happened, as opposed to when Plunk received it. Defaults to
+    // now when omitted. Only segment/campaign-audience recency filters read this value -
+    // the event feeds and stats keep reading ingestion time.
+    occurredAt,
   }),
   send: z
     .object({

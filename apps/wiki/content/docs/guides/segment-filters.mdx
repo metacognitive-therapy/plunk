@@ -118,6 +118,8 @@ These operators apply to both `event.<eventName>` (custom events) and `email.<ac
 | `triggeredOlderThan`  | Has had this event, but not within the last N units. Pair with `unit`.                                  |
 | `notTriggeredWithin`  | Has not had this event in the last N units. Includes contacts who have never triggered it. Pair with `unit`. |
 
+For `event.<eventName>`, the time-bounded operators (`triggeredWithin`, `triggeredOlderThan`, `notTriggeredWithin`) evaluate against **when the event occurred** (`occurredAt`, settable via `POST /v1/track` — see [Track an event](/api-reference/public-api/trackEvent)), not when Plunk received it. This keeps a delayed or retried tracking call from landing in the wrong recency window just because it arrived late. `email.<activity>` operators are unaffected — they always read the corresponding email timestamp (`openedAt`, `clickedAt`, etc).
+
 ### Segment membership
 
 For `segment.<segmentId>`, where `<segmentId>` is the ID of another segment in your project.

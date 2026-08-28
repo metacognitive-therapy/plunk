@@ -857,13 +857,27 @@ model Event {
   emailId String?
 
   // Timestamps
+  // createdAt: when Plunk received/ingested the event. Used by the contact/project
+  // event feeds and event stats - the instrument for diagnosing delivery lag, so it
+  // must never be conflated with occurredAt.
   createdAt DateTime @default(now())
+  // occurredAt: when the event actually happened, as reported by the caller. Defaults
+  // to now() so callers who don't supply it behave exactly as before. Only the segment
+  // "triggered since" / "triggered older than" recency predicates (and equivalent
+  // campaign-audience event filters) read this field - everything about ingestion keeps
+  // reading createdAt.
+  occurredAt DateTime @default(now())
 
   @@index([projectId, name])
   @@index([contactId])
   @@index([emailId])
   @@index([createdAt])
-  @@index([projectId, contactId, name, createdAt]) // For event-based segment queries (fast!)
+  // Extended (not repointed) with occurredAt so this one index continues to serve both
+  // the createdAt-ordered feed and the occurredAt-filtered segment recency predicates.
+  // Whether createdAt can later be dropped here (or this consolidated with the
+  // contactId/name/createdAt index below) is a query-plan question to revisit with
+  // EXPLAIN ANALYZE at real volume, not a decision to make in advance.
+  @@index([projectId, contactId, name, occurredAt, createdAt]) // For event-based segment queries (fast!)
   @@index([contactId, name, createdAt]) // For per-contact event lookups
   @@index([projectId, name, createdAt]) // For event stats and analytics by type over time
   @@index([contactId, createdAt]) // For contact activity timeline (recent events)

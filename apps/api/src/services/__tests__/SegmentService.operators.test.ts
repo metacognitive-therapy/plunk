@@ -1422,6 +1422,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: match.id,
             name: 'purchase',
             createdAt: twoDaysAgo,
+            occurredAt: twoDaysAgo,
           },
         });
 
@@ -1432,6 +1433,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: noMatch.id,
             name: 'purchase',
             createdAt: eightDaysAgo,
+            occurredAt: eightDaysAgo,
           },
         });
 
@@ -1459,6 +1461,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: match.id,
             name: 'login',
             createdAt: twoHoursAgo,
+            occurredAt: twoHoursAgo,
           },
         });
 
@@ -1468,6 +1471,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: noMatch.id,
             name: 'login',
             createdAt: sixHoursAgo,
+            occurredAt: sixHoursAgo,
           },
         });
 
@@ -1495,6 +1499,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: match.id,
             name: 'click',
             createdAt: fiveMinutesAgo,
+            occurredAt: fiveMinutesAgo,
           },
         });
 
@@ -1504,6 +1509,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: noMatch.id,
             name: 'click',
             createdAt: twentyMinutesAgo,
+            occurredAt: twentyMinutesAgo,
           },
         });
 
@@ -1529,6 +1535,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: contact.id,
             name: 'purchase',
             createdAt: exactlySevenDaysAgo,
+            occurredAt: exactlySevenDaysAgo,
           },
         });
 
@@ -1554,6 +1561,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: contact.id,
             name: 'purchase',
             createdAt: tenDaysAgo,
+            occurredAt: tenDaysAgo,
           },
         });
 
@@ -1580,6 +1588,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: match.id,
             name: 'purchase',
             createdAt: thirtyDaysAgo,
+            occurredAt: thirtyDaysAgo,
           },
         });
 
@@ -1590,6 +1599,7 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
             contactId: match.id,
             name: 'purchase',
             createdAt: twoDaysAgo,
+            occurredAt: twoDaysAgo,
           },
         });
 
@@ -1600,6 +1610,159 @@ describe('SegmentService - Comprehensive Operator Tests', () => {
         const result = await SegmentService.getContacts(projectId, segment.id);
         expect(result.data).toHaveLength(1);
         expect(result.data[0].id).toBe(match.id);
+      });
+
+      it('evaluates against occurredAt, not createdAt - a late-ingested event with an old occurredAt is excluded', async () => {
+        const prisma = getPrismaClient();
+        const contact = await factories.createContact({projectId});
+
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+        // Ingested just now (createdAt defaults to "now"), but it actually happened 30
+        // days ago - e.g. a retried/queued webhook delivery. The "triggered in the last
+        // 7 days" window must follow occurredAt, or this stale event would wrongly
+        // qualify the contact just because it arrived late.
+        await prisma.event.create({
+          data: {
+            projectId,
+            contactId: contact.id,
+            name: 'purchase',
+            occurredAt: thirtyDaysAgo,
+          },
+        });
+
+        const segment = await factories.createSegment(projectId, {
+          filters: [{field: 'event.purchase', operator: 'triggeredWithin', value: 7, unit: 'days'}],
+        });
+
+        const result = await SegmentService.getContacts(projectId, segment.id);
+        expect(result.data).toHaveLength(0);
+      });
+
+      it('evaluates against occurredAt, not createdAt - a late-ingested event with a recent occurredAt is included', async () => {
+        const prisma = getPrismaClient();
+        const contact = await factories.createContact({projectId});
+
+        const now = new Date();
+        const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+        // createdAt (ingestion time) is a year old, but the event actually happened 2
+        // days ago (a caller backfilling an occurrence it just learned about). It must
+        // still fall in a "last 7 days" window because that window is about occurrence,
+        // not arrival.
+        await prisma.event.create({
+          data: {
+            projectId,
+            contactId: contact.id,
+            name: 'purchase',
+            createdAt: oneYearAgo,
+            occurredAt: twoDaysAgo,
+          },
+        });
+
+        const segment = await factories.createSegment(projectId, {
+          filters: [{field: 'event.purchase', operator: 'triggeredWithin', value: 7, unit: 'days'}],
+        });
+
+        const result = await SegmentService.getContacts(projectId, segment.id);
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].id).toBe(contact.id);
+      });
+    });
+
+    describe('triggeredOlderThan operator', () => {
+      it('matches a contact whose event occurred more than X time ago', async () => {
+        const prisma = getPrismaClient();
+        const match = await factories.createContact({projectId});
+        const noMatch = await factories.createContact({projectId});
+
+        const now = new Date();
+        const tenDaysAgo = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+        const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+        await prisma.event.create({
+          data: {projectId, contactId: match.id, name: 'purchase', occurredAt: tenDaysAgo},
+        });
+        await prisma.event.create({
+          data: {projectId, contactId: noMatch.id, name: 'purchase', occurredAt: twoDaysAgo},
+        });
+
+        const segment = await factories.createSegment(projectId, {
+          filters: [{field: 'event.purchase', operator: 'triggeredOlderThan', value: 7, unit: 'days'}],
+        });
+
+        const result = await SegmentService.getContacts(projectId, segment.id);
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].id).toBe(match.id);
+      });
+
+      it('excludes a contact whose only occurrence of the event is recent, even if ingested long ago', async () => {
+        const prisma = getPrismaClient();
+        const contact = await factories.createContact({projectId});
+
+        const now = new Date();
+        const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+        // Ingested a year ago, but occurred 2 days ago - not "older than 7 days" by
+        // occurrence, so must not match.
+        await prisma.event.create({
+          data: {projectId, contactId: contact.id, name: 'purchase', createdAt: oneYearAgo, occurredAt: twoDaysAgo},
+        });
+
+        const segment = await factories.createSegment(projectId, {
+          filters: [{field: 'event.purchase', operator: 'triggeredOlderThan', value: 7, unit: 'days'}],
+        });
+
+        const result = await SegmentService.getContacts(projectId, segment.id);
+        expect(result.data).toHaveLength(0);
+      });
+    });
+
+    describe('notTriggeredWithin operator', () => {
+      it('excludes a contact who triggered the event within the timeframe (by occurredAt)', async () => {
+        const prisma = getPrismaClient();
+        const match = await factories.createContact({projectId});
+        const noMatch = await factories.createContact({projectId});
+
+        const now = new Date();
+        const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+        await prisma.event.create({
+          data: {projectId, contactId: noMatch.id, name: 'purchase', occurredAt: twoDaysAgo},
+        });
+
+        const segment = await factories.createSegment(projectId, {
+          filters: [{field: 'event.purchase', operator: 'notTriggeredWithin', value: 7, unit: 'days'}],
+        });
+
+        const result = await SegmentService.getContacts(projectId, segment.id);
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].id).toBe(match.id);
+      });
+
+      it('includes a contact whose only occurrence is old, even if ingested recently', async () => {
+        const prisma = getPrismaClient();
+        const contact = await factories.createContact({projectId});
+
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+        // createdAt defaults to "now" (just ingested), but it occurred 30 days ago - so
+        // it must count as NOT triggered within the last 7 days.
+        await prisma.event.create({
+          data: {projectId, contactId: contact.id, name: 'purchase', occurredAt: thirtyDaysAgo},
+        });
+
+        const segment = await factories.createSegment(projectId, {
+          filters: [{field: 'event.purchase', operator: 'notTriggeredWithin', value: 7, unit: 'days'}],
+        });
+
+        const result = await SegmentService.getContacts(projectId, segment.id);
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].id).toBe(contact.id);
       });
     });
 

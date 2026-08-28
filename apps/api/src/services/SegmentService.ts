@@ -1224,7 +1224,10 @@ export class SegmentService {
         };
 
       case 'triggeredWithin': {
-        // Contact has triggered this event within the specified timeframe
+        // Contact has triggered this event within the specified timeframe.
+        // Recency predicate - evaluated against occurredAt (when the event actually
+        // happened), not createdAt (when Plunk received it), so a delayed or retried
+        // event still lands in the window its occurrence implies.
         if (!unit) {
           throw new HttpException(400, 'Unit is required for "triggeredWithin" operator');
         }
@@ -1237,7 +1240,7 @@ export class SegmentService {
           events: {
             some: {
               name: eventName,
-              createdAt: {
+              occurredAt: {
                 gte: since,
               },
             },
@@ -1246,8 +1249,9 @@ export class SegmentService {
       }
 
       case 'triggeredOlderThan': {
-        // Contact triggered this event, but only more than X time ago (not recently)
-        // This means: has event AND all occurrences are before the cutoff
+        // Contact triggered this event, but only more than X time ago (not recently).
+        // This means: has event AND all occurrences are before the cutoff.
+        // Recency predicate - evaluated against occurredAt, see triggeredWithin above.
         if (!unit) {
           throw new HttpException(400, 'Unit is required for "triggeredOlderThan" operator');
         }
@@ -1271,7 +1275,7 @@ export class SegmentService {
               events: {
                 none: {
                   name: eventName,
-                  createdAt: {
+                  occurredAt: {
                     gte: before,
                   },
                 },
@@ -1292,7 +1296,10 @@ export class SegmentService {
         };
 
       case 'notTriggeredWithin': {
-        // Contact has not triggered this event within the timeframe (includes never-triggered contacts)
+        // Contact has not triggered this event within the timeframe (includes never-triggered contacts).
+        // The negation of triggeredWithin above, so it must evaluate against the same
+        // field (occurredAt) - otherwise the two operators would disagree about which
+        // contacts are "within the timeframe".
         if (!unit) {
           throw new HttpException(400, 'Unit is required for "notTriggeredWithin" operator');
         }
@@ -1305,7 +1312,7 @@ export class SegmentService {
           events: {
             none: {
               name: eventName,
-              createdAt: {
+              occurredAt: {
                 gte: since,
               },
             },

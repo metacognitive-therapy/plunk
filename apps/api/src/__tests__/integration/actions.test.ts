@@ -960,6 +960,105 @@ describe('Actions API Integration Tests', () => {
           expect(result.data.subscribed).toBeUndefined();
         }
       });
+
+      it('should leave occurredAt undefined when omitted', () => {
+        const result = ActionSchemas.track.safeParse({
+          event: 'test',
+          email: 'test@example.com',
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.occurredAt).toBeUndefined();
+        }
+      });
+
+      it('should treat an explicit null occurredAt the same as omitted, not as the epoch', () => {
+        // Some client JSON serializers emit `null` for an absent optional field. Without
+        // normalizing null -> undefined before z.coerce.date(), `new Date(null)` resolves to
+        // 1970-01-01 instead of failing validation, silently pinning the event permanently
+        // outside every "triggered within" recency window.
+        const result = ActionSchemas.track.safeParse({
+          event: 'test',
+          email: 'test@example.com',
+          occurredAt: null,
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.occurredAt).toBeUndefined();
+        }
+      });
+
+      it('should accept and coerce an ISO occurredAt string to a Date', () => {
+        const result = ActionSchemas.track.safeParse({
+          event: 'test',
+          email: 'test@example.com',
+          occurredAt: '2026-01-15T10:00:00.000Z',
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.occurredAt).toBeInstanceOf(Date);
+          expect(result.data.occurredAt?.toISOString()).toBe('2026-01-15T10:00:00.000Z');
+        }
+      });
+
+      it('should accept an epoch-millis occurredAt', () => {
+        const millis = new Date('2026-01-15T10:00:00.000Z').getTime();
+        const result = ActionSchemas.track.safeParse({
+          event: 'test',
+          email: 'test@example.com',
+          occurredAt: millis,
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.occurredAt?.getTime()).toBe(millis);
+        }
+      });
+
+      it('should reject an occurredAt that is not a parseable date', () => {
+        const result = ActionSchemas.track.safeParse({
+          event: 'test',
+          email: 'test@example.com',
+          occurredAt: 'not-a-date',
+        });
+
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject an occurredAt far in the future', () => {
+        const farFuture = new Date(Date.now() + 24 * 60 * 60 * 1000); // 1 day ahead
+        const result = ActionSchemas.track.safeParse({
+          event: 'test',
+          email: 'test@example.com',
+          occurredAt: farFuture.toISOString(),
+        });
+
+        expect(result.success).toBe(false);
+      });
+
+      it('should accept an occurredAt within a small clock-skew allowance in the future', () => {
+        const slightlyAhead = new Date(Date.now() + 60 * 1000); // 1 minute ahead
+        const result = ActionSchemas.track.safeParse({
+          event: 'test',
+          email: 'test@example.com',
+          occurredAt: slightlyAhead.toISOString(),
+        });
+
+        expect(result.success).toBe(true);
+      });
+
+      it('should accept an occurredAt far in the past (backfilled events)', () => {
+        const result = ActionSchemas.track.safeParse({
+          event: 'test',
+          email: 'test@example.com',
+          occurredAt: '2020-01-01T00:00:00.000Z',
+        });
+
+        expect(result.success).toBe(true);
+      });
     });
 
     describe('ContactService.upsert behavior', () => {

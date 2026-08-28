@@ -26,6 +26,10 @@ export class EventService {
     contactId?: string,
     emailId?: string,
     data?: Record<string, unknown>,
+    // When the event actually happened, as reported by the caller - distinct from
+    // createdAt (when Plunk received it). Defaults to now() via the schema when omitted,
+    // so every existing caller keeps its current behaviour.
+    occurredAt?: Date,
   ): Promise<Event> {
     // Create event record
     const event = await prisma.event.create({
@@ -35,6 +39,7 @@ export class EventService {
         emailId,
         name: eventName,
         data: data ? toPrismaJson(data) : undefined,
+        occurredAt,
       },
     });
 

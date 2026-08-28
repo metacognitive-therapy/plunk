@@ -36,6 +36,11 @@ export class Actions {
    * - data: object (optional) - Event and contact data
    *   - Simple values are saved to contact (persistent)
    *   - {value: any, persistent: false} are only available to workflows (non-persistent)
+   * - occurredAt: string | number (optional) - When the event actually happened (ISO date
+   *   string or epoch), as opposed to when Plunk received it. Defaults to now if omitted.
+   *   Segment/campaign-audience recency filters ("triggered since" / "triggered older than")
+   *   evaluate against this value, not against ingestion time - so a retried or queued
+   *   request still lands in the correct audience window.
    *
    * Response:
    * - success: boolean
@@ -60,7 +65,7 @@ export class Actions {
     const auth = res.locals.auth;
 
     // Zod validation - errors automatically handled by global error handler
-    const {event, email, subscribed, data, tags} = ActionSchemas.track.parse(req.body);
+    const {event, email, subscribed, data, tags, occurredAt} = ActionSchemas.track.parse(req.body);
 
     // Prevent manual tracking of reserved system events
     if (EventService.isReservedEvent(event)) {
@@ -96,6 +101,7 @@ export class Actions {
       contact.id,
       undefined,
       data as Record<string, unknown> | undefined,
+      occurredAt,
     );
 
     // Apply any tags supplied on the same call - resolved/auto-created by name,
