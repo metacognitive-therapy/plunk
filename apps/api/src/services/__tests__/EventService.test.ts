@@ -1,7 +1,8 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {WorkflowExecutionStatus, WorkflowTriggerType} from '@plunk/db';
+import {StepExecutionStatus, WorkflowExecutionStatus, WorkflowStepType, WorkflowTriggerType} from '@plunk/db';
 import {EventService} from '../EventService';
 import {Keys} from '../keys';
+import {WorkflowService} from '../WorkflowService';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 
 // Mock Redis for caching tests - must be inline to avoid hoisting issues
@@ -1069,6 +1070,214 @@ describe('EventService', () => {
         expect(EventService.isReservedEvent('contacts.subscribed')).toBe(false);
         expect(EventService.isReservedEvent('segments.entry')).toBe(false);
       });
+    });
+  });
+
+  // ========================================
+  // TRIGGER-NAME CACHE (docs/issues/06-trigger-name-cache.md)
+  // ========================================
+  // These assert observable behaviour (was the event recorded? did a workflow advance?),
+  // never call counts against Redis or private methods - the cache is an implementation
+  // detail trackEvent must be correct whether or not it is warm, cold, or unavailable.
+  describe('trigger-name cache', () => {
+    it('still records an event whose name matches no workflow and no WAIT_FOR_EVENT step', async () => {
+      const contact = await factories.createContact({projectId});
+
+      // A workflow exists, but for a different event name - the cache is non-empty, just
+      // doesn't contain 'unmatched.event'.
+      const workflow = await factories.createWorkflow({
+        projectId,
+        enabled: true,
+        triggerType: WorkflowTriggerType.EVENT,
+        triggerConfig: {eventName: 'other.event'},
+      });
+
+      const event = await EventService.trackEvent(projectId, 'unmatched.event', contact.id, undefined, {
+        foo: 'bar',
+      });
+
+      // The event row is always written in full, regardless of whether anything reacts to it.
+      expect(event.name).toBe('unmatched.event');
+      expect(event.data).toEqual({foo: 'bar'});
+
+      const executions = await prisma.workflowExecution.findMany({where: {workflowId: workflow.id}});
+      expect(executions).toHaveLength(0);
+    });
+
+    it('still triggers a matching workflow exactly as before once the cache is warm', async () => {
+      const contact = await factories.createContact({projectId});
+
+      const workflow = await factories.createWorkflow({
+        projectId,
+        enabled: true,
+        allowReentry: true,
+        triggerType: WorkflowTriggerType.EVENT,
+        triggerConfig: {eventName: 'cached.match'},
+      });
+
+      // First call populates the cache; second call must read it and still fire.
+      await EventService.trackEvent(projectId, 'cached.match', contact.id);
+      await EventService.trackEvent(projectId, 'cached.match', contact.id);
+
+      const executions = await prisma.workflowExecution.findMany({
+        where: {workflowId: workflow.id, contactId: contact.id},
+      });
+      expect(executions).toHaveLength(2);
+    });
+
+    it('starts firing a workflow created after the cache was already populated for that event name', async () => {
+      const contact = await factories.createContact({projectId});
+
+      // Populate the cache with "nothing matches 'late.signup'".
+      await EventService.trackEvent(projectId, 'late.signup', contact.id);
+
+      // Create the workflow through WorkflowService (not the raw factory) so the real
+      // create-time invalidation hook runs, exactly as it would from the dashboard.
+      const workflow = await WorkflowService.create(projectId, {
+        name: 'Late signup workflow',
+        eventName: 'late.signup',
+        enabled: true,
+      });
+
+      // No further action needed: the next matching event should fire immediately.
+      await EventService.trackEvent(projectId, 'late.signup', contact.id);
+
+      const executions = await prisma.workflowExecution.findMany({
+        where: {workflowId: workflow.id, contactId: contact.id},
+      });
+      expect(executions).toHaveLength(1);
+    });
+
+    it('stops firing once the workflow is disabled, via the same invalidation hook', async () => {
+      const contact = await factories.createContact({projectId});
+
+      const workflow = await WorkflowService.create(projectId, {
+        name: 'Toggle workflow',
+        eventName: 'toggle.event',
+        enabled: true,
+        allowReentry: true,
+      });
+
+      await EventService.trackEvent(projectId, 'toggle.event', contact.id);
+
+      let executions = await prisma.workflowExecution.findMany({
+        where: {workflowId: workflow.id, contactId: contact.id},
+      });
+      expect(executions).toHaveLength(1);
+
+      await WorkflowService.update(projectId, workflow.id, {enabled: false});
+
+      await EventService.trackEvent(projectId, 'toggle.event', contact.id);
+
+      executions = await prisma.workflowExecution.findMany({
+        where: {workflowId: workflow.id, contactId: contact.id},
+      });
+      // Still just the one execution from before disabling - no new one was started.
+      expect(executions).toHaveLength(1);
+    });
+
+    it('resumes a WAIT_FOR_EVENT step through trackEvent when the project has one', async () => {
+      const contact = await factories.createContact({projectId});
+
+      const workflow = await factories.createWorkflow({projectId, enabled: true});
+      const triggerStep = await prisma.workflowStep.findFirstOrThrow({
+        where: {workflowId: workflow.id, type: WorkflowStepType.TRIGGER},
+      });
+      const waitStep = await factories.createWorkflowStep({
+        workflowId: workflow.id,
+        type: WorkflowStepType.WAIT_FOR_EVENT,
+        config: {eventName: 'awaited.event', timeout: 3600},
+      });
+      await prisma.workflowTransition.create({data: {fromStepId: triggerStep.id, toStepId: waitStep.id}});
+
+      const execution = await prisma.workflowExecution.create({
+        data: {
+          workflowId: workflow.id,
+          contactId: contact.id,
+          status: WorkflowExecutionStatus.RUNNING,
+          currentStepId: waitStep.id,
+        },
+      });
+      const stepExecution = await prisma.workflowStepExecution.create({
+        data: {
+          executionId: execution.id,
+          stepId: waitStep.id,
+          status: StepExecutionStatus.WAITING,
+          startedAt: new Date(),
+        },
+      });
+
+      await EventService.trackEvent(projectId, 'awaited.event', contact.id);
+
+      const updated = await prisma.workflowStepExecution.findUnique({where: {id: stepExecution.id}});
+      expect(updated?.status).toBe(StepExecutionStatus.COMPLETED);
+    });
+
+    it('fails safe: still fires a matching workflow when Redis is unavailable', async () => {
+      const contact = await factories.createContact({projectId});
+
+      const workflow = await factories.createWorkflow({
+        projectId,
+        enabled: true,
+        triggerType: WorkflowTriggerType.EVENT,
+        triggerConfig: {eventName: 'redis.down'},
+      });
+
+      const {redis} = await import('../../database/redis');
+      const getSpy = vi.spyOn(redis, 'get').mockRejectedValue(new Error('ECONNREFUSED'));
+      const setexSpy = vi.spyOn(redis, 'setex').mockRejectedValue(new Error('ECONNREFUSED'));
+
+      try {
+        await EventService.trackEvent(projectId, 'redis.down', contact.id);
+      } finally {
+        getSpy.mockRestore();
+        setexSpy.mockRestore();
+      }
+
+      const executions = await prisma.workflowExecution.findMany({where: {workflowId: workflow.id}});
+      expect(executions).toHaveLength(1);
+    });
+
+    it('fails safe: still resumes a WAIT_FOR_EVENT step when Redis returns garbage', async () => {
+      const contact = await factories.createContact({projectId});
+
+      const workflow = await factories.createWorkflow({projectId, enabled: true});
+      const triggerStep = await prisma.workflowStep.findFirstOrThrow({
+        where: {workflowId: workflow.id, type: WorkflowStepType.TRIGGER},
+      });
+      const waitStep = await factories.createWorkflowStep({
+        workflowId: workflow.id,
+        type: WorkflowStepType.WAIT_FOR_EVENT,
+        config: {eventName: 'garbage.cache', timeout: 3600},
+      });
+      await prisma.workflowTransition.create({data: {fromStepId: triggerStep.id, toStepId: waitStep.id}});
+
+      const execution = await prisma.workflowExecution.create({
+        data: {
+          workflowId: workflow.id,
+          contactId: contact.id,
+          status: WorkflowExecutionStatus.RUNNING,
+          currentStepId: waitStep.id,
+        },
+      });
+      const stepExecution = await prisma.workflowStepExecution.create({
+        data: {
+          executionId: execution.id,
+          stepId: waitStep.id,
+          status: StepExecutionStatus.WAITING,
+          startedAt: new Date(),
+        },
+      });
+
+      // Poison the cache entry for this project with something that isn't a valid
+      // WorkflowCacheEntry - the malformed-entry guard must treat this as a miss.
+      const {redis} = await import('../../database/redis');
+      await redis.set(Keys.Workflow.enabled(projectId), JSON.stringify({garbage: true}));
+
+      await EventService.trackEvent(projectId, 'garbage.cache', contact.id);
+
+      const updated = await prisma.workflowStepExecution.findUnique({where: {id: stepExecution.id}});
+      expect(updated?.status).toBe(StepExecutionStatus.COMPLETED);
     });
   });
 });

@@ -1,4 +1,4 @@
-import type {Event} from '@plunk/db';
+import type {Event, Workflow, WorkflowStep} from '@plunk/db';
 import {Prisma} from '@plunk/db';
 import type {FilterCondition, FilterGroup} from '@plunk/types';
 import {toPrismaJson} from '@plunk/types';
@@ -10,6 +10,38 @@ import {Keys} from './keys.js';
 
 import {SequenceEnrollmentService} from './SequenceEnrollmentService.js';
 import {WorkflowExecutionService} from './WorkflowExecutionService.js';
+
+/** An enabled, EVENT-triggered workflow with its TRIGGER step attached. */
+type EventTriggeredWorkflow = Workflow & {steps: WorkflowStep[]};
+
+/** Shape of `Workflow.triggerConfig` for an EVENT-type trigger. Stored as JSON on the model. */
+type EventTriggerConfig = {eventName?: string; tagId?: string};
+
+/**
+ * Per-project workflow cache used to short-circuit `trackEvent`.
+ *
+ * Holds everything `triggerWorkflows` needs (the workflow list itself) plus two derived
+ * summaries that let `trackEvent` skip work entirely for an event nothing can match:
+ * the set of event names any enabled workflow triggers on, and whether the project has
+ * any enabled WAIT_FOR_EVENT step at all.
+ */
+interface WorkflowCacheEntry {
+  workflows: EventTriggeredWorkflow[];
+  triggerEventNames: string[];
+  hasWaitForEvent: boolean;
+}
+
+function isWorkflowCacheEntry(value: unknown): value is WorkflowCacheEntry {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Partial<WorkflowCacheEntry>;
+  return (
+    Array.isArray(candidate.workflows) &&
+    Array.isArray(candidate.triggerEventNames) &&
+    typeof candidate.hasWaitForEvent === 'boolean'
+  );
+}
 
 /**
  * Event Service
@@ -43,11 +75,21 @@ export class EventService {
       },
     });
 
+    // Load the per-project trigger-name cache once. An event whose name matches no enabled
+    // workflow's trigger, and whose project has no WAIT_FOR_EVENT step, can only ever be a no-op
+    // for both lookups below - skip them, without changing whether the event row above gets
+    // written (it always does).
+    const workflowCache = await this.getWorkflowCacheEntry(projectId);
+
     // Trigger workflows that are listening for this event
-    await this.triggerWorkflows(projectId, eventName, contactId, data);
+    if (workflowCache.triggerEventNames.includes(eventName)) {
+      await this.triggerWorkflows(eventName, contactId, data, workflowCache.workflows);
+    }
 
     // Resume workflows waiting for this event
-    await WorkflowExecutionService.handleEvent(projectId, eventName, contactId, data);
+    if (workflowCache.hasWaitForEvent) {
+      await WorkflowExecutionService.handleEvent(projectId, eventName, contactId, data);
+    }
 
     // Auto-enroll into sequences bound to this tag (ACTIVE sequences only)
     if (eventName === 'tag.added' && contactId && typeof data?.tagId === 'string') {
@@ -58,8 +100,11 @@ export class EventService {
   }
 
   /**
-   * Invalidate the workflow cache for a project
-   * Should be called when workflows are enabled/disabled or updated
+   * Invalidate the workflow cache for a project.
+   * Should be called when workflows are created, enabled/disabled, or otherwise updated.
+   *
+   * One key backs both the enabled-workflow list and the derived trigger-name / wait-for-event
+   * summary (see `getWorkflowCacheEntry`), so a single delete invalidates all of it.
    */
   public static async invalidateWorkflowCache(projectId: string): Promise<void> {
     const cacheKey = Keys.Workflow.enabled(projectId);
@@ -361,31 +406,35 @@ export class EventService {
   }
 
   /**
-   * Trigger workflows based on an event
-   * Uses Redis caching for enabled workflows to improve performance
+   * Load (or compute and cache) the per-project workflow cache: the enabled EVENT-triggered
+   * workflows themselves, the set of event names they trigger on, and whether the project has
+   * any enabled WAIT_FOR_EVENT step. Backs both `triggerWorkflows` and the short-circuit checks
+   * in `trackEvent`.
+   *
+   * Fails safe: a cache miss, a malformed entry, or a Redis error all fall through to computing
+   * the entry fresh from Postgres - which is always correct - rather than assuming "nothing
+   * matches" because Redis didn't answer. A write-back failure is logged and ignored; the freshly
+   * computed entry is still returned and used for this call.
    */
-  private static async triggerWorkflows(
-    projectId: string,
-    eventName: string,
-    contactId?: string,
-    data?: Record<string, unknown>,
-  ): Promise<void> {
-    // Try to get workflows from cache
+  private static async getWorkflowCacheEntry(projectId: string): Promise<WorkflowCacheEntry> {
     const cacheKey = Keys.Workflow.enabled(projectId);
-    let workflows;
 
     try {
       const cached = await redis.get(cacheKey);
       if (cached) {
-        workflows = JSON.parse(cached);
+        const parsed: unknown = JSON.parse(cached);
+        if (isWorkflowCacheEntry(parsed)) {
+          return parsed;
+        }
+        signale.warn('[EVENT] Ignoring malformed workflow cache entry');
       }
     } catch (error) {
       signale.warn('[EVENT] Failed to get workflows from cache:', error);
     }
 
-    // If not in cache, fetch from database
-    if (!workflows) {
-      workflows = await prisma.workflow.findMany({
+    // Not in cache (or the cache was unusable) - compute fresh from the database.
+    const [workflows, waitForEventStep] = await Promise.all([
+      prisma.workflow.findMany({
         where: {
           projectId,
           enabled: true,
@@ -396,18 +445,56 @@ export class EventService {
             where: {type: 'TRIGGER'},
           },
         },
-      });
+      }),
+      prisma.workflowStep.findFirst({
+        where: {
+          type: 'WAIT_FOR_EVENT',
+          workflow: {projectId, enabled: true},
+        },
+        select: {id: true},
+      }),
+    ]);
 
-      // Cache for 5 minutes
-      try {
-        await redis.setex(cacheKey, 300, JSON.stringify(workflows));
-      } catch (error) {
-        signale.warn('[EVENT] Failed to cache workflows:', error);
-      }
+    const triggerEventNames = Array.from(
+      new Set(
+        workflows
+          .map(workflow => {
+            const eventName = (workflow.triggerConfig as EventTriggerConfig | null)?.eventName;
+            return typeof eventName === 'string' ? eventName : undefined;
+          })
+          .filter((name): name is string => name !== undefined),
+      ),
+    );
+
+    const entry: WorkflowCacheEntry = {
+      workflows,
+      triggerEventNames,
+      hasWaitForEvent: waitForEventStep !== null,
+    };
+
+    // Cache for 5 minutes
+    try {
+      await redis.setex(cacheKey, 300, JSON.stringify(entry));
+    } catch (error) {
+      signale.warn('[EVENT] Failed to cache workflows:', error);
     }
 
+    return entry;
+  }
+
+  /**
+   * Trigger workflows based on an event
+   * `workflows` is the enabled EVENT-triggered set from `getWorkflowCacheEntry` - the caller
+   * already knows (via `triggerEventNames`) that at least one of them can match `eventName`.
+   */
+  private static async triggerWorkflows(
+    eventName: string,
+    contactId: string | undefined,
+    data: Record<string, unknown> | undefined,
+    workflows: EventTriggeredWorkflow[],
+  ): Promise<void> {
     for (const workflow of workflows) {
-      const triggerConfig = workflow.triggerConfig;
+      const triggerConfig = workflow.triggerConfig as EventTriggerConfig | null;
 
       // Check if this workflow is triggered by this event
       if (triggerConfig?.eventName === eventName) {
