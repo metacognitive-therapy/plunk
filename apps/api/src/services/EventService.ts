@@ -450,10 +450,16 @@ export class EventService {
           },
         },
       }),
+      // NOTE: no `enabled` filter on the workflow here. `WorkflowExecutionService.handleEvent`
+      // deliberately resumes WAITING step executions regardless of whether the owning workflow
+      // is still enabled (disabling a workflow does not cancel in-flight executions), so this
+      // flag must not be narrower than what `handleEvent` actually looks at - otherwise
+      // disabling the only WAIT_FOR_EVENT workflow in a project permanently hides the flag and
+      // the in-flight execution can only die by timeout.
       prisma.workflowStep.findFirst({
         where: {
           type: 'WAIT_FOR_EVENT',
-          workflow: {projectId, enabled: true},
+          workflow: {projectId},
         },
         select: {id: true},
       }),

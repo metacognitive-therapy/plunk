@@ -489,6 +489,11 @@ export class WorkflowService {
       }
 
       return newWorkflow;
+    }).then(async newWorkflow => {
+      // The duplicate starts disabled, but invalidate anyway: it copies the source's steps,
+      // so a stale cache entry could otherwise be reused for the wrong step set once enabled.
+      await EventService.invalidateWorkflowCache(projectId);
+      return newWorkflow;
     });
   }
 
@@ -555,6 +560,8 @@ export class WorkflowService {
       }
     }
 
+    await EventService.invalidateWorkflowCache(projectId);
+
     return newStep;
   }
 
@@ -616,10 +623,14 @@ export class WorkflowService {
       }
     }
 
-    return prisma.workflowStep.update({
+    const updatedStep = await prisma.workflowStep.update({
       where: {id: stepId},
       data: updateData,
     });
+
+    await EventService.invalidateWorkflowCache(projectId);
+
+    return updatedStep;
   }
 
   /**
@@ -756,6 +767,8 @@ export class WorkflowService {
         workflowId, // Safety check to ensure we only delete steps from this workflow
       },
     });
+
+    await EventService.invalidateWorkflowCache(projectId);
   }
 
   /**
@@ -816,6 +829,8 @@ export class WorkflowService {
 
     // Delete the step — cascades and removes its own transitions
     await prisma.workflowStep.delete({where: {id: stepId}});
+
+    await EventService.invalidateWorkflowCache(projectId);
   }
 
   /**
@@ -874,7 +889,7 @@ export class WorkflowService {
       );
     }
 
-    return prisma.$transaction(async tx => {
+    const newStep = await prisma.$transaction(async tx => {
       const newStep = await tx.workflowStep.create({
         data: {
           workflowId,
@@ -906,6 +921,10 @@ export class WorkflowService {
 
       return newStep;
     });
+
+    await EventService.invalidateWorkflowCache(projectId);
+
+    return newStep;
   }
 
   /**

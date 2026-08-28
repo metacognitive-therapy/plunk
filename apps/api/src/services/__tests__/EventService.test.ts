@@ -1279,5 +1279,101 @@ describe('EventService', () => {
       const updated = await prisma.workflowStepExecution.findUnique({where: {id: stepExecution.id}});
       expect(updated?.status).toBe(StepExecutionStatus.COMPLETED);
     });
+
+    it('resumes an execution after a WAIT_FOR_EVENT step is added to an already-warm, wait-free cache', async () => {
+      const contact = await factories.createContact({projectId});
+
+      // The workflow starts with only its TRIGGER step - no WAIT_FOR_EVENT anywhere in the
+      // project yet, so this event warms the cache with hasWaitForEvent: false.
+      const workflow = await factories.createWorkflow({projectId, enabled: true});
+      await EventService.trackEvent(projectId, 'unrelated.warmup', contact.id);
+
+      const triggerStep = await prisma.workflowStep.findFirstOrThrow({
+        where: {workflowId: workflow.id, type: WorkflowStepType.TRIGGER},
+      });
+
+      // Add a WAIT_FOR_EVENT step through the real service method (not the raw factory) so
+      // its cache-invalidation hook runs, exactly as it would from the workflow builder.
+      const waitStep = await WorkflowService.addStep(projectId, workflow.id, {
+        type: WorkflowStepType.WAIT_FOR_EVENT,
+        name: 'Wait for it',
+        position: {x: 100, y: 0},
+        config: {eventName: 'newly.awaited', timeout: 3600},
+        autoConnect: true,
+      });
+
+      // Sanity check: addStep's autoConnect wired trigger -> wait step.
+      const transition = await prisma.workflowTransition.findFirst({
+        where: {fromStepId: triggerStep.id, toStepId: waitStep.id},
+      });
+      expect(transition).not.toBeNull();
+
+      const execution = await prisma.workflowExecution.create({
+        data: {
+          workflowId: workflow.id,
+          contactId: contact.id,
+          status: WorkflowExecutionStatus.RUNNING,
+          currentStepId: waitStep.id,
+        },
+      });
+      const stepExecution = await prisma.workflowStepExecution.create({
+        data: {
+          executionId: execution.id,
+          stepId: waitStep.id,
+          status: StepExecutionStatus.WAITING,
+          startedAt: new Date(),
+        },
+      });
+
+      // If the stale "hasWaitForEvent: false" cache entry from the warmup event were still in
+      // effect, trackEvent would skip WorkflowExecutionService.handleEvent entirely and this
+      // event would be dropped forever.
+      await EventService.trackEvent(projectId, 'newly.awaited', contact.id);
+
+      const updated = await prisma.workflowStepExecution.findUnique({where: {id: stepExecution.id}});
+      expect(updated?.status).toBe(StepExecutionStatus.COMPLETED);
+    });
+
+    it('resumes an execution waiting inside a workflow that gets disabled after the wait step is entered', async () => {
+      const contact = await factories.createContact({projectId});
+
+      const workflow = await factories.createWorkflow({projectId, enabled: true});
+      const triggerStep = await prisma.workflowStep.findFirstOrThrow({
+        where: {workflowId: workflow.id, type: WorkflowStepType.TRIGGER},
+      });
+      const waitStep = await factories.createWorkflowStep({
+        workflowId: workflow.id,
+        type: WorkflowStepType.WAIT_FOR_EVENT,
+        config: {eventName: 'disabled.workflow.event', timeout: 3600},
+      });
+      await prisma.workflowTransition.create({data: {fromStepId: triggerStep.id, toStepId: waitStep.id}});
+
+      const execution = await prisma.workflowExecution.create({
+        data: {
+          workflowId: workflow.id,
+          contactId: contact.id,
+          status: WorkflowExecutionStatus.RUNNING,
+          currentStepId: waitStep.id,
+        },
+      });
+      const stepExecution = await prisma.workflowStepExecution.create({
+        data: {
+          executionId: execution.id,
+          stepId: waitStep.id,
+          status: StepExecutionStatus.WAITING,
+          startedAt: new Date(),
+        },
+      });
+
+      // Disable the workflow while the execution sits at the wait step - this must not cancel
+      // the in-flight execution (WorkflowExecutionService.handleEvent resumes it regardless of
+      // `enabled`), and the cached hasWaitForEvent flag must not go stale-false because of it.
+      await WorkflowService.update(projectId, workflow.id, {enabled: false});
+
+      await EventService.trackEvent(projectId, 'disabled.workflow.event', contact.id);
+
+      const updated = await prisma.workflowStepExecution.findUnique({where: {id: stepExecution.id}});
+      expect(updated?.status).toBe(StepExecutionStatus.COMPLETED);
+    });
   });
 });
