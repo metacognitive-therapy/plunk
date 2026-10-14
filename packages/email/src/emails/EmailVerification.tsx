@@ -1,4 +1,5 @@
 import {Heading, Link, Section, Text} from '@react-email/components';
+import {type Brand, NEUTRAL_BRAND} from '@plunk/shared';
 import * as React from 'react';
 import {EmailLayout} from '../common/EmailLayout';
 import {Footer} from '../common/Footer';
@@ -7,17 +8,17 @@ import {Header} from '../common/Header';
 interface EmailVerificationEmailProps {
   email: string;
   verificationUrl: string;
-  landingUrl?: string;
+  brand?: Brand;
 }
 
 export function EmailVerificationEmail({
   email = 'user@example.com',
   verificationUrl = 'https://api.useplunk.com/auth/verify-email?token=abc123',
-  landingUrl = 'https://www.useplunk.com',
+  brand = NEUTRAL_BRAND,
 }: EmailVerificationEmailProps) {
   return (
     <EmailLayout>
-      <Header />
+      <Header brand={brand} />
 
       <Section className="px-8 pb-10 pt-10">
         <Heading className="mb-2 mt-0 text-2xl font-semibold tracking-tight text-gray-900">
@@ -25,7 +26,7 @@ export function EmailVerificationEmail({
         </Heading>
 
         <Text className="mb-8 mt-0 text-base leading-relaxed text-gray-600">
-          Thanks for signing up! Please verify your email address to get started with Plunk.
+          Thanks for signing up! Please verify your email address to get started.
         </Text>
 
         <Section className="mb-8">
@@ -45,11 +46,11 @@ export function EmailVerificationEmail({
         </Section>
 
         <Text className="mb-0 mt-0 text-sm text-gray-500">
-          This link will expire in 1 hour. If you didn't sign up for Plunk, you can safely ignore this email.
+          This link will expire in 1 hour. If you didn't sign up, you can safely ignore this email.
         </Text>
       </Section>
 
-      <Footer landingUrl={landingUrl} />
+      <Footer brand={brand} />
     </EmailLayout>
   );
 }

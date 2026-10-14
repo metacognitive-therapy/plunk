@@ -1,4 +1,5 @@
 import {Heading, Link, Section, Text} from '@react-email/components';
+import {type Brand, NEUTRAL_BRAND} from '@plunk/shared';
 import * as React from 'react';
 import {EmailLayout} from '../common/EmailLayout';
 import {Footer} from '../common/Footer';
@@ -9,7 +10,7 @@ interface ProjectDisabledEmailProps {
   projectId: string;
   violations: string[];
   dashboardUrl?: string;
-  landingUrl?: string;
+  brand?: Brand;
 }
 
 export function ProjectDisabledEmail({
@@ -17,11 +18,11 @@ export function ProjectDisabledEmail({
   projectId = 'proj_example123',
   violations: _violations = [],
   dashboardUrl = 'https://next-app.useplunk.com',
-  landingUrl = 'https://www.useplunk.com',
+  brand = NEUTRAL_BRAND,
 }: ProjectDisabledEmailProps) {
   return (
     <EmailLayout>
-      <Header />
+      <Header brand={brand} />
 
       <Section className="px-8 pb-10 pt-10">
         <Heading className="mb-2 mt-0 text-2xl font-semibold tracking-tight text-gray-900">Project disabled</Heading>
@@ -66,7 +67,7 @@ export function ProjectDisabledEmail({
         </Section>
       </Section>
 
-      <Footer projectId={projectId} landingUrl={landingUrl} />
+      <Footer projectId={projectId} brand={brand} />
     </EmailLayout>
   );
 }

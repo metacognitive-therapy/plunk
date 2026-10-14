@@ -1,14 +1,13 @@
-import Image from 'next/image';
 import {useEffect, useState} from 'react';
 import {useRouter} from 'next/router';
 import {IconSpinner} from './IconSpinner';
 
 export interface LoaderProps {
   message?: string;
-  showLogo?: boolean;
+  logoUrl?: string | null;
 }
 
-export function Loader({message, showLogo = true}: LoaderProps) {
+export function Loader({message, logoUrl}: LoaderProps) {
   const [showClearCache, setShowClearCache] = useState(false);
   const router = useRouter();
 
@@ -29,8 +28,9 @@ export function Loader({message, showLogo = true}: LoaderProps) {
   return (
     <div className="h-screen flex items-center justify-center bg-white">
       <div className="flex flex-col items-center gap-6 animate-in fade-in duration-500">
-        {showLogo && (
-          <Image src="/assets/logo.png" alt="Plunk" width={40} height={40} className="rounded-lg" priority />
+        {logoUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logoUrl} alt="" width={40} height={40} className="rounded-lg object-contain" />
         )}
 
         <IconSpinner />

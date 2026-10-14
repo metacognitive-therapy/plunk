@@ -675,7 +675,7 @@ export default function CampaignDetailsPage() {
                   {([
                     {value: TemplateType.MARKETING, label: 'Marketing', description: 'Subscribed contacts, includes unsubscribe link'},
                     {value: TemplateType.TRANSACTIONAL, label: 'Transactional', description: 'All contacts, no subscription check or footer'},
-                    {value: TemplateType.HEADLESS, label: 'Headless', description: 'Subscribed contacts, no Plunk footer'},
+                    {value: TemplateType.HEADLESS, label: 'Headless', description: 'Subscribed contacts, no unsubscribe footer'},
                   ] as const).map(({value, label, description}) => (
                     <button
                       key={value}
@@ -701,7 +701,7 @@ export default function CampaignDetailsPage() {
                     </div>
                     <div className="px-3 py-2.5 space-y-2">
                       <p className="text-xs text-amber-800 leading-relaxed">
-                        You are responsible for providing recipients a way to opt out. Use the Plunk variables below to build your own footer.
+                        You are responsible for providing recipients a way to opt out. Use the template variables below to build your own footer.
                       </p>
                       <div className="flex flex-wrap gap-1.5">
                         <code className="inline-flex items-center rounded bg-amber-100 border border-amber-200 px-1.5 py-0.5 font-mono text-[11px] text-amber-900">
@@ -848,7 +848,7 @@ export default function CampaignDetailsPage() {
               <DialogHeader>
                 <DialogTitle>Schedule for later</DialogTitle>
                 <DialogDescription>
-                  Pick a time and Plunk will send it for you. Times shown in {getUserTimezone()}.
+                  Pick a time and it will go out automatically. Times shown in {getUserTimezone()}.
                 </DialogDescription>
               </DialogHeader>
 

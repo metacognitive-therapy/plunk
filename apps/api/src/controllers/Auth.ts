@@ -12,7 +12,6 @@ import {
   EMAIL_VERIFICATION_RATE_WINDOW,
   GITHUB_OAUTH_ENABLED,
   GOOGLE_OAUTH_ENABLED,
-  LANDING_URI,
   PASSWORD_RESET_RATE_LIMIT,
   PLUNK_ENABLED,
   TOKEN_EXPIRY_SECONDS,
@@ -142,7 +141,6 @@ export class Auth {
         React.createElement(EmailVerificationEmail, {
           email: created_user.email,
           verificationUrl,
-          landingUrl: LANDING_URI,
         }),
       );
     }
@@ -235,7 +233,7 @@ export class Auth {
     await sendPlatformEmail(
       user.email,
       'Verify your email address',
-      React.createElement(EmailVerificationEmail, {email: user.email, verificationUrl, landingUrl: LANDING_URI}),
+      React.createElement(EmailVerificationEmail, {email: user.email, verificationUrl}),
     );
 
     // Increment rate limit
@@ -278,7 +276,7 @@ export class Auth {
       await sendPlatformEmail(
         user.email,
         'Reset your password',
-        React.createElement(PasswordResetEmail, {email: user.email, resetUrl, landingUrl: LANDING_URI}),
+        React.createElement(PasswordResetEmail, {email: user.email, resetUrl}),
       );
 
       // Increment rate limit
