@@ -1,3 +1,5 @@
+import {type Brand, resolveBrand} from '@plunk/shared';
+
 import {Keys} from './keys.js';
 import {wrapRedis} from '../database/redis.js';
 import {prisma} from '../database/prisma.js';
@@ -7,6 +9,12 @@ export class ProjectService {
     return wrapRedis(Keys.Project.id(id), async () => {
       return prisma.project.findUnique({where: {id}});
     });
+  }
+
+  // Uncached on purpose: the project PATCH route doesn't invalidate Keys.Project.id, and a stale brand would go out in emails.
+  public static async brand(id: string): Promise<Brand> {
+    const project = await prisma.project.findUnique({where: {id}, select: {brandName: true, brandLogoUrl: true}});
+    return resolveBrand(project);
   }
 
   public static async secret(key: string) {

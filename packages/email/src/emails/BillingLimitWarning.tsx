@@ -1,4 +1,5 @@
 import {Heading, Link, Section, Text} from '@react-email/components';
+import {type Brand, NEUTRAL_BRAND} from '@plunk/shared';
 import * as React from 'react';
 import {EmailLayout} from '../common/EmailLayout';
 import {Footer} from '../common/Footer';
@@ -12,7 +13,7 @@ interface BillingLimitWarningEmailProps {
   percentage: number;
   sourceType: string;
   dashboardUrl?: string;
-  landingUrl?: string;
+  brand?: Brand;
 }
 
 export function BillingLimitWarningEmail({
@@ -23,14 +24,14 @@ export function BillingLimitWarningEmail({
   percentage = 85,
   sourceType = 'Transactional',
   dashboardUrl = 'https://next-app.useplunk.com',
-  landingUrl = 'https://www.useplunk.com',
+  brand = NEUTRAL_BRAND,
 }: BillingLimitWarningEmailProps) {
   const percentageRounded = Math.round(percentage);
   const remaining = limit - usage;
 
   return (
     <EmailLayout>
-      <Header />
+      <Header brand={brand} />
 
       <Section className="px-8 pb-10 pt-10">
         <Heading className="mb-2 mt-0 text-2xl font-semibold tracking-tight text-gray-900">Usage limit warning</Heading>
@@ -111,7 +112,7 @@ export function BillingLimitWarningEmail({
         </Section>
       </Section>
 
-      <Footer projectId={projectId} landingUrl={landingUrl} />
+      <Footer projectId={projectId} brand={brand} />
     </EmailLayout>
   );
 }

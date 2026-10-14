@@ -390,7 +390,7 @@ export function TeamSettings({projectId, currentUserRole, currentUserId}: TeamSe
           <DialogHeader>
             <DialogTitle>Remove {memberToRemove?.email}?</DialogTitle>
             <DialogDescription>
-              They lose access to this project immediately. Their Plunk account is not affected.
+              They lose access to this project immediately. Their account is not affected.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@plunk/db": "*",
+    "@plunk/shared": "*",
     "@plunk/types": "*",
     "@react-email/components": "^1.0.0",
     "@react-email/tailwind": "^2.0.1",

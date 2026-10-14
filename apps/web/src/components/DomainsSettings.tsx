@@ -408,7 +408,7 @@ export function DomainsSettings({projectId}: DomainsSettingsProps) {
       <Card>
         <CardHeader>
           <CardTitle>Add domain</CardTitle>
-          <CardDescription>Send from your own address instead of a Plunk one.</CardDescription>
+          <CardDescription>Send from your own address instead of a shared one.</CardDescription>
         </CardHeader>
         <CardContent>
           <Form {...form}>

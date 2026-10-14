@@ -77,6 +77,10 @@ model Project {
   // Localization
   language String @default("en") // Language code for customer-facing content (ISO 639-1)
 
+  // Branding: null falls back to the neutral instance brand (see @plunk/shared resolveBrand)
+  brandName    String?
+  brandLogoUrl String?
+
   // Relations
   members           Membership[]
   contacts          Contact[]

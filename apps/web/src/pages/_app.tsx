@@ -1,13 +1,16 @@
 import '../styles/globals.css';
 import type {AppProps} from 'next/app';
+import Head from 'next/head';
 import {useRouter} from 'next/router';
-import React, {useEffect} from 'react';
+import React, {useEffect, useRef} from 'react';
 import {Toaster} from 'sonner';
 import {SWRConfig} from 'swr';
 import {DefaultSeo} from 'next-seo';
 import {NuqsAdapter} from 'nuqs/adapters/next/pages';
+import {type Brand, NEUTRAL_BRAND} from '@plunk/shared';
 import {Loader} from '@plunk/ui';
 import {ActiveProjectProvider} from '../lib/contexts/ActiveProjectProvider';
+import {useBrand} from '../lib/hooks/useBrand';
 import {CommandPalette} from '../components/CommandPalette';
 import {useProjects} from '../lib/hooks/useProject';
 import {useUser} from '../lib/hooks/useUser';
@@ -114,8 +117,6 @@ export default function WithProviders(props: AppProps) {
           shouldRetryOnError: false,
         }}
       >
-        <DefaultSeo titleTemplate="%s | Plunk" defaultTitle="Plunk | Email Platform Dashboard" />
-
         <Script
           defer
           src="https://analytics.driaug.com/script.js"
@@ -131,11 +132,31 @@ export default function WithProviders(props: AppProps) {
   );
 }
 
+function BrandHead({brand}: {brand: Brand}) {
+  return (
+    <>
+      <DefaultSeo titleTemplate={`%s | ${brand.name}`} defaultTitle={brand.name} />
+      <Head>
+        <link key="icon" rel="icon" href={brand.logoUrl ?? '/favicon/neutral.svg'} />
+        <meta key="application-name" name="application-name" content={brand.name} />
+        <meta key="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content={brand.name} />
+      </Head>
+    </>
+  );
+}
+
 function Root(props: AppProps) {
   const router = useRouter();
   const isPublicRoute = PUBLIC_ROUTES.some(
     route => router.pathname === route || router.pathname.startsWith(`${route}/`),
   );
+  const projectBrand = useBrand();
+  // Public routes (auth, contact preference pages) never show a project's brand, even to a signed-in user.
+  const brand = isPublicRoute ? NEUTRAL_BRAND : projectBrand;
+  const brandNameRef = useRef(brand.name);
+  useEffect(() => {
+    brandNameRef.current = brand.name;
+  }, [brand.name]);
 
   useEffect(() => {
     const handleRouteChange = () => {
@@ -152,7 +173,7 @@ function Root(props: AppProps) {
       // (e.g. contact email set by NextSeo after the API response arrives).
       setTimeout(() => {
         const titleLabel = document.title.split(' | ')[0]?.trim();
-        if (titleLabel && titleLabel !== 'Plunk' && titleLabel !== fallback) {
+        if (titleLabel && titleLabel !== brandNameRef.current && titleLabel !== fallback) {
           addRecentPage({label: titleLabel, href: pathname});
         }
       }, 800);
@@ -164,6 +185,7 @@ function Root(props: AppProps) {
 
   return (
     <>
+      <BrandHead brand={brand} />
       <Toaster position={'top-right'} />
 
       <div>

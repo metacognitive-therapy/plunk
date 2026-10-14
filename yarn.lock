@@ -3128,6 +3128,7 @@ __metadata:
   resolution: "@plunk/email@workspace:packages/email"
   dependencies:
     "@plunk/db": "npm:*"
+    "@plunk/shared": "npm:*"
     "@plunk/types": "npm:*"
     "@plunk/typescript-config": "npm:*"
     "@react-email/components": "npm:^1.0.0"

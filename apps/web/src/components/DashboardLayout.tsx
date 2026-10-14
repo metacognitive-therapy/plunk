@@ -1,7 +1,9 @@
 import {useActiveProject} from '../lib/contexts/ActiveProjectProvider';
+import {useBrand} from '../lib/hooks/useBrand';
 import {useUser} from '../lib/hooks/useUser';
 import {WIKI_URI} from '../lib/constants';
 import {network} from '../lib/network';
+import {BrandMark} from './BrandMark';
 import {OnboardingBanner} from './onboarding/OnboardingBanner';
 import {
   Activity,
@@ -21,7 +23,6 @@ import {
   Users,
   Workflow
 } from 'lucide-react';
-import Image from 'next/image';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
 import {useCallback, useMemo, useState} from 'react';
@@ -89,6 +90,7 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
   const router = useRouter();
   const {data: user, mutate: mutateUser} = useUser();
   const {activeProject, availableProjects, setActiveProject} = useActiveProject();
+  const brand = useBrand();
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   // Sort projects alphabetically by name
@@ -124,10 +126,7 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
     <>
       {/* Logo */}
       <div className="h-16 flex items-center justify-between px-6 border-b border-neutral-200">
-        <div className="flex items-center gap-2">
-          <Image src="/assets/logo.png" alt="Plunk" width={28} height={28} className="rounded" />
-          <h1 className="text-xl font-bold text-neutral-900">Plunk</h1>
-        </div>
+        <BrandMark brand={brand} />
         <button
           onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', metaKey: true, bubbles: true}))}
           className="hidden lg:flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-neutral-400 bg-neutral-100 border border-neutral-200 rounded hover:bg-neutral-200 hover:text-neutral-600 transition-colors cursor-pointer"
@@ -302,9 +301,8 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
           >
             <Menu className="h-6 w-6 text-neutral-900" />
           </button>
-          <div className="flex items-center gap-2 ml-4">
-            <Image src="/assets/logo.png" alt="Plunk" width={24} height={24} className="rounded" />
-            <h1 className="text-lg font-bold text-neutral-900">Plunk</h1>
+          <div className="ml-4 min-w-0">
+            <BrandMark brand={brand} size="sm" />
           </div>
         </div>
 

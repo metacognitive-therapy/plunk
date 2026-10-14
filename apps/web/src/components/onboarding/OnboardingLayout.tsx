@@ -1,11 +1,12 @@
 import {motion} from 'framer-motion';
-import Image from 'next/image';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
 import {type CSSProperties, type ReactNode, useCallback} from 'react';
 
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
+import {useBrand} from '../../lib/hooks/useBrand';
 import {useOnboardingComplete} from '../../lib/hooks/useOnboardingComplete';
+import {BrandMark} from '../BrandMark';
 
 interface OnboardingLayoutProps {
   step: 1 | 2;
@@ -24,6 +25,7 @@ const backgroundStyle: CSSProperties = {
 export function OnboardingLayout({step, totalSteps = 2, maxWidthClass = 'max-w-2xl', children}: OnboardingLayoutProps) {
   const router = useRouter();
   const {activeProject} = useActiveProject();
+  const brand = useBrand();
   const {markComplete} = useOnboardingComplete(activeProject?.id);
 
   const handleSkip = useCallback(() => {
@@ -36,11 +38,8 @@ export function OnboardingLayout({step, totalSteps = 2, maxWidthClass = 'max-w-2
   return (
     <div className="h-screen flex flex-col overflow-y-auto" style={backgroundStyle}>
       <header className="flex items-center justify-between px-6 py-5 sm:px-10">
-        <Link href="/" className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-white shadow-sm border border-neutral-200 flex items-center justify-center p-1">
-            <Image src="/assets/logo.svg" alt="" aria-hidden width={24} height={24} />
-          </div>
-          <span className="text-lg font-bold tracking-tight text-neutral-900">Plunk</span>
+        <Link href="/">
+          <BrandMark brand={brand} size="sm" />
         </Link>
 
         <div className="hidden sm:flex items-center gap-2 text-xs font-medium text-neutral-500">

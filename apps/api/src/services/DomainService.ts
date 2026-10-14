@@ -1,12 +1,13 @@
 import React from 'react';
 import signale from 'signale';
 import {DomainUnverifiedEmail, DomainVerifiedEmail, sendPlatformEmail} from '@plunk/email';
-import {DASHBOARD_URI, LANDING_URI} from '../app/constants.js';
+import {DASHBOARD_URI} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {redis, wrapRedis} from '../database/redis.js';
 import {HttpException} from '../exceptions/index.js';
 import {Keys} from './keys.js';
 import {MembershipService} from './MembershipService.js';
+import {ProjectService} from './ProjectService.js';
 import {NtfyService} from './NtfyService.js';
 import {
   deleteIdentity,
@@ -154,7 +155,7 @@ export class DomainService {
               projectId: updatedDomain.project.id,
               domain: domain.domain,
               dashboardUrl: DASHBOARD_URI,
-              landingUrl: LANDING_URI,
+              brand: await ProjectService.brand(updatedDomain.project.id),
             });
             await Promise.all(emails.map(email => sendPlatformEmail(email, 'Domain Verified Successfully', template)));
           }
@@ -201,7 +202,7 @@ export class DomainService {
               projectId: updatedDomain.project.id,
               domain: domain.domain,
               dashboardUrl: DASHBOARD_URI,
-              landingUrl: LANDING_URI,
+              brand: await ProjectService.brand(updatedDomain.project.id),
             });
             await Promise.all(emails.map(email => sendPlatformEmail(email, 'Domain Verification Failed', template)));
           }

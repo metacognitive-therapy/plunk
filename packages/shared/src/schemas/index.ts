@@ -91,6 +91,25 @@ export const ProjectSchemas = {
     // workflows, and sequence progression are unaffected. See
     // docs/issues/05-project-sending-pause.md.
     sendingPaused: z.boolean().optional(),
+    /*
+     * Recipients read these in the email header and footer, so the name gets the same
+     * look-alike guard as project names and the logo must be a plain https link.
+     */
+    brandName: projectName.nullable().optional(),
+    brandLogoUrl: z
+      .string()
+      .url()
+      .max(2048)
+      .refine(
+        val => {
+          if (!URL.canParse(val)) return false;
+          const {protocol, hostname} = new URL(val);
+          return protocol === 'https:' || (protocol === 'http:' && hostname === 'localhost');
+        },
+        {message: 'Logo URL must use https'},
+      )
+      .nullable()
+      .optional(),
   }),
 } as const;
 

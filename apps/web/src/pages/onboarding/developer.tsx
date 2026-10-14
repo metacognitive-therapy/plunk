@@ -51,7 +51,7 @@ const steps: SetupStep[] = [
 function buildSnippets(apiUrl: string, secret: string): CodeSnippet[] {
   const body = {
     to: 'you@example.com',
-    subject: 'Hello from Plunk',
+    subject: 'Hello from the API',
     body: '<p>Your first email is live.</p>',
     from: 'sender@yourdomain.com',
   };

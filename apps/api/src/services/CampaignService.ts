@@ -1048,7 +1048,7 @@ export class CampaignService {
     // Prepare the email content (no variable replacement for test emails)
     await sendRawEmail({
       from: {
-        name: campaign.fromName || project.name || 'Plunk',
+        name: campaign.fromName || project.brandName || project.name,
         email: campaign.from,
       },
       to: [testEmail],

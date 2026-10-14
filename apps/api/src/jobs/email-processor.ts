@@ -200,9 +200,9 @@ export async function processEmailJob(job: Job<SendEmailJobData>, token?: string
       sourceEmailId: emailId,
     });
 
-    // Use fromName from database if available, otherwise fall back to project name
+    // Use fromName from database if available, otherwise fall back to the brand name, then the project name
     // The 'from' field in the database is just the email address
-    const fromName = email.fromName || email.project.name;
+    const fromName = email.fromName || email.project.brandName || email.project.name;
     const fromEmail = email.from;
 
     // Parse custom headers from JSON
