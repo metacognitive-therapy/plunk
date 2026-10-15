@@ -10,3 +10,4 @@ export * from './membership.js';
 export * from './sequences.js';
 export * from './tag.js';
 export * from './verification.js';
+export * from './conversation.js';

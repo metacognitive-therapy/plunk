@@ -5,3 +5,4 @@ export * from './i18n/index.js';
 export * from './unsubscribe.js';
 export * from './contact-identity.js';
 export * from './brand.js';
+export * from './messenger.js';

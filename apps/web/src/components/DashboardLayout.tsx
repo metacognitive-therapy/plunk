@@ -1,5 +1,6 @@
 import {useActiveProject} from '../lib/contexts/ActiveProjectProvider';
 import {useBrand} from '../lib/hooks/useBrand';
+import {useSupportAccess} from '../lib/hooks/useSupportAccess';
 import {useUser} from '../lib/hooks/useUser';
 import {WIKI_URI} from '../lib/constants';
 import {network} from '../lib/network';
@@ -11,6 +12,7 @@ import {
   BookOpen,
   ChevronDown,
   FileText,
+  Inbox,
   Layers,
   LayoutDashboard,
   ListOrdered,
@@ -74,6 +76,14 @@ const navigation: NavSection[] = [
   },
 ];
 
+const inboxItem: NavItem = {name: 'Inbox', href: '/inbox', icon: Inbox};
+
+function withInbox(sections: NavSection[]): NavSection[] {
+  const [first, ...rest] = sections;
+  if (!first) return sections;
+  return [{...first, items: [...first.items.slice(0, 1), inboxItem, ...first.items.slice(1)]}, ...rest];
+}
+
 // Deterministically derives a soft two-tone gradient from a string (e.g. an email),
 // so every account gets a stable, distinct avatar without storing any image.
 function avatarGradient(seed: string): string {
@@ -88,9 +98,10 @@ function avatarGradient(seed: string): string {
 
 export function DashboardLayout({children}: DashboardLayoutProps) {
   const router = useRouter();
-  const {data: user, mutate: mutateUser} = useUser();
+  const {data: user} = useUser();
   const {activeProject, availableProjects, setActiveProject} = useActiveProject();
   const brand = useBrand();
+  const hasSupportAccess = useSupportAccess();
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   // Sort projects alphabetically by name
@@ -99,27 +110,13 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
   }, [availableProjects]);
 
   const handleLogout = useCallback(async () => {
-    try {
-      // Call the logout endpoint to clear the cookie
-      await network.fetch('GET', '/auth/logout');
-
-      // Clear local storage
-      localStorage.removeItem('token');
-      localStorage.removeItem('activeProjectId');
-
-      // Clear SWR cache for user data
-      await mutateUser(null, false);
-
-      // Redirect to login
-      await router.push('/auth/login');
-    } catch {
-      // Even if the API call fails, try to redirect to login
-      localStorage.removeItem('token');
-      localStorage.removeItem('activeProjectId');
-      await mutateUser(null, false);
-      await router.push('/auth/login');
-    }
-  }, [mutateUser, router]);
+    await network.fetch('GET', '/auth/logout').catch(() => undefined);
+    localStorage.removeItem('token');
+    localStorage.removeItem('activeProjectId');
+    /* A full navigation, not router.push: the SWR cache and the active-project state live in
+    memory and would otherwise carry the previous user's data (inbox included) into the next login. */
+    window.location.assign('/auth/login');
+  }, []);
 
   // Sidebar content (reusable for both desktop and mobile)
   const getSidebarContent = () => (
@@ -180,7 +177,7 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 overflow-y-auto">
-        {navigation.map((section, sectionIndex) => (
+        {(hasSupportAccess ? withInbox(navigation) : navigation).map((section, sectionIndex) => (
           <div key={sectionIndex} className={sectionIndex > 0 ? 'mt-6' : ''}>
             {section.title && (
               <p className="px-3 mb-2 text-xs font-semibold text-neutral-500 uppercase tracking-wider">

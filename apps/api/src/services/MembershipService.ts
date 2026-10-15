@@ -145,6 +145,7 @@ export class MembershipService {
       userId: m.userId,
       email: m.user.email,
       role: m.role,
+      supportAgent: m.supportAgent,
       createdAt: m.createdAt,
     }));
   }
@@ -262,6 +263,25 @@ export class MembershipService {
     });
 
     // Invalidate cache
+    await this.invalidateCache(projectId, userId);
+
+    return updatedMembership;
+  }
+
+  public static async setSupportAgent(projectId: string, userId: string, supportAgent: boolean): Promise<Membership> {
+    const existingMembership = await prisma.membership.findUnique({
+      where: {userId_projectId: {userId, projectId}},
+    });
+
+    if (!existingMembership) {
+      throw new HttpException(404, 'Membership not found');
+    }
+
+    const updatedMembership = await prisma.membership.update({
+      where: {userId_projectId: {userId, projectId}},
+      data: {supportAgent},
+    });
+
     await this.invalidateCache(projectId, userId);
 
     return updatedMembership;

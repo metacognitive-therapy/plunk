@@ -11,6 +11,7 @@ export interface MemberWithEmail {
   userId: string;
   email: string;
   role: Role;
+  supportAgent: boolean;
   createdAt: Date;
 }
 

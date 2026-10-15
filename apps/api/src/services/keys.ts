@@ -119,6 +119,11 @@ export const Keys = {
       return 'campaign:stats_dirty';
     },
   },
+  Messenger: {
+    settings(projectId: string): string {
+      return `messenger:settings:${projectId}`;
+    },
+  },
   Project: {
     id(id: string): string {
       return `project:id:${id}`;

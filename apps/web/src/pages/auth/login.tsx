@@ -23,7 +23,7 @@ import {AnimatePresence, motion} from 'framer-motion';
 import {NextSeo} from 'next-seo';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
-import React, {useState} from 'react';
+import React, {useState, useSyncExternalStore} from 'react';
 import {useForm} from 'react-hook-form';
 import type {z} from 'zod';
 
@@ -33,6 +33,13 @@ import {useProjects} from '../../lib/hooks/useProject';
 import {useUser} from '../../lib/hooks/useUser';
 import {network} from '../../lib/network';
 
+
+const subscribeNoop = () => () => undefined;
+
+function readLastAuthMethod(): 'email' | 'google' | 'github' | null {
+  const stored = localStorage.getItem('plunk_last_auth_method');
+  return stored === 'email' || stored === 'google' || stored === 'github' ? stored : null;
+}
 
 export default function Login() {
   const {mutate: userMutate} = useUser();
@@ -47,11 +54,9 @@ export default function Login() {
     },
   });
 
-  const [lastUsed] = useState<'email' | 'google' | 'github' | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const stored = localStorage.getItem('plunk_last_auth_method');
-    return stored === 'email' || stored === 'google' || stored === 'github' ? stored : null;
-  });
+  /* Read through useSyncExternalStore so the server render and hydration both see null and the
+  hint appears after hydration, instead of a mismatch on every full page load. */
+  const lastUsed = useSyncExternalStore(subscribeNoop, readLastAuthMethod, () => null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showReset, setShowReset] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
