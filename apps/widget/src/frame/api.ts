@@ -3,6 +3,7 @@ import type {
   MessengerBootResponse,
   MessengerConversation,
   MessengerConversationSummary,
+  MessengerEmailResponse,
   MessengerMessage,
   MessengerStartResponse,
 } from '@plunk/types';
@@ -80,6 +81,15 @@ export class MessengerApi {
       },
       ...handlers,
     });
+  }
+
+  public async captureEmail(conversationId: string, email: string, subscribe: boolean): Promise<void> {
+    const data = await this.withSession<MessengerEmailResponse>('POST', '/v1/messenger/email', {
+      conversationId,
+      email,
+      subscribe,
+    });
+    this.token = data.token;
   }
 
   public markRead(id: string): Promise<void> {

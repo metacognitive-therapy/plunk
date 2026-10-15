@@ -57,6 +57,14 @@ export interface MessengerBootResponse {
     language: string;
   };
   appearance: MessengerAppearance;
+  visitor: {
+    hasEmail: boolean;
+  };
+}
+
+export interface MessengerEmailResponse {
+  token: string;
+  expiresAt: string;
 }
 
 export interface InboxMessage {

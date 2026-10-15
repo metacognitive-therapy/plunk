@@ -45,6 +45,12 @@ export const MessengerSchemas = {
   sendMessage: z.object({
     body: messageBody,
   }),
+  captureEmail: z.object({
+    email: z.string().trim().toLowerCase().email('Enter a valid email address').max(254),
+    /* Marketing consent is opt-in only: absent means no. */
+    subscribe: z.boolean().optional().default(false),
+    conversationId: z.string().uuid(),
+  }),
 } as const;
 
 export const CONVERSATION_VIEWS = ['unassigned', 'mine', 'all', 'closed'] as const;

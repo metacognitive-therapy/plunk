@@ -6,6 +6,7 @@ import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
 import {ErrorCode, HttpException} from '../exceptions/index.js';
 import {messengerSession, requireMessengerSession} from '../middleware/messenger.js';
 import {ConversationService} from '../services/ConversationService.js';
+import {MessengerContactService} from '../services/MessengerContactService.js';
 import {Keys} from '../services/keys.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
@@ -39,6 +40,15 @@ export class Messenger {
       ...this.streamOptions,
       expiresAt: session.expiresAt,
     });
+  }
+
+  @Post('email')
+  @Middleware([requireMessengerSession])
+  @CatchAsync
+  private async email(req: Request, res: Response, _next: NextFunction) {
+    const input = MessengerSchemas.captureEmail.parse(req.body);
+    const data = await MessengerContactService.captureEmail(messengerSession(res), input);
+    return res.json({success: true, data});
   }
 
   @Get('conversations')

@@ -27,6 +27,7 @@ import {redis} from '../database/redis.js';
 import {ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
 import {Keys} from './keys.js';
 import {type MessengerSession, MessengerSessionService} from './MessengerSessionService.js';
+import {MessengerContactService} from './MessengerContactService.js';
 import {MessengerSettingsService} from './MessengerSettingsService.js';
 import {ProjectService} from './ProjectService.js';
 import {RealtimeHub} from './RealtimeHub.js';
@@ -111,11 +112,12 @@ export class ConversationService {
       expiresAt: expiresAt.toISOString(),
       project: {name: brand.name, logoUrl: brand.logoUrl, language: project.language},
       appearance: await MessengerSettingsService.appearance(project.id, settings),
+      visitor: {hasEmail: await MessengerContactService.hasEmail(project.id, input.visitorId)},
     };
   }
 
   public static async startConversation(session: MessengerSession, body: string): Promise<MessengerStartResponse> {
-    const contactId = await this.resolveVisitorContact(session);
+    const contactId = await MessengerContactService.resolveVisitorContact(session);
 
     const conversation = await prisma.conversation.create({
       data: {
@@ -385,55 +387,6 @@ export class ConversationService {
       return (await redis.set(Keys.Realtime.typing(conversationId, actor), '1', 'PX', TYPING_THROTTLE_MS, 'NX')) === 'OK';
     } catch {
       return false;
-    }
-  }
-
-
-  /**
-   * The visitor's contact is whatever their anonymous id currently points at. A first message
-   * creates a lead: unsubscribed, because chatting is not consent to marketing.
-   */
-  private static async resolveVisitorContact(session: MessengerSession): Promise<string> {
-    const identityKey = {
-      projectId: session.projectId,
-      type: CONTACT_IDENTITY_TYPES.ANONYMOUS_ID,
-      value: session.visitorId,
-    };
-
-    const existing = await prisma.contactIdentity.findUnique({
-      where: {projectId_type_value: identityKey},
-      select: {contactId: true, contact: {select: {deletedAt: true}}},
-    });
-    if (existing && existing.contact.deletedAt === null) {
-      return existing.contactId;
-    }
-
-    const lead = await prisma.contact.create({
-      data: {projectId: session.projectId, email: null, subscribed: false, data: Prisma.JsonNull},
-    });
-
-    try {
-      if (existing) {
-        await prisma.contactIdentity.update({
-          where: {projectId_type_value: identityKey},
-          data: {contactId: lead.id, lastSeenAt: new Date()},
-        });
-      } else {
-        await prisma.contactIdentity.create({data: {...identityKey, contactId: lead.id}});
-      }
-      return lead.id;
-    } catch (error) {
-      /* Two first messages raced: the other request's lead owns the identity, so this lead is
-      discarded and the conversation joins the winner. */
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        await prisma.contact.delete({where: {id: lead.id}});
-        const winner = await prisma.contactIdentity.findUniqueOrThrow({
-          where: {projectId_type_value: identityKey},
-          select: {contactId: true},
-        });
-        return winner.contactId;
-      }
-      throw error;
     }
   }
 

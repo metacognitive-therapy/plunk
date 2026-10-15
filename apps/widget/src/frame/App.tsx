@@ -8,7 +8,7 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'preact/hooks';
 
 import {contrastColor} from '../shared/protocol';
 
-import {MessengerApi} from './api';
+import {MessengerApi, MessengerApiError} from './api';
 import type {HostBridge} from './host';
 import {type Strings, stringsFor} from './strings';
 
@@ -16,6 +16,7 @@ import {type Strings, stringsFor} from './strings';
 const FALLBACK_POLL_MS = 15_000;
 const TYPING_SEND_INTERVAL_MS = 2500;
 const TYPING_VISIBLE_MS = 4000;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type StreamListener = (event: MessengerStreamEvent) => void;
 type Subscribe = (listener: StreamListener) => () => void;
@@ -37,6 +38,7 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
   const [failed, setFailed] = useState(false);
   const [view, setView] = useState<View>({name: 'home'});
   const [conversations, setConversations] = useState<MessengerConversationSummary[]>([]);
+  const [hasEmail, setHasEmail] = useState(true);
 
   const strings = stringsFor(boot?.project.language);
 
@@ -49,6 +51,7 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
       .boot()
       .then(result => {
         applyAccent(result.appearance.accentColor);
+        setHasEmail(result.visitor.hasEmail);
         setBoot(result);
         bridge?.post({type: 'booted', appearance: result.appearance});
       })
@@ -191,6 +194,8 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
           subscribe={subscribe}
           streamConnected={streamConnected}
           canMarkRead={panelOpen && pageVisible}
+          askForEmail={!hasEmail}
+          onEmailCaptured={() => setHasEmail(true)}
           onRead={onRead}
           onStarted={conversationId => setView({name: 'thread', conversationId})}
         />
@@ -299,6 +304,8 @@ function Thread({
   subscribe,
   streamConnected,
   canMarkRead,
+  askForEmail,
+  onEmailCaptured,
   onRead,
   onStarted,
 }: {
@@ -308,6 +315,8 @@ function Thread({
   subscribe: Subscribe;
   streamConnected: boolean;
   canMarkRead: boolean;
+  askForEmail: boolean;
+  onEmailCaptured: () => void;
   onRead: (conversationId: string) => void;
   onStarted: (conversationId: string) => void;
 }) {
@@ -319,6 +328,7 @@ function Thread({
   const bottom = useRef<HTMLDivElement>(null);
   const lastMarkedRead = useRef<string | null>(null);
   const lastTypingSent = useRef(0);
+  const [capturedEmail, setCapturedEmail] = useState<string | null>(null);
   const messageCount = conversation?.messages.length ?? 0;
 
   const refresh = useCallback(() => {
@@ -460,6 +470,22 @@ function Thread({
             </div>
           </div>
         ) : null}
+        {conversationId && askForEmail && conversation?.messages.some(message => message.authorType === 'CONTACT') ? (
+          <EmailPrompt
+            api={api}
+            strings={strings}
+            conversationId={conversationId}
+            onCaptured={email => {
+              setCapturedEmail(email);
+              onEmailCaptured();
+            }}
+          />
+        ) : null}
+        {capturedEmail ? (
+          <div class="pm-notice">
+            {strings.emailSaved} <strong>{capturedEmail}</strong>
+          </div>
+        ) : null}
         {conversation?.status === 'CLOSED' ? <div class="pm-notice">{strings.closed}</div> : null}
         <div ref={bottom} />
       </div>
@@ -487,6 +513,84 @@ function Thread({
         </div>
       </form>
     </main>
+  );
+}
+
+function EmailPrompt({
+  api,
+  strings,
+  conversationId,
+  onCaptured,
+}: {
+  api: MessengerApi;
+  strings: Strings;
+  conversationId: string;
+  onCaptured: (email: string) => void;
+}) {
+  const [email, setEmail] = useState('');
+  const [subscribe, setSubscribe] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: Event) => {
+    event.preventDefault();
+    const value = email.trim();
+    if (!EMAIL_PATTERN.test(value)) {
+      setError(strings.emailInvalid);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api.captureEmail(conversationId, value, subscribe);
+      onCaptured(value.toLowerCase());
+    } catch (caught) {
+      setError(
+        caught instanceof MessengerApiError && caught.status === 409
+          ? caught.message
+          : caught instanceof MessengerApiError && caught.status === 422
+            ? strings.emailInvalid
+            : strings.failed,
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form class="pm-email" onSubmit={submit} noValidate>
+      <div class="pm-email-title">{strings.emailPrompt}</div>
+      <div class="pm-email-hint">{strings.emailHint}</div>
+      <div class="pm-email-row">
+        <input
+          type="email"
+          autocomplete="email"
+          inputMode="email"
+          value={email}
+          maxLength={254}
+          placeholder={strings.emailPlaceholder}
+          aria-label={strings.emailPrompt}
+          aria-invalid={error ? 'true' : undefined}
+          onInput={event => setEmail((event.target as HTMLInputElement).value)}
+        />
+        <button type="submit" disabled={saving || !email.trim()}>
+          {saving ? strings.emailSaving : strings.emailSave}
+        </button>
+      </div>
+      <label class="pm-email-consent">
+        <input
+          type="checkbox"
+          checked={subscribe}
+          onChange={event => setSubscribe((event.target as HTMLInputElement).checked)}
+        />
+        {strings.emailConsent}
+      </label>
+      {error ? (
+        <div class="pm-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+    </form>
   );
 }
 
