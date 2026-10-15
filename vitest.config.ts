@@ -92,6 +92,17 @@ export default defineConfig({
           exclude: ['node_modules/**', '**/node_modules/**', 'dist/**', '.turbo/**'],
         },
       },
+      {
+        // The React Native SDK sits outside the workspaces and needs no database either.
+        resolve: {alias},
+        test: {
+          name: 'react-native-sdk',
+          globals: true,
+          environment: 'node',
+          include: ['sdks/react-native/src/**/__tests__/**/*.{test,spec}.ts'],
+          exclude: ['node_modules/**', '**/node_modules/**', 'dist/**'],
+        },
+      },
     ],
   },
 });
