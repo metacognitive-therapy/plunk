@@ -12,6 +12,8 @@ const en = {
   sending: 'Sending…',
   typing: 'Typing…',
   failed: 'Could not send. Try again.',
+  tooFast: "You're sending messages too quickly. Wait a moment and try again.",
+  humanCheckFailed: "We couldn't confirm you're human. Try again.",
   unavailable: 'The messenger is not available right now.',
   closed: 'This conversation is closed. Write again to reopen it.',
   emailPrompt: 'Get notified by email',

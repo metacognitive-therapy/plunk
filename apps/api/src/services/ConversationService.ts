@@ -41,6 +41,7 @@ import {MessengerSettingsService} from './MessengerSettingsService.js';
 import {ProjectService} from './ProjectService.js';
 import {QueueService} from './QueueService.js';
 import {RealtimeHub} from './RealtimeHub.js';
+import {TurnstileService} from './TurnstileService.js';
 
 const PREVIEW_LENGTH = 140;
 const MESSENGER_HISTORY_LIMIT = 20;
@@ -151,6 +152,7 @@ export class ConversationService {
       project: {name: brand.name, logoUrl: brand.logoUrl, language: project.language},
       appearance: await MessengerSettingsService.appearance(project.id, settings),
       visitor: {hasEmail: await MessengerContactService.hasEmail(project.id, input.visitorId)},
+      turnstileSiteKey: TurnstileService.siteKey(),
     };
   }
 

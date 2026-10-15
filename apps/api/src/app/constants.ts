@@ -165,6 +165,17 @@ export const RATE_LIMIT_SEND_BURST = Number(validateEnv('RATE_LIMIT_SEND_BURST',
 export const RATE_LIMIT_CONTACTS_PER_SECOND = Number(validateEnv('RATE_LIMIT_CONTACTS_PER_SECOND', '50'));
 export const RATE_LIMIT_CONTACTS_BURST = Number(validateEnv('RATE_LIMIT_CONTACTS_BURST', '100'));
 
+// How many reverse proxies sit in front of the API (nginx, a platform router). Express reads
+// the client address from X-Forwarded-For through that many hops; the messenger's per-IP
+// rate limits depend on it. Set to 0 when the API is exposed directly.
+export const TRUST_PROXY = Number(validateEnv('TRUST_PROXY', '1'));
+
+// Cloudflare Turnstile for the messenger (optional). When both keys are set, starting a
+// conversation requires a valid invisible challenge token.
+export const TURNSTILE_SITE_KEY = validateEnv('TURNSTILE_SITE_KEY', '');
+export const TURNSTILE_SECRET_KEY = validateEnv('TURNSTILE_SECRET_KEY', '');
+export const TURNSTILE_ENABLED = TURNSTILE_SITE_KEY !== '' && TURNSTILE_SECRET_KEY !== '';
+
 // Email Verification & Password Reset
 export const TOKEN_EXPIRY_SECONDS = 3600; // 1 hour
 export const EMAIL_VERIFICATION_RATE_LIMIT = 3; // Max 3 emails per hour

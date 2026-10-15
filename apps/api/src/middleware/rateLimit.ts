@@ -91,6 +91,16 @@ redis.defineCommand('rateLimitTokenBucket', {numberOfKeys: 1, lua: TOKEN_BUCKET_
 
 const client = redis as unknown as TokenBucketCommand;
 
+/** Takes one token from the bucket at `key`. Throws when Redis is unreachable. */
+export async function takeToken(
+  key: string,
+  burst: number,
+  refillPerSecond: number,
+): Promise<{allowed: boolean; remaining: number; retryAfterSeconds: number}> {
+  const [allowed, remaining, retryAfterMs] = await client.rateLimitTokenBucket(key, String(burst), String(refillPerSecond));
+  return {allowed: allowed === 1, remaining, retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000))};
+}
+
 /**
  * Rejects a project's requests to this route once it outruns `bucket`.
  *

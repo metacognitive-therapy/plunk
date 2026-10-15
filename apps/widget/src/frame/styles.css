@@ -487,6 +487,16 @@ button {
   margin: 8px 0 0;
 }
 
+.pm-human-check:empty {
+  display: none;
+}
+
+.pm-human-check {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 6px;
+}
+
 .pm-error {
   margin-bottom: 6px;
   color: #b91c1c;
