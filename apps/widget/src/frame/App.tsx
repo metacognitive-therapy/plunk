@@ -1,7 +1,10 @@
 import type {MessengerBootResponse, MessengerConversation, MessengerConversationSummary} from '@plunk/types';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'preact/hooks';
 
+import {contrastColor} from '../shared/protocol';
+
 import {MessengerApi} from './api';
+import type {HostBridge} from './host';
 import {type Strings, stringsFor} from './strings';
 
 const POLL_INTERVAL_MS = 4000;
@@ -11,11 +14,14 @@ type View = {name: 'home'} | {name: 'thread'; conversationId: string | null};
 interface AppProps {
   publicKey: string;
   visitorId: string;
-  parentOrigin?: string;
+  bridge?: HostBridge;
 }
 
-export function App({publicKey, visitorId, parentOrigin}: AppProps) {
-  const api = useMemo(() => new MessengerApi(publicKey, visitorId, parentOrigin), [publicKey, visitorId, parentOrigin]);
+export function App({publicKey, visitorId, bridge}: AppProps) {
+  const api = useMemo(
+    () => new MessengerApi(publicKey, visitorId, bridge?.parentOrigin),
+    [publicKey, visitorId, bridge],
+  );
   const [boot, setBoot] = useState<MessengerBootResponse | null>(null);
   const [failed, setFailed] = useState(false);
   const [view, setView] = useState<View>({name: 'home'});
@@ -30,9 +36,16 @@ export function App({publicKey, visitorId, parentOrigin}: AppProps) {
     }
     api
       .boot()
-      .then(setBoot)
-      .catch(() => setFailed(true));
-  }, [api, publicKey]);
+      .then(result => {
+        applyAccent(result.appearance.accentColor);
+        setBoot(result);
+        bridge?.post({type: 'booted', appearance: result.appearance});
+      })
+      .catch(() => {
+        setFailed(true);
+        bridge?.post({type: 'failed'});
+      });
+  }, [api, publicKey, bridge]);
 
   const refreshList = useCallback(() => {
     api
@@ -41,14 +54,39 @@ export function App({publicKey, visitorId, parentOrigin}: AppProps) {
       .catch(() => undefined);
   }, [api]);
 
+  /* Polled in every view because the launcher's unread badge on the host page depends on it. */
   useEffect(() => {
-    if (!boot || view.name !== 'home') {
+    if (!boot) {
       return;
     }
     refreshList();
     const timer = setInterval(refreshList, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [boot, view.name, refreshList]);
+    const offOpened = bridge?.on('opened', refreshList);
+    const offUpdate = bridge?.on('update', refreshList);
+    return () => {
+      clearInterval(timer);
+      offOpened?.();
+      offUpdate?.();
+    };
+  }, [boot, refreshList, bridge]);
+
+  const unread = conversations.filter(conversation => conversation.unread).length;
+  useEffect(() => {
+    bridge?.post({type: 'unread', count: unread});
+  }, [bridge, unread]);
+
+  useEffect(() => {
+    if (!bridge) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        bridge.post({type: 'close'});
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [bridge]);
 
   if (failed) {
     return (
@@ -68,9 +106,11 @@ export function App({publicKey, visitorId, parentOrigin}: AppProps) {
         boot={boot}
         strings={strings}
         onBack={view.name === 'thread' ? () => setView({name: 'home'}) : undefined}
+        onClose={bridge ? () => bridge.post({type: 'close'}) : undefined}
       />
       {view.name === 'home' ? (
         <Home
+          boot={boot}
           strings={strings}
           conversations={conversations}
           onOpen={conversationId => setView({name: 'thread', conversationId})}
@@ -87,7 +127,22 @@ export function App({publicKey, visitorId, parentOrigin}: AppProps) {
   );
 }
 
-function Header({boot, strings, onBack}: {boot: MessengerBootResponse; strings: Strings; onBack?: () => void}) {
+function applyAccent(accent: string) {
+  document.documentElement.style.setProperty('--pm-accent', accent);
+  document.documentElement.style.setProperty('--pm-accent-contrast', contrastColor(accent));
+}
+
+function Header({
+  boot,
+  strings,
+  onBack,
+  onClose,
+}: {
+  boot: MessengerBootResponse;
+  strings: Strings;
+  onBack?: () => void;
+  onClose?: () => void;
+}) {
   return (
     <header class="pm-header">
       {onBack ? (
@@ -99,15 +154,24 @@ function Header({boot, strings, onBack}: {boot: MessengerBootResponse; strings: 
       ) : null}
       {boot.project.logoUrl ? <img class="pm-logo" src={boot.project.logoUrl} alt="" /> : null}
       <div class="pm-title">{boot.project.name}</div>
+      {onClose ? (
+        <button class="pm-icon-button pm-close" type="button" aria-label={strings.close} onClick={onClose}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+          </svg>
+        </button>
+      ) : null}
     </header>
   );
 }
 
 function Home({
+  boot,
   strings,
   conversations,
   onOpen,
 }: {
+  boot: MessengerBootResponse;
   strings: Strings;
   conversations: MessengerConversationSummary[];
   onOpen: (conversationId: string | null) => void;
@@ -115,7 +179,16 @@ function Home({
   return (
     <main class="pm-home">
       <section class="pm-hero">
-        <h1>{strings.greeting}</h1>
+        {boot.appearance.team.length > 0 ? (
+          <div class="pm-team" aria-label={boot.appearance.team.map(member => member.name).join(', ')}>
+            {boot.appearance.team.map(member => (
+              <span key={member.id} class="pm-avatar" title={member.name}>
+                {initials(member.name)}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <h1>{boot.appearance.greeting ?? strings.greeting}</h1>
         <p>{strings.intro}</p>
         <button class="pm-primary" type="button" onClick={() => onOpen(null)}>
           {strings.newConversation}
@@ -256,6 +329,11 @@ function Thread({
       </form>
     </main>
   );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? '') : '')).toUpperCase();
 }
 
 function formatTime(iso: string): string {

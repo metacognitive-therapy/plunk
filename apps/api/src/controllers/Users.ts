@@ -1,7 +1,7 @@
 import {randomBytes} from 'node:crypto';
 
 import {Controller, Delete, Get, Middleware, Patch, Post, Put} from '@overnightjs/core';
-import {BillingLimitSchemas, ProjectSchemas, UtilitySchemas} from '@plunk/shared';
+import {BillingLimitSchemas, ProfileSchemas, ProjectSchemas, UtilitySchemas} from '@plunk/shared';
 import type {NextFunction, Request, Response} from 'express';
 
 import {DASHBOARD_URI, STRIPE_ENABLED, STRIPE_PRICE_EMAIL_USAGE, STRIPE_PRICE_ONBOARDING} from '../app/constants.js';
@@ -35,7 +35,22 @@ export class Users {
       throw new NotAuthenticated();
     }
 
-    return res.status(200).json({id: me.id, email: me.email});
+    return res.status(200).json({id: me.id, email: me.email, name: me.name});
+  }
+
+  @Patch('@me')
+  @Middleware([isAuthenticated, requireEmailVerified])
+  @CatchAsync
+  public async updateMe(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    if (!auth.userId) {
+      throw new NotAuthenticated();
+    }
+
+    const {name} = ProfileSchemas.update.parse(req.body);
+    const me = await UserService.updateName(auth.userId, name);
+
+    return res.status(200).json({id: me.id, email: me.email, name: me.name});
   }
 
   @Get('@me/projects')

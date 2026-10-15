@@ -18800,6 +18800,7 @@ __metadata:
   resolution: "widget@workspace:apps/widget"
   dependencies:
     "@plunk/types": "npm:*"
+    concurrently: "npm:^9.2.1"
     preact: "npm:^10.29.8"
     typescript: "npm:^5.7.2"
     vite: "npm:^8.0.16"

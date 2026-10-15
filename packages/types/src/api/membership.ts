@@ -10,6 +10,7 @@ import type {Role} from '@plunk/db';
 export interface MemberWithEmail {
   userId: string;
   email: string;
+  name: string | null;
   role: Role;
   supportAgent: boolean;
   createdAt: Date;

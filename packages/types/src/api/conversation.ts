@@ -37,6 +37,17 @@ export interface MessengerStartResponse {
   conversation: MessengerConversation;
 }
 
+export type MessengerLauncherPositionValue = 'LEFT' | 'RIGHT';
+
+export interface MessengerAppearance {
+  accentColor: string;
+  launcherPosition: MessengerLauncherPositionValue;
+  /** Null means the messenger's default greeting in the project's language. */
+  greeting: string | null;
+  /** Named support agents only, in the order the project chose. */
+  team: {id: string; name: string}[];
+}
+
 export interface MessengerBootResponse {
   token: string;
   expiresAt: string;
@@ -45,6 +56,7 @@ export interface MessengerBootResponse {
     logoUrl: string | null;
     language: string;
   };
+  appearance: MessengerAppearance;
 }
 
 export interface InboxMessage {
@@ -90,4 +102,8 @@ export interface InboxPage {
 export interface MessengerSettingsData {
   enabled: boolean;
   allowedOrigins: string[];
+  accentColor: string;
+  launcherPosition: MessengerLauncherPositionValue;
+  greeting: string | null;
+  teamUserIds: string[];
 }

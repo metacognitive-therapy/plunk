@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite build --watch",
-    "build": "tsc --noEmit && vite build",
+    "dev": "concurrently -n \"frame,loader\" \"vite build --watch\" \"vite build -c vite.loader.config.ts --watch\"",
+    "build": "tsc --noEmit && vite build && vite build -c vite.loader.config.ts",
     "lint": "eslint .",
     "clean": "rimraf node_modules dist .turbo"
   },
@@ -14,6 +14,7 @@
   },
   "devDependencies": {
     "@plunk/types": "*",
+    "concurrently": "^9.2.1",
     "typescript": "^5.7.2",
     "vite": "^8.0.16"
   }

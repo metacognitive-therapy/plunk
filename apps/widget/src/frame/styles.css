@@ -83,6 +83,10 @@ button {
   color: inherit;
 }
 
+.pm-close {
+  margin: 0 -6px 0 auto;
+}
+
 .pm-icon-button:hover {
   background: rgba(255, 255, 255, 0.12);
 }
@@ -97,6 +101,26 @@ button {
   padding: 28px 20px 24px;
   background: var(--pm-accent);
   color: var(--pm-accent-contrast);
+}
+
+.pm-team {
+  display: flex;
+  margin-bottom: 16px;
+}
+
+.pm-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-right: -8px;
+  border: 2px solid var(--pm-accent);
+  border-radius: 50%;
+  background: var(--pm-surface);
+  color: var(--pm-text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .pm-hero h1 {

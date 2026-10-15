@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 
 import {API_URI, NODE_ENV} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
-import {wrapRedis} from '../database/redis.js';
+import {redis, wrapRedis} from '../database/redis.js';
 
 import {Keys} from './keys.js';
 
@@ -54,6 +54,17 @@ export class UserService {
     return wrapRedis(Keys.User.id(id), async () => {
       return prisma.user.findUnique({where: {id}});
     });
+  }
+
+  public static async updateName(id: string, name: string | null) {
+    const user = await prisma.user.update({where: {id}, data: {name}});
+    const memberships = await prisma.membership.findMany({where: {userId: id}, select: {projectId: true}});
+    await redis.del(
+      Keys.User.id(id),
+      Keys.User.email(user.email),
+      ...memberships.map(m => Keys.Messenger.appearance(m.projectId)),
+    );
+    return user;
   }
 
   public static async email(email: string) {

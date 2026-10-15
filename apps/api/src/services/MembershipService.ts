@@ -133,6 +133,7 @@ export class MembershipService {
           select: {
             id: true,
             email: true,
+            name: true,
           },
         },
       },
@@ -144,6 +145,7 @@ export class MembershipService {
     return memberships.map(m => ({
       userId: m.userId,
       email: m.user.email,
+      name: m.user.name,
       role: m.role,
       supportAgent: m.supportAgent,
       createdAt: m.createdAt,
@@ -378,7 +380,7 @@ export class MembershipService {
     }
 
     // Invalidate project-wide caches
-    keysToDelete.push(Keys.Membership.owner(projectId));
+    keysToDelete.push(Keys.Membership.owner(projectId), Keys.Messenger.appearance(projectId));
 
     // Delete all keys
     if (keysToDelete.length > 0) {

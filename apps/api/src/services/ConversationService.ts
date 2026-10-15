@@ -103,6 +103,7 @@ export class ConversationService {
       token,
       expiresAt: expiresAt.toISOString(),
       project: {name: brand.name, logoUrl: brand.logoUrl, language: project.language},
+      appearance: await MessengerSettingsService.appearance(project.id, settings),
     };
   }
 
