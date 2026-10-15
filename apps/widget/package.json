@@ -1,0 +1,20 @@
+{
+  "name": "widget",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc --noEmit && vite build",
+    "lint": "eslint .",
+    "clean": "rimraf node_modules dist .turbo"
+  },
+  "dependencies": {
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "@plunk/types": "*",
+    "typescript": "^5.7.2",
+    "vite": "^8.0.16"
+  }
+}

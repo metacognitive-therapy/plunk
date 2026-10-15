@@ -22,8 +22,15 @@ model User {
   type          AuthMethod
   emailVerified Boolean    @default(false)
 
+  // Shown to visitors in the messenger next to an agent's replies. Null falls back to the
+  // local part of the email address.
+  name String?
+
   // Relations
-  memberships Membership[]
+  memberships           Membership[]
+  assignedConversations Conversation[]        @relation("ConversationAssignee")
+  conversationMessages  ConversationMessage[]
+  conversationReads     ConversationRead[]
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -98,6 +105,9 @@ model Project {
 
   idempotencyKeys IdempotencyKey[]
 
+  messengerSettings MessengerSettings?
+  conversations     Conversation[]
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -114,6 +124,10 @@ model Membership {
 
   // Details
   role Role @default(MEMBER)
+
+  // Opt-in access to the support Inbox. Conversations may carry health information, so a member
+  // who only runs campaigns does not see them. Owners always have access regardless of this flag.
+  supportAgent Boolean @default(false)
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -183,6 +197,7 @@ model Contact {
   sequenceSubscriptions SequenceSubscription[]
   sequenceStepSends     SequenceStepSend[]
   identities            ContactIdentity[]
+  conversations         Conversation[]
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -205,6 +220,115 @@ model Contact {
 //
 // Nothing consumes this table yet -- it is not wired into identify, /v1/track, or any ingestion
 // path. This slice only builds the table, `ContactService.recordIdentity`, and its read surface.
+// Per-project configuration of the embeddable messenger. A missing row, `enabled = false`, or an
+// empty `allowedOrigins` list all mean the messenger refuses to boot. See docs/prds/live-chat.md.
+model MessengerSettings {
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String  @id
+
+  enabled Boolean @default(false)
+
+  // Exact origins (scheme + host + port) of the sites allowed to embed the messenger.
+  allowedOrigins String[] @default([])
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("messenger_settings")
+}
+
+// A support conversation between one contact and the project's support agents.
+model Conversation {
+  id String @id @default(uuid())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId String
+
+  status ConversationStatus @default(OPEN)
+
+  // Null while SNOOZED means "until the contact replies".
+  snoozedUntil DateTime?
+
+  assignee   User?   @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigneeId String?
+
+  channel ConversationChannel @default(WIDGET)
+
+  // The anonymous visitor id that started the conversation. An unverified messenger session only
+  // ever sees conversations it originated, so typing an email address never unlocks history.
+  originVisitorId String?
+
+  // Unguessable token carried in the reply-to address (reply+<token>@...) of emailed replies.
+  replyToken String @unique @default(uuid())
+
+  // Denormalized from the latest COMMENT so inbox and messenger lists never scan messages.
+  lastMessageAt          DateTime           @default(now())
+  lastMessagePreview     String?
+  lastMessageAuthorType  MessageAuthorType?
+  lastContactMessageAt   DateTime?
+  contactLastReadAt    DateTime?
+  firstResponseAt      DateTime?
+  closedAt             DateTime?
+
+  messages ConversationMessage[]
+  reads    ConversationRead[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status, lastMessageAt])
+  @@index([projectId, assigneeId, status, lastMessageAt])
+  @@index([projectId, originVisitorId, lastMessageAt])
+  @@index([contactId])
+  @@index([status, snoozedUntil])
+  @@index([status, closedAt])
+  @@map("conversations")
+}
+
+model ConversationMessage {
+  id String @id @default(uuid())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+
+  // Denormalized for project scoping without a join.
+  projectId String
+
+  authorType   MessageAuthorType
+  authorUser   User?             @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorUserId String?
+
+  kind   MessageKind   @default(COMMENT)
+  body   String
+  source MessageSource @default(WIDGET)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("conversation_messages")
+}
+
+// When an agent last read a conversation. Drives per-agent unread state.
+model ConversationRead {
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+
+  lastReadAt DateTime @default(now())
+
+  @@id([userId, conversationId])
+  @@index([conversationId])
+  @@map("conversation_reads")
+}
+
 model ContactIdentity {
   id String @id @default(uuid())
 
@@ -966,6 +1090,38 @@ model IdempotencyKey {
 // ============================================
 // ENUMS
 // ============================================
+
+enum ConversationStatus {
+  OPEN
+  SNOOZED
+  CLOSED
+}
+
+enum ConversationChannel {
+  WIDGET
+  EMAIL
+  MOBILE
+  IMPORT
+}
+
+enum MessageAuthorType {
+  CONTACT
+  AGENT
+  SYSTEM
+}
+
+enum MessageKind {
+  COMMENT
+  NOTE
+}
+
+enum MessageSource {
+  WIDGET
+  EMAIL
+  SDK
+  DASHBOARD
+  IMPORT
+}
 
 enum ProjectDisabledReason {
   PAYMENT_FAILED // Subscription renewal payment failed

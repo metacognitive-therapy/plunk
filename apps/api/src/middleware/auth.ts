@@ -376,3 +376,26 @@ export const requireEmailVerified = async (req: Request, res: Response, next: Ne
     next(error);
   }
 };
+
+/**
+ * Restricts the support inbox to members flagged as support agents. Owners always qualify, so a
+ * project can never lock itself out of its own conversations. Must run after requireAuth.
+ */
+export const requireSupportAgent = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const auth = res.locals.auth as AuthResponse;
+
+    if (auth.type !== 'jwt' || !auth.userId || !auth.projectId) {
+      throw new HttpException(403, 'The inbox is only available to signed-in support agents', ErrorCode.FORBIDDEN);
+    }
+
+    const membership = await MembershipService.getMembership(auth.userId, auth.projectId);
+    if (!membership || (membership.role !== 'OWNER' && !membership.supportAgent)) {
+      throw new HttpException(403, 'You are not a support agent on this project', ErrorCode.FORBIDDEN);
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};

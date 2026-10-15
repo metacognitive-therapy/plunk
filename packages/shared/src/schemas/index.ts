@@ -801,4 +801,7 @@ export const MembershipSchemas = {
   updateRole: z.object({
     role: z.enum(['ADMIN', 'MEMBER']),
   }),
+  setSupportAgent: z.object({
+    supportAgent: z.boolean(),
+  }),
 } as const;

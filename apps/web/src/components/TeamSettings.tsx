@@ -30,6 +30,7 @@ import {
   SelectItemWithDescription,
   SelectTrigger,
   SelectValue,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -50,6 +51,7 @@ interface Member {
   userId: string;
   email: string;
   role: 'OWNER' | 'ADMIN' | 'MEMBER';
+  supportAgent: boolean;
 }
 
 interface TeamSettingsProps {
@@ -158,6 +160,25 @@ export function TeamSettings({projectId, currentUserRole, currentUserId}: TeamSe
     }
   };
 
+  const handleToggleSupportAgent = async (userId: string, supportAgent: boolean) => {
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await network.fetch<void, typeof MembershipSchemas.setSupportAgent>(
+        'PATCH',
+        `/projects/${projectId}/members/${userId}/support-agent`,
+        {supportAgent},
+      );
+      setSuccess(supportAgent ? 'Inbox access granted' : 'Inbox access removed');
+      await mutate();
+
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Couldn’t change inbox access. Try again.');
+    }
+  };
+
   const getRoleBadgeVariant = (role: Member['role']) => {
     switch (role) {
       case 'OWNER':
@@ -230,6 +251,9 @@ export function TeamSettings({projectId, currentUserRole, currentUserId}: TeamSe
                 <TableRow>
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead title="Support agents can read and answer conversations in the Inbox. Owners always can.">
+                    Inbox
+                  </TableHead>
                   <TableHead className="w-[50px]" />
                 </TableRow>
               </TableHeader>
@@ -270,6 +294,14 @@ export function TeamSettings({projectId, currentUserRole, currentUserId}: TeamSe
                             {member.role.toLowerCase()}
                           </Badge>
                         )}
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={isOwner || member.supportAgent}
+                          disabled={!canManageMembers || isOwner}
+                          aria-label={`Inbox access for ${member.email}`}
+                          onCheckedChange={checked => handleToggleSupportAgent(member.userId, checked)}
+                        />
                       </TableCell>
                       <TableCell>
                         {canModify && (

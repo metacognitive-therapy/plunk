@@ -40,7 +40,17 @@ import {
 } from '@plunk/ui';
 import {AnimatePresence, motion} from 'framer-motion';
 import {NextSeo} from 'next-seo';
-import {AlertTriangle, CreditCard, Database, Globe, Mail, Settings as SettingsIcon, Shield, Users} from 'lucide-react';
+import {
+  AlertTriangle,
+  CreditCard,
+  Database,
+  Globe,
+  Mail,
+  MessageSquare,
+  Settings as SettingsIcon,
+  Shield,
+  Users,
+} from 'lucide-react';
 import type {z} from 'zod';
 import {useRouter} from 'next/router';
 import {DashboardLayout} from '../../components/DashboardLayout';
@@ -54,6 +64,7 @@ import {BrandingSettings} from '../../components/BrandingSettings';
 import {SmtpSettings} from '../../components/SmtpSettings';
 import {DataManagementSettings} from '../../components/DataManagementSettings';
 import {TeamSettings} from '../../components/TeamSettings';
+import {MessengerSettings} from '../../components/MessengerSettings';
 import {SecuritySettings} from '../../components/SecuritySettings';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
 import {network} from '../../lib/network';
@@ -63,7 +74,7 @@ import {useUser} from '../../lib/hooks/useUser';
 import {useProjectSecurity} from '../../lib/hooks/useProjectSecurity';
 import useSWR from 'swr';
 
-type TabId = 'general' | 'billing' | 'domains' | 'smtp' | 'data' | 'team' | 'security';
+type TabId = 'general' | 'billing' | 'domains' | 'smtp' | 'data' | 'team' | 'security' | 'messenger';
 
 interface Tab {
   id: TabId;
@@ -77,6 +88,7 @@ const buildTabs = (options: {billingEnabled: boolean; smtpEnabled: boolean}): Ta
   const allTabs: Tab[] = [
     {id: 'general', label: 'General', icon: SettingsIcon},
     {id: 'team', label: 'Team', icon: Users},
+    {id: 'messenger', label: 'Messenger', icon: MessageSquare},
     {id: 'security', label: 'Security', icon: Shield},
     {id: 'billing', label: 'Billing', icon: CreditCard, condition: billingEnabled},
     {id: 'domains', label: 'Domains', icon: Globe},
@@ -813,6 +825,10 @@ export default function Settings() {
                 currentUserRole={currentUserRole}
                 currentUserId={user?.id || ''}
               />
+            </TabsContent>
+
+            <TabsContent value="messenger">
+              <MessengerSettings canEdit={currentUserRole !== 'MEMBER'} />
             </TabsContent>
 
             {/* Security Tab */}

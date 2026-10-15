@@ -42,6 +42,7 @@ COPY apps/smtp/package.json ./apps/smtp/
 COPY apps/web/package.json ./apps/web/
 COPY apps/landing/package.json ./apps/landing/
 COPY apps/wiki/package.json ./apps/wiki/
+COPY apps/widget/package.json ./apps/widget/
 COPY packages/db/package.json ./packages/db/
 COPY packages/ui/package.json ./packages/ui/
 COPY packages/shared/package.json ./packages/shared/
@@ -161,9 +162,10 @@ RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/app/.turbo,tar
     NEXT_PUBLIC_WIKI_URI=${WIKI_URI} \
     yarn turbo build --filter="@plunk/*"
 
-# Step 2: Copy and build API (backend services)
+# Step 2: Copy and build API (backend services) and the messenger widget the API serves
 COPY apps/api ./apps/api
 COPY apps/smtp ./apps/smtp
+COPY apps/widget ./apps/widget
 RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/app/.turbo,target=/app/.turbo,sharing=locked \
     API_URI=${API_URI} \
     DASHBOARD_URI=${DASHBOARD_URI} \
@@ -173,7 +175,7 @@ RUN --mount=type=cache,id=s/60099118-888d-484a-bcd6-7c1c38bd0fb0-/app/.turbo,tar
     NEXT_PUBLIC_DASHBOARD_URI=${DASHBOARD_URI} \
     NEXT_PUBLIC_LANDING_URI=${LANDING_URI} \
     NEXT_PUBLIC_WIKI_URI=${WIKI_URI} \
-    yarn turbo build --filter=api --filter=smtp
+    yarn turbo build --filter=api --filter=smtp --filter=widget
 
 # Step 3: Copy and build Wiki (includes API doc generation)
 COPY apps/wiki ./apps/wiki
@@ -276,6 +278,7 @@ RUN mkdir -p /var/log/nginx /var/lib/nginx /run/nginx && \
 # Copy built API and SMTP services
 COPY --from=builder --chown=plunk:nodejs /app/apps/api/dist ./apps/api/dist
 COPY --from=builder --chown=plunk:nodejs /app/apps/smtp/dist ./apps/smtp/dist
+COPY --from=builder --chown=plunk:nodejs /app/apps/widget/dist ./apps/widget/dist
 
 # Copy ONLY production dependencies for API/SMTP (excludes dev deps and frontend packages)
 COPY --from=prod-deps --chown=plunk:nodejs /app/node_modules ./node_modules

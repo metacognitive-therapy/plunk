@@ -1,11 +1,12 @@
 import {Controller, Delete, Get, Middleware, Patch, Post} from '@overnightjs/core';
 import type {NextFunction, Request, Response} from 'express';
-import {MembershipSchemas, UtilitySchemas} from '@plunk/shared';
+import {MembershipSchemas, MessengerSettingsSchemas, UtilitySchemas} from '@plunk/shared';
 
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {requireAuth, requireEmailVerified} from '../middleware/auth.js';
 import {MembershipService} from '../services/MembershipService.js';
+import {MessengerSettingsService} from '../services/MessengerSettingsService.js';
 import {SecurityService} from '../services/SecurityService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
@@ -260,5 +261,60 @@ export class Projects {
       success: true,
       data: {message: 'Member removed successfully'},
     });
+  }
+
+  /**
+   * Toggle whether a member can work the support inbox. Owners always can, whatever the flag says.
+   * PATCH /projects/:id/members/:userId/support-agent
+   */
+  @Patch(':id/members/:userId/support-agent')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  private async setSupportAgent(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse({id: req.params.id});
+    const {id: userId} = UtilitySchemas.id.parse({id: req.params.userId});
+    const {supportAgent} = MembershipSchemas.setSupportAgent.parse(req.body);
+
+    await MembershipService.requireAdminAccess(auth.userId!, id);
+    const membership = await MembershipService.setSupportAgent(id, userId, supportAgent);
+
+    return res.json({success: true, data: {userId, supportAgent: membership.supportAgent}});
+  }
+
+  /**
+   * GET /projects/:id/messenger
+   */
+  @Get(':id/messenger')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  private async getMessengerSettings(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+
+    await MembershipService.requireAccess(auth.userId!, id);
+    const data = await MessengerSettingsService.get(id);
+
+    return res.json({success: true, data});
+  }
+
+  /**
+   * PATCH /projects/:id/messenger
+   */
+  @Patch(':id/messenger')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  private async updateMessengerSettings(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const patch = MessengerSettingsSchemas.update.parse(req.body);
+
+    await MembershipService.requireAdminAccess(auth.userId!, id);
+    const data = await MessengerSettingsService.update(id, {
+      ...patch,
+      allowedOrigins: patch.allowedOrigins ? [...new Set(patch.allowedOrigins)] : undefined,
+    });
+
+    return res.json({success: true, data});
   }
 }
