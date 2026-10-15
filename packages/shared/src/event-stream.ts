@@ -4,8 +4,26 @@
  * because the messenger bundles it and must stay small.
  */
 
+/** The response of one connection attempt: its status and, when it opened, the body as text chunks. */
+export interface EventStreamResponse {
+  status: number;
+  ok: boolean;
+  chunks: AsyncIterable<string> | null;
+}
+
+export interface EventStreamRequest {
+  url: string;
+  headers: Record<string, string>;
+  credentials?: 'include' | 'omit' | 'same-origin';
+  signal: AbortSignal;
+}
+
+/** Opens one connection. The default uses streaming fetch; React Native, whose fetch does not stream, passes one built on XMLHttpRequest. */
+export type EventStreamTransport = (request: EventStreamRequest) => Promise<EventStreamResponse>;
+
 export interface EventStreamOptions {
   url: string;
+  transport?: EventStreamTransport;
   headers?: () => Record<string, string> | Promise<Record<string, string>>;
   credentials?: 'include' | 'omit' | 'same-origin';
   onEvent: (data: string) => void;
@@ -29,7 +47,35 @@ export interface EventStream {
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_BACKOFF_MS = 30_000;
 
+export const fetchTransport: EventStreamTransport = async request => {
+  const response = await fetch(request.url, {
+    headers: request.headers,
+    credentials: request.credentials,
+    cache: 'no-store',
+    signal: request.signal,
+  });
+  const body = response.ok ? response.body : null;
+  return {
+    status: response.status,
+    ok: response.ok,
+    chunks: body
+      ? (async function* () {
+          const reader = body.getReader();
+          const decoder = new TextDecoder();
+          for (;;) {
+            const {done, value} = await reader.read();
+            if (done) {
+              return;
+            }
+            yield decoder.decode(value, {stream: true});
+          }
+        })()
+      : null,
+  };
+};
+
 export function openEventStream(options: EventStreamOptions): EventStream {
+  const transport = options.transport ?? fetchTransport;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
 
@@ -67,10 +113,10 @@ export function openEventStream(options: EventStreamOptions): EventStream {
     let opened = false;
     try {
       resetIdle();
-      const response = await fetch(options.url, {
+      const response = await transport({
+        url: options.url,
         headers: {Accept: 'text/event-stream', ...(await options.headers?.())},
         credentials: options.credentials,
-        cache: 'no-store',
         signal,
       });
 
@@ -82,7 +128,7 @@ export function openEventStream(options: EventStreamOptions): EventStream {
         options.onRefused?.(response.status);
         return 'stop';
       }
-      if (!response.ok || !response.body) {
+      if (!response.ok || !response.chunks) {
         return 'retry';
       }
 
@@ -90,16 +136,10 @@ export function openEventStream(options: EventStreamOptions): EventStream {
       attempt = 0;
       options.onOpen?.();
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
       let buffer = '';
-      for (;;) {
-        const {done, value} = await reader.read();
-        if (done) {
-          break;
-        }
+      for await (const chunk of response.chunks) {
         resetIdle();
-        buffer += decoder.decode(value, {stream: true});
+        buffer += chunk;
         let boundary = buffer.search(/\r?\n\r?\n/);
         while (boundary !== -1) {
           const block = buffer.slice(0, boundary);

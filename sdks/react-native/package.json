@@ -1,0 +1,30 @@
+{
+  "name": "@plunk/react-native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The live chat messenger for React Native apps. JavaScript only, no native code.",
+  "license": "AGPL-3.0",
+  "main": "dist/index.js",
+  "react-native": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p .",
+    "pack:example": "npm run build && npm pack --pack-destination example"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-native": ">=0.72"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "esbuild": "^0.27.0",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "typescript": "~5.9.3"
+  }
+}
