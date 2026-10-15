@@ -9,12 +9,12 @@ export const VISITOR_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 export type FrameMessage =
   | {source: typeof PROTOCOL; type: 'ready'}
   | {source: typeof PROTOCOL; type: 'booted'; appearance: MessengerAppearance}
-  | {source: typeof PROTOCOL; type: 'failed'}
+  | {source: typeof PROTOCOL; type: 'failed'; reason?: string}
   | {source: typeof PROTOCOL; type: 'unread'; count: number}
   | {source: typeof PROTOCOL; type: 'close'};
 
 export type HostMessage =
-  | {source: typeof PROTOCOL; type: 'init'; visitorId: string}
+  | {source: typeof PROTOCOL; type: 'init'; visitorId: string; userToken?: string}
   | {source: typeof PROTOCOL; type: 'opened'}
   | {source: typeof PROTOCOL; type: 'closed'}
   | {source: typeof PROTOCOL; type: 'update'};

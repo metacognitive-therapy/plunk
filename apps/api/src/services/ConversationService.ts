@@ -106,7 +106,7 @@ export class ConversationService {
    */
   public static async boot(
     publicKey: string,
-    input: {visitorId: string; parentOrigin?: string},
+    input: {visitorId: string; parentOrigin?: string; userToken?: string},
     requestOrigin: string | undefined,
   ): Promise<MessengerBootResponse> {
     const project = await ProjectService.public(publicKey);
@@ -136,18 +136,25 @@ export class ConversationService {
       }
     }
 
-    const identity = await prisma.contactIdentity.findUnique({
-      where: {
-        projectId_type_value: {projectId: project.id, type: CONTACT_IDENTITY_TYPES.ANONYMOUS_ID, value: input.visitorId},
-      },
-      select: {contactId: true},
-    });
+    /* A refused user token fails the boot: falling back to an anonymous session would hide the
+    signed-in user's history behind an error nobody sees. */
+    const contact = input.userToken
+      ? await MessengerContactService.identifyVisitor(project.id, input.visitorId, input.userToken)
+      : null;
+    const identity = contact
+      ? null
+      : await prisma.contactIdentity.findUnique({
+          where: {
+            projectId_type_value: {projectId: project.id, type: CONTACT_IDENTITY_TYPES.ANONYMOUS_ID, value: input.visitorId},
+          },
+          select: {contactId: true},
+        });
 
     const {token, expiresAt} = MessengerSessionService.sign({
       projectId: project.id,
       visitorId: input.visitorId,
-      contactId: identity?.contactId ?? null,
-      verified: false,
+      contactId: contact?.id ?? identity?.contactId ?? null,
+      verified: contact !== null,
     });
 
     const brand = resolveBrand(project);
@@ -158,8 +165,14 @@ export class ConversationService {
       appearance: await MessengerSettingsService.appearance(project.id, settings),
       availability: MessengerSettingsService.availability(settings),
       serverTime: new Date().toISOString(),
-      visitor: {hasEmail: await MessengerContactService.hasEmail(project.id, input.visitorId)},
-      turnstileSiteKey: TurnstileService.siteKey(),
+      visitor: {
+        hasEmail: contact
+          ? contact.email !== null
+          : await MessengerContactService.hasEmail(project.id, input.visitorId),
+        verified: contact !== null,
+      },
+      /* A verified visitor was vouched for by the customer's backend, so isn't challenged. */
+      turnstileSiteKey: contact ? null : TurnstileService.siteKey(),
     };
   }
 
@@ -171,7 +184,9 @@ export class ConversationService {
         projectId: session.projectId,
         contactId,
         channel: 'WIDGET',
-        originVisitorId: session.visitorId,
+        /* A signed-in visitor's chat belongs to their contact, not to this browser: left unset, an
+        anonymous session in the same browser after sign-out can't list it. */
+        originVisitorId: session.verified ? null : session.visitorId,
       },
     });
     await this.postMessage(conversation, {authorType: 'CONTACT', body, source: 'WIDGET'});
@@ -186,7 +201,7 @@ export class ConversationService {
 
   public static async listForSession(session: MessengerSession): Promise<MessengerConversationSummary[]> {
     const conversations = await prisma.conversation.findMany({
-      where: {projectId: session.projectId, originVisitorId: session.visitorId},
+      where: MessengerContactService.conversationScope(session),
       orderBy: {lastMessageAt: 'desc'},
       take: MESSENGER_HISTORY_LIMIT,
     });
@@ -652,7 +667,7 @@ export class ConversationService {
   }
 
   private static async publishTransition(
-    conversation: Pick<Conversation, 'id' | 'projectId' | 'originVisitorId'>,
+    conversation: Pick<Conversation, 'id' | 'projectId' | 'originVisitorId' | 'contactId'>,
     line: MessageWithAuthor,
     status: ConversationStatus | null,
   ): Promise<void> {
@@ -891,15 +906,19 @@ export class ConversationService {
     return RealtimeHub.publish(Keys.Realtime.project(projectId), event);
   }
 
-  /* Keyed by the visitor id that started the conversation, the same scope the messenger API reads
-  by, so a stream never carries another visitor's conversation. */
+  /* Keyed the same two ways the messenger API reads by: the visitor id that started the
+  conversation, and the contact, which only verified sessions listen on. A stream never carries
+  another visitor's conversation. */
   private static async publishToVisitor(
-    conversation: Pick<Conversation, 'projectId' | 'originVisitorId'>,
+    conversation: Pick<Conversation, 'projectId' | 'originVisitorId' | 'contactId'>,
     event: MessengerStreamEvent,
   ): Promise<void> {
-    if (conversation.originVisitorId) {
-      await RealtimeHub.publish(Keys.Realtime.visitor(conversation.projectId, conversation.originVisitorId), event);
-    }
+    await Promise.all([
+      conversation.originVisitorId
+        ? RealtimeHub.publish(Keys.Realtime.visitor(conversation.projectId, conversation.originVisitorId), event)
+        : undefined,
+      RealtimeHub.publish(Keys.Realtime.contact(conversation.projectId, conversation.contactId), event),
+    ]);
   }
 
   private static async claimTypingSlot(conversationId: string, actor: string): Promise<boolean> {
@@ -910,14 +929,14 @@ export class ConversationService {
     }
   }
 
-  /* Scoped by the session's visitor id, not by contact: a lead later merged by email must not
-  expose conversations started on someone else's device. */
+  /* Scoped by the session's visitor id unless the session is verified: a lead later merged by
+  email must not expose conversations started on someone else's device. */
   private static async requireSessionConversation(
     session: MessengerSession,
     conversationId: string,
   ): Promise<Conversation> {
     const conversation = await prisma.conversation.findFirst({
-      where: {id: conversationId, projectId: session.projectId, originVisitorId: session.visitorId},
+      where: {id: conversationId, ...MessengerContactService.conversationScope(session)},
     });
     if (!conversation) {
       throw new NotFound('Conversation', conversationId);

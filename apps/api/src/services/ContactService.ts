@@ -621,8 +621,9 @@ export class ContactService {
    * 3. Not found by external id, found by email, and that contact's `externalId` is a
    *    DIFFERENT non-null value -> REFUSE with a 409. Silently moving a subscription between two
    *    identified people is never correct.
-   * 4. Found by neither -> create. Subscription state comes from the request; absent that, the
-   *    existing default (subscribed) applies.
+   * 4. Found by neither -> create. Subscription state comes from the request; absent that,
+   *    `subscribedOnCreate` (subscribed unless the caller says otherwise, as the messenger does,
+   *    since chatting is not consent to marketing).
    *
    * `upsert`'s find-then-write is not atomic, and neither is this: two concurrent identifies for
    * a project-new email or external id can both miss the initial lookup and then race on the
@@ -639,8 +640,9 @@ export class ContactService {
     subscribed?: boolean,
     email?: string,
     tagNames?: string[],
+    subscribedOnCreate = true,
   ): Promise<Contact> {
-    return this.identifyAttempt(projectId, externalId, data, subscribed, email, tagNames, true);
+    return this.identifyAttempt(projectId, externalId, data, subscribed, email, tagNames, subscribedOnCreate, true);
   }
 
   private static async identifyAttempt(
@@ -650,6 +652,7 @@ export class ContactService {
     subscribed: boolean | undefined,
     email: string | undefined,
     tagNames: string[] | undefined,
+    subscribedOnCreate: boolean,
     allowRetry: boolean,
   ): Promise<Contact> {
     // normalizeEmail MUST run on every path accepting an email (TECH-STRATEGY.md non-negotiable)
@@ -775,7 +778,7 @@ export class ContactService {
             externalId,
             email: normalizedEmail ?? null,
             data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
-            subscribed: subscribed ?? true,
+            subscribed: subscribed ?? subscribedOnCreate,
           },
         });
       }
@@ -805,7 +808,7 @@ export class ContactService {
       if (allowRetry && error instanceof Error && 'code' in error && error.code === 'P2002') {
         // Concurrent identify raced us on (projectId, email) or (projectId, externalId) --
         // re-read and retry once (TECH-STRATEGY.md finding 4) rather than surfacing a 500.
-        return this.identifyAttempt(projectId, externalId, data, subscribed, email, tagNames, false);
+        return this.identifyAttempt(projectId, externalId, data, subscribed, email, tagNames, subscribedOnCreate, false);
       }
       if (error instanceof HttpException) {
         throw error;

@@ -217,10 +217,10 @@ describe('Live chat email capture', () => {
     const chat = await visitorWithConversation(project.public);
     const bootAgain = () => boot(project.public, {visitorId: chat.visitor, parentOrigin: ALLOWED}, API_ORIGIN);
 
-    expect((await bootAgain()).body.data.visitor).toEqual({hasEmail: false});
+    expect((await bootAgain()).body.data.visitor).toEqual({hasEmail: false, verified: false});
     await captureEmail(chat.token, {email: 'returning@example.com', conversationId: chat.conversationId});
     const res = await bootAgain();
-    expect(res.body.data.visitor).toEqual({hasEmail: true});
+    expect(res.body.data.visitor).toEqual({hasEmail: true, verified: false});
     expect(JSON.stringify(res.body)).not.toContain('returning@example.com');
   });
 

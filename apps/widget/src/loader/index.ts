@@ -15,6 +15,8 @@ type Command = 'boot' | 'show' | 'hide' | 'update' | 'shutdown';
 
 interface BootOptions {
   key?: string;
+  /* A JWT the site's backend signs with the messenger's identity secret, for a signed-in user. */
+  userToken?: string;
 }
 
 interface PlunkChatFunction {
@@ -67,6 +69,7 @@ interface Mounted {
 }
 
 let mounted: Mounted | null = null;
+let bootedWith: BootOptions = {};
 let booted = false;
 let open = false;
 let openWhenBooted = false;
@@ -155,7 +158,7 @@ function onMessage(event: MessageEvent): void {
   const message = event.data as FrameMessage;
   switch (message.type) {
     case 'ready':
-      post({type: 'init', visitorId: visitorId()});
+      post({type: 'init', visitorId: visitorId(), userToken: bootedWith.userToken});
       break;
     case 'booted':
       clearTimeout(bootTimer);
@@ -165,6 +168,9 @@ function onMessage(event: MessageEvent): void {
       setOpen(openWhenBooted);
       break;
     case 'failed':
+      if (message.reason) {
+        console.warn(`[PlunkChat] The messenger could not start: ${message.reason}`);
+      }
       teardown();
       break;
     case 'unread':
@@ -178,9 +184,18 @@ function onMessage(event: MessageEvent): void {
 }
 
 function boot(options: BootOptions = {}): void {
-  if (mounted || !options.key) {
+  if (!options.key) {
     return;
   }
+  /* Booting again as someone else (a user signing in after chatting anonymously) remounts the
+  frame with the same visitor id, so the chats started before signing in come along. */
+  if (mounted) {
+    if (options.key === bootedWith.key && options.userToken === bootedWith.userToken) {
+      return;
+    }
+    teardown();
+  }
+  bootedWith = {key: options.key, userToken: options.userToken};
 
   const host = document.createElement('div');
   host.setAttribute('data-plunk-chat', '');

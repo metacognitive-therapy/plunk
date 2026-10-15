@@ -63,6 +63,15 @@ export const MessengerSchemas = {
     visitorId: z.string().regex(VISITOR_ID_PATTERN, 'Invalid visitor id'),
     /* The embedding page's origin as seen by the loader's postMessage; absent when standalone. */
     parentOrigin: z.string().max(300).optional(),
+    /* A JWT signed by the customer's backend with the project's identity secret (identified mode). */
+    userToken: z.string().min(1).max(4096).optional(),
+  }),
+  /* The claims of a user token, checked after its signature. */
+  userTokenClaims: z.object({
+    sub: z.string().min(1).max(255),
+    email: z.string().trim().toLowerCase().email().max(254).optional(),
+    name: z.string().trim().min(1).max(200).optional(),
+    exp: z.number().int(),
   }),
   startConversation: z.object({
     body: messageBody,
@@ -145,6 +154,8 @@ export const MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES = 5;
 export const MESSENGER_EMAIL_DELAY_MAX_MINUTES = 1440;
 export const MESSENGER_RETENTION_DEFAULT_MONTHS = 24;
 export const MESSENGER_RETENTION_MAX_MONTHS = 120;
+/** A user token may be valid for at most this long, so a leaked one is short-lived. */
+export const MESSENGER_USER_TOKEN_MAX_TTL_SECONDS = 60 * 60;
 const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 export const MessengerSettingsSchemas = {

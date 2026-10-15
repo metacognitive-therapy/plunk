@@ -39,12 +39,14 @@ interface AppProps {
   publicKey: string;
   visitorId: string;
   bridge?: HostBridge;
+  /* Signed by the customer's backend; identifies the visitor as one of their users. */
+  userToken?: string;
 }
 
-export function App({publicKey, visitorId, bridge}: AppProps) {
+export function App({publicKey, visitorId, bridge, userToken}: AppProps) {
   const api = useMemo(
-    () => new MessengerApi(publicKey, visitorId, bridge?.parentOrigin),
-    [publicKey, visitorId, bridge],
+    () => new MessengerApi(publicKey, visitorId, bridge?.parentOrigin, userToken),
+    [publicKey, visitorId, bridge, userToken],
   );
   const [boot, setBoot] = useState<MessengerBootResponse | null>(null);
   const [failed, setFailed] = useState(false);
@@ -69,9 +71,9 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
         setBoot(result);
         bridge?.post({type: 'booted', appearance: result.appearance});
       })
-      .catch(() => {
+      .catch((caught: unknown) => {
         setFailed(true);
-        bridge?.post({type: 'failed'});
+        bridge?.post({type: 'failed', reason: caught instanceof MessengerApiError ? caught.message : undefined});
       });
   }, [api, publicKey, bridge]);
 
