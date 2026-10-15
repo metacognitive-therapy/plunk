@@ -32,6 +32,8 @@ model User {
   inboxSound      Boolean @default(true)
   // Push notifications show only who wrote when false, so message text stays off lock screens.
   pushPreview     Boolean @default(true)
+  // Emailed when a visitor message sits unread past the project's delay.
+  inboxEmail      Boolean @default(true)
 
   // Relations
   memberships           Membership[]
@@ -255,6 +257,10 @@ model MessengerSettings {
   replyFromEmail    String?
   emailDelayMinutes Int     @default(5)
 
+  // Slack incoming webhook (https://hooks.slack.com/services/...) that new conversations and
+  // replies on unassigned ones are posted to. A credential: never sent to the dashboard.
+  slackWebhookUrl String?
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -314,6 +320,9 @@ model Conversation {
   lastContactMessageAt  DateTime?
   contactLastReadAt     DateTime?
   firstResponseAt       DateTime?
+  // Set when agents were emailed about unread visitor messages; cleared when an agent replies or
+  // reads, so each burst of visitor messages emails agents at most once.
+  agentsEmailedAt       DateTime?
   closedAt              DateTime?
 
   messages ConversationMessage[]

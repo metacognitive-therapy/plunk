@@ -14,6 +14,11 @@ const TOGGLES: {key: keyof AgentNotificationPrefs; label: string; hint: string}[
   {key: 'inboxTitleCount', label: 'Count in the tab title', hint: 'So you see new messages from another tab.'},
   {key: 'inboxSound', label: 'Sound', hint: 'A short chime when a visitor writes to you, or to the team while unassigned.'},
   {
+    key: 'inboxEmail',
+    label: 'Email me about unread messages',
+    hint: 'When a visitor waits longer than the project’s email delay and no one has read their message.',
+  },
+  {
     key: 'pushPreview',
     label: 'Show message text in push notifications',
     hint: 'Turn off to show only that a message arrived, for example on a shared screen or lock screen.',

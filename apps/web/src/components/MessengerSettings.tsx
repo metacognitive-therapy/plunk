@@ -6,6 +6,7 @@ import {
   MESSENGER_TEAM_MAX,
   type MessengerSettingsSchemas,
   type ProfileSchemas,
+  isSlackWebhookUrl,
   normalizeOrigin,
 } from '@plunk/shared';
 import type {MemberWithEmail, MessengerLauncherPositionValue, MessengerSettingsData} from '@plunk/types';
@@ -355,6 +356,9 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
               disabled={!canEdit}
               onChange={event => setEmailDelay(event.target.value)}
             />
+            <p className="text-sm text-neutral-500">
+              Also how long a visitor’s message waits unread before the team is emailed.
+            </p>
             {!delayValid && (
               <p className="text-sm text-red-600">Use a whole number from 1 to {MESSENGER_EMAIL_DELAY_MAX_MINUTES}.</p>
             )}
@@ -370,6 +374,13 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
           )}
         </CardContent>
       </Card>
+
+      <SlackCard
+        projectId={activeProject.id}
+        connected={saved?.slackConnected ?? false}
+        canEdit={canEdit}
+        onChange={() => void mutate()}
+      />
 
       {canEdit && <StickySaveBar status={saving ? 'saving' : dirty ? 'dirty' : 'idle'} onSave={save} />}
 
@@ -462,6 +473,101 @@ function ProfileNameCard({onSaved}: {onSaved: () => void}) {
         <Button onClick={save} disabled={saving || (user?.name ?? '') === name.trim()}>
           {saving ? 'Saving…' : 'Save name'}
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface SlackCardProps {
+  projectId: string;
+  connected: boolean;
+  canEdit: boolean;
+  onChange: () => void;
+}
+
+function SlackCard({projectId, connected, canEdit, onChange}: SlackCardProps) {
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const typed = url.trim();
+  const typedValid = isSlackWebhookUrl(typed);
+
+  const run = async (action: () => Promise<unknown>, success: string) => {
+    setBusy(true);
+    try {
+      await action();
+      toast.success(success);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Something went wrong. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveUrl = (slackWebhookUrl: string | null, success: string) =>
+    run(async () => {
+      await network.fetch<void, typeof MessengerSettingsSchemas.update>('PATCH', `/projects/${projectId}/messenger`, {
+        slackWebhookUrl,
+      });
+      setUrl('');
+      onChange();
+    }, success);
+
+  const sendTest = () =>
+    run(
+      () =>
+        network.fetch<void, typeof MessengerSettingsSchemas.slackTest>(
+          'POST',
+          `/projects/${projectId}/messenger/slack/test`,
+          typed ? {url: typed} : {},
+        ),
+      'Test message sent. Check the channel.',
+    );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Slack</CardTitle>
+        <CardDescription>
+          Post new conversations, and visitor replies no one is assigned to, in a Slack channel. Create an incoming
+          webhook for the channel in Slack and paste its URL here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-neutral-700">
+          {connected ? 'Connected. Posts include the start of each message.' : 'Not connected.'}
+        </p>
+        {canEdit && (
+          <>
+            <div className="space-y-1.5">
+              <Label htmlFor="messenger-slack-url">{connected ? 'Replace the webhook URL' : 'Webhook URL'}</Label>
+              <Input
+                id="messenger-slack-url"
+                type="url"
+                value={url}
+                placeholder="https://hooks.slack.com/services/…"
+                autoComplete="off"
+                onChange={event => setUrl(event.target.value)}
+                className="font-mono"
+              />
+              {typed && !typedValid && (
+                <p className="text-sm text-red-600">Use a Slack incoming webhook URL, starting with https://hooks.slack.com/services/</p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void saveUrl(typed, 'Slack webhook saved')} disabled={busy || !typedValid}>
+                Save webhook
+              </Button>
+              <Button variant="outline" onClick={() => void sendTest()} disabled={busy || (typed ? !typedValid : !connected)}>
+                Send a test
+              </Button>
+              {connected && (
+                <Button variant="ghost" onClick={() => void saveUrl(null, 'Slack disconnected')} disabled={busy}>
+                  Disconnect
+                </Button>
+              )}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

@@ -323,14 +323,14 @@ describe('Agent notification settings', () => {
   it('reads and updates the agent’s own toggles', async () => {
     const {owner, project} = await messengerProject();
     const read = await request(app).get('/users/@me/notifications').set(asAgent(owner.id, project.id)).expect(200);
-    expect(read.body.data).toEqual({inboxBadge: true, inboxTitleCount: true, inboxSound: true, pushPreview: true});
+    expect(read.body.data).toEqual({inboxBadge: true, inboxTitleCount: true, inboxSound: true, pushPreview: true, inboxEmail: true});
 
     const updated = await request(app)
       .patch('/users/@me/notifications')
       .set(asAgent(owner.id, project.id))
-      .send({inboxSound: false, pushPreview: false})
+      .send({inboxSound: false, pushPreview: false, inboxEmail: false})
       .expect(200);
-    expect(updated.body.data).toEqual({inboxBadge: true, inboxTitleCount: true, inboxSound: false, pushPreview: false});
+    expect(updated.body.data).toEqual({inboxBadge: true, inboxTitleCount: true, inboxSound: false, pushPreview: false, inboxEmail: false});
 
     await request(app)
       .patch('/users/@me/notifications')

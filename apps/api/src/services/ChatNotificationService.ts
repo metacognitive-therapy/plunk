@@ -1,22 +1,19 @@
+import {ChatUnreadEmail, isPlatformEmailEnabled, sendPlatformEmail} from '@plunk/email';
 import type {AgentStreamEvent, ChatNotificationJobData, ChatPushPayload} from '@plunk/types';
+import React from 'react';
 
+import {DASHBOARD_URI} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {ChatEmailService} from './ChatEmailService.js';
 import {ConversationService} from './ConversationService.js';
 import {Keys} from './keys.js';
+import {MessengerSettingsService} from './MessengerSettingsService.js';
 import {ProjectService} from './ProjectService.js';
 import {RealtimeHub} from './RealtimeHub.js';
+import {SlackService} from './SlackService.js';
 import {WebPushService} from './WebPushService.js';
 
-function inboxPath(projectId: string, conversationId: string): string {
-  return `/inbox?${new URLSearchParams({project: projectId, view: 'all', c: conversationId})}`;
-}
-
-function contactLabel(contact: {email: string | null; externalId: string | null; data: unknown}): string {
-  const data = (contact.data ?? {}) as Record<string, unknown>;
-  const name = [data.firstName, data.lastName].filter(part => typeof part === 'string' && part).join(' ');
-  return name || contact.email || contact.externalId || 'A visitor';
-}
+const UNREAD_EMAIL_MAX_MESSAGES = 5;
 
 /**
  * Fans chat notifications out to agents. Runs in the worker, never in the request that wrote the
@@ -24,7 +21,9 @@ function contactLabel(contact: {email: string | null; externalId: string | null;
  * message was written is not notified.
  */
 export class ChatNotificationService {
-  public static async process(job: ChatNotificationJobData): Promise<{notified: number} | {sent: number}> {
+  public static async process(
+    job: ChatNotificationJobData,
+  ): Promise<{notified: number} | {sent: number} | {posted: boolean}> {
     switch (job.type) {
       case 'mention':
         return this.mention(job.messageId);
@@ -32,6 +31,10 @@ export class ChatNotificationService {
         return this.visitorMessage(job.messageId);
       case 'reply_email':
         return ChatEmailService.sendUnread(job.messageId);
+      case 'agent_email':
+        return this.agentEmail(job.messageId);
+      case 'slack':
+        return SlackService.notify(job.messageId);
     }
   }
 
@@ -61,7 +64,7 @@ export class ChatNotificationService {
     await WebPushService.send(recipients, prefs => ({
       title: `${author} mentioned you`,
       body: prefs.pushPreview ? preview : 'Open the note in the Inbox',
-      url: inboxPath(message.projectId, message.conversationId),
+      url: ConversationService.inboxPath(message.projectId, message.conversationId),
       tag: `mention-${message.id}`,
     }));
     return {notified: recipients.length};
@@ -107,7 +110,7 @@ export class ChatNotificationService {
     );
 
     const brand = await ProjectService.brand(conversation.projectId);
-    const sender = contactLabel(conversation.contact);
+    const sender = ConversationService.contactLabel(conversation.contact);
     const file = message.attachments[0];
     const preview = ConversationService.preview(message.body || (file ? `📎 ${file.filename}` : ''));
     await WebPushService.send(
@@ -115,10 +118,117 @@ export class ChatNotificationService {
       (prefs): ChatPushPayload => ({
         title: prefs.pushPreview ? `${sender} · ${brand.name}` : `New message · ${brand.name}`,
         body: prefs.pushPreview ? preview : 'Open the conversation in the Inbox',
-        url: inboxPath(conversation.projectId, conversation.id),
+        url: ConversationService.inboxPath(conversation.projectId, conversation.id),
         tag: `conversation-${conversation.id}`,
       }),
     );
     return {notified: alerted.length};
+  }
+
+  /**
+   * Emails the agents a visitor is waiting on, once the project's delay has passed with no agent
+   * reading or answering. The claim on the conversation makes a burst of messages one email; an
+   * agent reply or read clears it for the next burst.
+   */
+  private static async agentEmail(messageId: string): Promise<{sent: number}> {
+    if (!isPlatformEmailEnabled()) {
+      return {sent: 0};
+    }
+    const message = await prisma.conversationMessage.findUnique({
+      where: {id: messageId},
+      include: {
+        conversation: {
+          select: {
+            id: true,
+            projectId: true,
+            status: true,
+            assigneeId: true,
+            agentsEmailedAt: true,
+            contact: {select: {email: true, externalId: true, data: true}},
+          },
+        },
+      },
+    });
+    if (!message || message.authorType !== 'CONTACT' || message.kind !== 'COMMENT') {
+      return {sent: 0};
+    }
+    const {conversation} = message;
+    if (conversation.status !== 'OPEN' || conversation.agentsEmailedAt) {
+      return {sent: 0};
+    }
+
+    const agentIds = (await ConversationService.agents(conversation.projectId)).map(agent => agent.id);
+    const assignee = conversation.assigneeId && agentIds.includes(conversation.assigneeId) ? conversation.assigneeId : null;
+    const relevant = assignee ? [assignee] : agentIds;
+    if (relevant.length === 0) {
+      return {sent: 0};
+    }
+    const [read, answered, recipients] = await Promise.all([
+      prisma.conversationRead.findFirst({
+        where: {conversationId: conversation.id, userId: {in: relevant}, lastReadAt: {gte: message.createdAt}},
+        select: {userId: true},
+      }),
+      prisma.conversationMessage.findFirst({
+        where: {conversationId: conversation.id, authorType: 'AGENT', kind: 'COMMENT', createdAt: {gt: message.createdAt}},
+        select: {id: true},
+      }),
+      prisma.user.findMany({where: {id: {in: relevant}, inboxEmail: true}, select: {email: true}}),
+    ]);
+    if (read || answered || recipients.length === 0) {
+      return {sent: 0};
+    }
+
+    const {count} = await prisma.conversation.updateMany({
+      where: {id: conversation.id, agentsEmailedAt: null},
+      data: {agentsEmailedAt: new Date()},
+    });
+    if (count === 0) {
+      return {sent: 0};
+    }
+
+    const [lastAnswer, lastRead] = await Promise.all([
+      prisma.conversationMessage.findFirst({
+        where: {conversationId: conversation.id, authorType: 'AGENT', kind: 'COMMENT'},
+        orderBy: {createdAt: 'desc'},
+        select: {createdAt: true},
+      }),
+      prisma.conversationRead.findFirst({
+        where: {conversationId: conversation.id, userId: {in: relevant}},
+        orderBy: {lastReadAt: 'desc'},
+        select: {lastReadAt: true},
+      }),
+    ]);
+    const seenUntil = [lastAnswer?.createdAt, lastRead?.lastReadAt].filter((date): date is Date => Boolean(date));
+    const waiting = await prisma.conversationMessage.findMany({
+      where: {
+        conversationId: conversation.id,
+        authorType: 'CONTACT',
+        kind: 'COMMENT',
+        createdAt: seenUntil.length ? {gt: new Date(Math.max(...seenUntil.map(date => date.getTime())))} : undefined,
+      },
+      orderBy: {createdAt: 'desc'},
+      take: UNREAD_EMAIL_MAX_MESSAGES,
+      include: {attachments: {select: {filename: true}, take: 1}},
+    });
+
+    const [brand, settings] = await Promise.all([
+      ProjectService.brand(conversation.projectId),
+      MessengerSettingsService.get(conversation.projectId),
+    ]);
+    const sender = ConversationService.contactLabel(conversation.contact);
+    const template = React.createElement(ChatUnreadEmail, {
+      sender,
+      messages: waiting
+        .reverse()
+        .map(row => ConversationService.preview(row.body || (row.attachments[0] ? `📎 ${row.attachments[0].filename}` : ''))),
+      minutes: settings.emailDelayMinutes,
+      conversationUrl: `${DASHBOARD_URI}${ConversationService.inboxPath(conversation.projectId, conversation.id)}`,
+      assignedToYou: Boolean(assignee),
+      brand,
+    });
+    await Promise.all(
+      recipients.map(recipient => sendPlatformEmail(recipient.email, `${sender} is waiting for a reply · ${brand.name}`, template)),
+    );
+    return {sent: recipients.length};
   }
 }

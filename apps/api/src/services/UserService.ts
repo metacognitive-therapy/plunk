@@ -7,7 +7,13 @@ import {redis, wrapRedis} from '../database/redis.js';
 
 import {Keys} from './keys.js';
 
-const NOTIFICATION_PREFS = {inboxBadge: true, inboxTitleCount: true, inboxSound: true, pushPreview: true} as const;
+const NOTIFICATION_PREFS = {
+  inboxBadge: true,
+  inboxTitleCount: true,
+  inboxSound: true,
+  pushPreview: true,
+  inboxEmail: true,
+} as const;
 
 /**
  * Extract base domain from URL for cookie sharing across subdomains

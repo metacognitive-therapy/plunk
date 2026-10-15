@@ -20,6 +20,11 @@ const DEFAULT_SETTINGS: MessengerSettingsData = {
   replyDomain: null,
   replyFromEmail: null,
   emailDelayMinutes: MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES,
+  slackConnected: false,
+};
+
+export type MessengerSettingsPatch = Partial<Omit<MessengerSettingsData, 'slackConnected'>> & {
+  slackWebhookUrl?: string | null;
 };
 
 export class MessengerSettingsService {
@@ -38,7 +43,7 @@ export class MessengerSettingsService {
     return cached;
   }
 
-  public static async update(projectId: string, patch: Partial<MessengerSettingsData>): Promise<MessengerSettingsData> {
+  public static async update(projectId: string, patch: MessengerSettingsPatch): Promise<MessengerSettingsData> {
     if (patch.teamUserIds) {
       patch.teamUserIds = [...new Set(patch.teamUserIds)];
       const agents = await this.supportAgentIds(projectId, patch.teamUserIds);
@@ -95,6 +100,12 @@ export class MessengerSettingsService {
     };
   }
 
+  /** The saved webhook URL. Read uncached and only where a post is about to be made. */
+  public static async slackWebhookUrl(projectId: string): Promise<string | null> {
+    const row = await prisma.messengerSettings.findUnique({where: {projectId}, select: {slackWebhookUrl: true}});
+    return row?.slackWebhookUrl ?? null;
+  }
+
   public static isOriginAllowed(settings: MessengerSettingsData, origin: string): boolean {
     return settings.allowedOrigins.includes(origin);
   }
@@ -149,6 +160,7 @@ export class MessengerSettingsService {
       replyDomain: row.replyDomain,
       replyFromEmail: row.replyFromEmail,
       emailDelayMinutes: row.emailDelayMinutes,
+      slackConnected: Boolean(row.slackWebhookUrl),
     };
   }
 }
