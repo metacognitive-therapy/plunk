@@ -12,6 +12,7 @@ import {Loader} from '@plunk/ui';
 import {ActiveProjectProvider} from '../lib/contexts/ActiveProjectProvider';
 import {useBrand} from '../lib/hooks/useBrand';
 import {CommandPalette} from '../components/CommandPalette';
+import {MentionNotifier} from '../components/inbox/MentionNotifier';
 import {useProjects} from '../lib/hooks/useProject';
 import {useUser} from '../lib/hooks/useUser';
 import {network} from '../lib/network';
@@ -187,6 +188,7 @@ function Root(props: AppProps) {
           ) : (
             <ProjectGuard>
               <CommandPalette />
+              <MentionNotifier />
               <App {...props} />
             </ProjectGuard>
           )}

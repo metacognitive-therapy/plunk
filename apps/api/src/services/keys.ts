@@ -134,6 +134,9 @@ export const Keys = {
     visitor(projectId: string, visitorId: string): string {
       return `realtime:visitor:${projectId}:${visitorId}`;
     },
+    user(userId: string): string {
+      return `realtime:user:${userId}`;
+    },
     typing(conversationId: string, actor: string): string {
       return `realtime:typing:${conversationId}:${actor}`;
     },

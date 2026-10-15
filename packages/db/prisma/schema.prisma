@@ -317,6 +317,9 @@ model ConversationMessage {
   // Structured payload of a SYSTEM line (the action and its target); body is its plain-text form.
   meta Json?
 
+  // Support agents @mentioned in a NOTE.
+  mentionedUserIds String[] @default([])
+
   // Timestamps
   createdAt DateTime @default(now())
 

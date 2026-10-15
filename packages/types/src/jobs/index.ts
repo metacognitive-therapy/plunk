@@ -10,3 +10,4 @@ export * from './workflow.js';
 export * from './import.js';
 export * from './maintenance.js';
 export * from './sequence.js';
+export * from './chat.js';

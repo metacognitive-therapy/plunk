@@ -4,12 +4,14 @@ import {Controller, Delete, Get, Middleware, Patch, Post, Put} from '@overnightj
 import {BillingLimitSchemas, ProfileSchemas, ProjectSchemas, UtilitySchemas} from '@plunk/shared';
 import type {NextFunction, Request, Response} from 'express';
 
+import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
 import {DASHBOARD_URI, STRIPE_ENABLED, STRIPE_PRICE_EMAIL_USAGE, STRIPE_PRICE_ONBOARDING} from '../app/constants.js';
 import {stripe} from '../app/stripe.js';
 import {prisma} from '../database/prisma.js';
 import {ErrorCode, HttpException, NotAuthenticated, NotFound} from '../exceptions/index.js';
 import {isAuthenticated, requireEmailVerified} from '../middleware/auth.js';
 import {BillingLimitService} from '../services/BillingLimitService.js';
+import {Keys} from '../services/keys.js';
 import {MembershipService} from '../services/MembershipService.js';
 import {NtfyService} from '../services/NtfyService.js';
 import {SecurityService} from '../services/SecurityService.js';
@@ -19,6 +21,20 @@ import signale from 'signale';
 
 @Controller('users')
 export class Users {
+  public constructor(private readonly streamOptions: EventStreamOptions = {}) {}
+
+  /* Personal notifications for the signed-in user, across every project, such as live chat mentions. */
+  @Get('@me/stream')
+  @Middleware([isAuthenticated, requireEmailVerified])
+  @CatchAsync
+  public async stream(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    if (!auth.userId) {
+      throw new NotAuthenticated();
+    }
+    await serveEventStream(req, res, [Keys.Realtime.user(auth.userId)], this.streamOptions);
+  }
+
   @Get('@me')
   @Middleware([isAuthenticated, requireEmailVerified])
   @CatchAsync

@@ -84,6 +84,8 @@ export interface InboxMessage {
   source: string;
   /** Set on SYSTEM lines only. */
   event: InboxSystemEvent | null;
+  /** Agents @mentioned in a note. */
+  mentions: {id: string; name: string}[];
   createdAt: string;
 }
 
@@ -153,6 +155,18 @@ export type MessengerStreamEvent =
 export type InboxTypingAuthor = {type: 'CONTACT'} | {type: 'AGENT'; userId: string; name: string};
 
 export type InboxReader = {type: 'CONTACT'; readAt: string} | {type: 'AGENT'; userId: string};
+
+/** Pushed to one signed-in user, whichever project they are looking at. */
+export type AgentStreamEvent =
+  | {type: 'ready'}
+  | {
+      type: 'mention';
+      projectId: string;
+      conversationId: string;
+      messageId: string;
+      author: {id: string; name: string};
+      preview: string;
+    };
 
 /** Pushed to every support agent of a project. Per-agent state such as unread is refetched, not pushed. */
 export type InboxStreamEvent =

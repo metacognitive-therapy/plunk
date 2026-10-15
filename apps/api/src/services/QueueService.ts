@@ -12,6 +12,7 @@ import type {
   CampaignStatsSweepJobData,
   CardVerificationJobData,
   CardVerificationSweepJobData,
+  ChatNotificationJobData,
   ContactImportJobData,
   DomainVerificationJobData,
   EmailBodyCleanupJobData,
@@ -309,6 +310,21 @@ export const snoozeSweepQueue = new Queue<SnoozeSweepJobData>('snooze-sweep', {
   },
 });
 
+// Fans chat notifications out to agents. A few retries cover a Redis blip; a notification that
+// still fails is dropped rather than delivered late.
+export const chatNotificationQueue = new Queue<ChatNotificationJobData>('chat-notification', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000,
+    },
+    removeOnComplete: 500,
+    removeOnFail: 1000,
+  },
+});
+
 function emailPriorityFor(sourceType: EmailSourceType): number {
   switch (sourceType) {
     case EmailSourceType.TRANSACTIONAL:
@@ -326,6 +342,14 @@ function emailPriorityFor(sourceType: EmailSourceType): number {
  * Queue Service - Centralized queue management
  */
 export class QueueService {
+  /**
+   * Queue the agent notifications for a chat message. The job id makes a retried request
+   * notify once.
+   */
+  public static async queueChatNotification(data: ChatNotificationJobData): Promise<Job<ChatNotificationJobData>> {
+    return chatNotificationQueue.add(data.type, data, {jobId: `${data.type}-${data.messageId}`});
+  }
+
   /**
    * Add email to queue for sending.
    *

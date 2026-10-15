@@ -35,6 +35,7 @@ import {type MessengerSession, MessengerSessionService} from './MessengerSession
 import {MessengerContactService} from './MessengerContactService.js';
 import {MessengerSettingsService} from './MessengerSettingsService.js';
 import {ProjectService} from './ProjectService.js';
+import {QueueService} from './QueueService.js';
 import {RealtimeHub} from './RealtimeHub.js';
 
 const PREVIEW_LENGTH = 140;
@@ -73,7 +74,10 @@ interface PostMessageInput {
   kind?: MessageKind;
   body: string;
   source: MessageSource;
+  mentionedUserIds?: string[];
 }
+
+type MentionNames = Map<string, string>;
 
 export class ConversationService {
 
@@ -281,13 +285,14 @@ export class ConversationService {
       this.loadThread(conversation.id),
       this.readsFor(userId, [conversation.id]),
     ]);
+    const names = await this.mentionNames(messages);
 
     return {
       ...this.toInboxSummary(conversation, reads.get(conversation.id)),
       channel: conversation.channel,
       contactLastReadAt: conversation.contactLastReadAt?.toISOString() ?? null,
       createdAt: conversation.createdAt.toISOString(),
-      messages: messages.map(message => this.toInboxMessage(message)),
+      messages: messages.map(message => this.toInboxMessage(message, names)),
     };
   }
 
@@ -306,6 +311,41 @@ export class ConversationService {
     });
     await this.markReadByAgent(projectId, userId, conversationId);
     return this.toInboxMessage(message);
+  }
+
+  /**
+   * An internal note: never shown or sent to the visitor, and never a response, so it changes
+   * neither the conversation's state nor its place in the list. Only support agents of the
+   * project can be mentioned.
+   */
+  public static async addNote(
+    projectId: string,
+    userId: string,
+    conversationId: string,
+    input: {body: string; mentionedUserIds: string[]},
+  ): Promise<InboxMessage> {
+    const conversation = await this.requireProjectConversation(projectId, conversationId);
+    const mentionedUserIds = [...new Set(input.mentionedUserIds)];
+    if (mentionedUserIds.length > 0) {
+      const agentIds = new Set((await this.agents(projectId)).map(agent => agent.id));
+      if (mentionedUserIds.some(id => !agentIds.has(id))) {
+        throw new HttpException(400, 'Only support agents of this project can be mentioned', ErrorCode.BAD_REQUEST);
+      }
+    }
+
+    const message = await this.postMessage(conversation, {
+      authorType: 'AGENT',
+      authorUserId: userId,
+      kind: 'NOTE',
+      body: input.body,
+      source: 'DASHBOARD',
+      mentionedUserIds,
+    });
+    await this.markReadByAgent(projectId, userId, conversationId);
+    if (mentionedUserIds.some(id => id !== userId)) {
+      await QueueService.queueChatNotification({type: 'mention', messageId: message.id});
+    }
+    return this.toInboxMessage(message, await this.mentionNames([message]));
   }
 
   public static async markReadByAgent(projectId: string, userId: string, conversationId: string): Promise<void> {
@@ -605,11 +645,14 @@ export class ConversationService {
           kind,
           body: input.body,
           source: input.source,
+          mentionedUserIds: input.mentionedUserIds ?? [],
           createdAt: now,
         },
         include: {authorUser: authorSelect},
       });
-      await tx.conversation.update({where: {id: conversation.id}, data: conversationUpdate});
+      if (Object.keys(conversationUpdate).length > 0) {
+        await tx.conversation.update({where: {id: conversation.id}, data: conversationUpdate});
+      }
       return {message, reopened};
     });
 
@@ -621,7 +664,7 @@ export class ConversationService {
       this.publishToInbox(conversation.projectId, {
         type: 'message',
         conversationId: conversation.id,
-        message: this.toInboxMessage(message),
+        message: this.toInboxMessage(message, await this.mentionNames([message])),
       }),
       kind === 'COMMENT'
         ? this.publishToVisitor(conversation, {
@@ -737,12 +780,12 @@ export class ConversationService {
     return !conversation.contactLastReadAt || conversation.lastMessageAt > conversation.contactLastReadAt;
   }
 
-  private static preview(body: string): string {
+  public static preview(body: string): string {
     const flat = body.replace(/\s+/g, ' ').trim();
     return flat.length > PREVIEW_LENGTH ? `${flat.slice(0, PREVIEW_LENGTH - 1)}…` : flat;
   }
 
-  private static agentName(user: {name: string | null; email: string}): string {
+  public static agentName(user: {name: string | null; email: string}): string {
     return user.name?.trim() || user.email.split('@')[0] || 'Support';
   }
 
@@ -759,7 +802,16 @@ export class ConversationService {
     };
   }
 
-  private static toInboxMessage(message: MessageWithAuthor): InboxMessage {
+  public static async mentionNames(messages: Pick<ConversationMessage, 'mentionedUserIds'>[]): Promise<MentionNames> {
+    const ids = [...new Set(messages.flatMap(message => message.mentionedUserIds))];
+    if (ids.length === 0) {
+      return new Map();
+    }
+    const users = await prisma.user.findMany({where: {id: {in: ids}}, select: {id: true, name: true, email: true}});
+    return new Map(users.map(user => [user.id, this.agentName(user)]));
+  }
+
+  private static toInboxMessage(message: MessageWithAuthor, names: MentionNames = new Map()): InboxMessage {
     return {
       id: message.id,
       authorType: message.authorType,
@@ -770,6 +822,10 @@ export class ConversationService {
       body: message.body,
       source: message.source,
       event: message.authorType === 'SYSTEM' && message.meta ? (message.meta as unknown as InboxSystemEvent) : null,
+      mentions: message.mentionedUserIds.flatMap(id => {
+        const name = names.get(id);
+        return name ? [{id, name}] : [];
+      }),
       createdAt: message.createdAt.toISOString(),
     };
   }
