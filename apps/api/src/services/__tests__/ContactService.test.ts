@@ -1070,7 +1070,7 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
     it('rejects an unknown identity type', async () => {
       const contact = await factories.createContact({projectId});
 
-      await expect(ContactService.recordIdentity(projectId, contact.id, 'push_token', 'device-1')).rejects.toThrow(
+      await expect(ContactService.recordIdentity(projectId, contact.id, 'device_token', 'device-1')).rejects.toThrow(
         /unknown identity type/i,
       );
     });

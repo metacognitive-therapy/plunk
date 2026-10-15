@@ -183,6 +183,9 @@ export const VAPID_PRIVATE_KEY = validateEnv('VAPID_PRIVATE_KEY', '');
 export const VAPID_SUBJECT = validateEnv('VAPID_SUBJECT', '');
 export const WEB_PUSH_ENABLED = VAPID_PUBLIC_KEY !== '' && VAPID_PRIVATE_KEY !== '' && VAPID_SUBJECT !== '';
 
+// Only needed when "enhanced push security" is on for the Expo account that owns the apps.
+export const EXPO_ACCESS_TOKEN = validateEnv('EXPO_ACCESS_TOKEN', '');
+
 // Email Verification & Password Reset
 export const TOKEN_EXPIRY_SECONDS = 3600; // 1 hour
 export const EMAIL_VERIFICATION_RATE_LIMIT = 3; // Max 3 emails per hour

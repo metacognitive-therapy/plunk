@@ -49,6 +49,12 @@ export function generateVisitorId(): string {
   return Array.from(bytes, byte => VISITOR_ALPHABET[byte % VISITOR_ALPHABET.length]).join('');
 }
 
+/** Our notifications carry `{plunk: {conversationId}}` in their data. */
+export function conversationOf(data: unknown): string | null {
+  const plunk = (data as {plunk?: {conversationId?: unknown}} | null | undefined)?.plunk;
+  return typeof plunk?.conversationId === 'string' && plunk.conversationId ? plunk.conversationId : null;
+}
+
 function memoryStorage(): KeyValueStorage {
   const values = new Map<string, string>();
   return {
@@ -79,6 +85,9 @@ export class MessengerController {
   private generation = 0;
   private active = true;
   private lastUnread = 0;
+  private pushToken: string | null = null;
+  /* A tapped notification waits here until a signed-in session can open its conversation. */
+  private pendingConversation: string | null = null;
 
   public constructor(
     public readonly config: PlunkConfig,
@@ -126,10 +135,37 @@ export class MessengerController {
 
   /** Ends the session and forgets the visitor, so whoever signs in next starts with nothing. */
   public async logout(): Promise<void> {
+    /* Best effort: whoever signs in next on this device takes the token over anyway. */
+    if (this.client && this.pushToken && this.state.session === 'verified') {
+      void this.client.removePushToken(this.pushToken).catch(() => undefined);
+    }
+    this.pendingConversation = null;
     this.stop();
     this.login = null;
     await this.storage.setItem(this.visitorKey(), generateVisitorId());
     this.set({...INITIAL});
+  }
+
+  /** Kept for the device: sent for every signed-in user, never for anonymous sessions. */
+  public registerPushToken(token: string): void {
+    this.pushToken = token;
+    if (this.client && this.state.session === 'verified') {
+      void this.client.registerPushToken(token).catch(() => undefined);
+    }
+  }
+
+  /** Opens the conversation of one of our notifications, once a signed-in user is ready. */
+  public handlePushNotification(data: unknown): boolean {
+    const conversationId = conversationOf(data);
+    if (!conversationId) {
+      return false;
+    }
+    if (this.client && this.state.session === 'verified') {
+      this.presentConversation(conversationId);
+    } else {
+      this.pendingConversation = conversationId;
+    }
+    return true;
   }
 
   public retry(): Promise<void> {
@@ -227,6 +263,15 @@ export class MessengerController {
       this.set({status: 'ready', boot, conversations, clockSkew: Date.parse(boot.serverTime) - Date.now()});
       if (this.active) {
         this.openStream();
+      }
+      if (session === 'verified') {
+        if (this.pushToken) {
+          void client.registerPushToken(this.pushToken).catch(() => undefined);
+        }
+        if (this.pendingConversation) {
+          this.presentConversation(this.pendingConversation);
+          this.pendingConversation = null;
+        }
       }
     } catch (error) {
       if (generation !== this.generation) {

@@ -108,6 +108,42 @@ fresh token each time rather than return a cached one.
 `logout` closes the connection, forgets the session and starts a new visitor id, so the next person
 on the device sees none of the previous user's conversations.
 
+## Push notifications
+
+Agent replies are pushed to signed-in users through Expo's push service. Your app asks for
+permission and gets the token; the SDK sends it for whoever is signed in and removes it on logout.
+Anonymous users get no pushes.
+
+```ts
+import * as Notifications from 'expo-notifications';
+
+const {granted} = await Notifications.requestPermissionsAsync();
+if (granted) {
+  const {data} = await Notifications.getExpoPushTokenAsync({projectId: EAS_PROJECT_ID});
+  Plunk.registerPushToken(data); // before or after loginUser, either works
+}
+
+// A tap opens the conversation. Pass the notification's data; it returns false for other notifications.
+Notifications.addNotificationResponseReceivedListener(response => {
+  Plunk.handlePushNotification(response.notification.request.content.data);
+});
+// The tap that launched the app.
+const launch = Notifications.getLastNotificationResponse();
+if (launch) Plunk.handlePushNotification(launch.notification.request.content.data);
+```
+
+`handlePushNotification` can be called before `<PlunkProvider>` mounts or before `loginUser`
+finishes: the conversation opens as soon as the user is signed in. If it isn't theirs, the
+messenger opens on its home screen instead.
+
+The notification's data is `{plunk: {conversationId}}`, its title is the project's name and its
+body is the agent's name and the start of the reply. Internal notes are never pushed, and neither
+are replies in a conversation that an anonymous visitor started. A device that uninstalls the app
+is forgotten once Expo reports it. Each user keeps their 10 most recently registered devices.
+
+The token must be an Expo push token (`ExponentPushToken[...]`), so the app needs an EAS project
+with its APNs key and FCM credentials uploaded. Raw APNs or FCM device tokens are refused.
+
 ## Coming from Intercom
 
 | Intercom                                                     | This SDK                                      |
@@ -121,6 +157,8 @@ on the device sees none of the previous user's conversations.
 | `presentConversation(id)`                                    | `Plunk.presentConversation(id)`               |
 | `getUnreadConversationCount()` / unread event listener       | `Plunk.getUnreadConversationCount()` / `Plunk.addUnreadCountListener` |
 | `hideIntercom()`                                             | `Plunk.hide()`                                |
+| `sendTokenToIntercom(deviceToken)`                           | `Plunk.registerPushToken(expoPushToken)`: an Expo token from `getExpoPushTokenAsync`, not the device token |
+| Intercom's notification tap handling                         | `Plunk.handlePushNotification(data)`          |
 
 ## How it works
 
@@ -139,8 +177,8 @@ on the device sees none of the previous user's conversations.
   Turnstile; the SDK can't, so it asks the user to sign in instead. Signed-in users are unaffected.
 - **No email capture.** The SDK never asks an anonymous user for their email; sign users in instead.
 - **English labels by default.** Pass `strings` to translate them.
-- **Push notifications are not wired yet**, so a reply while the app is closed only shows on the
-  next launch.
+- **Push needs a signed-in user.** Anonymous users only see replies the next time they open the
+  messenger.
 
 ## Example app
 
@@ -154,7 +192,9 @@ EXPO_PUBLIC_PLUNK_PUBLIC_KEY=pk_... npx expo start --ios
 ```
 
 `EXPO_PUBLIC_PLUNK_API_URL` (default `http://localhost:8082`) and `EXPO_PUBLIC_TOKEN_SERVER`
-(default `http://localhost:5602`) point it elsewhere.
+(default `http://localhost:5602`) point it elsewhere. `notifications.ts` shows push wiring: set
+`EXPO_PUBLIC_EAS_PROJECT_ID` on a real device, or `EXPO_PUBLIC_TEST_PUSH_TOKEN` to register a made-up
+token on a simulator, which can't get a real one.
 
 ## Development
 

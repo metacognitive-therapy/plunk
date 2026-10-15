@@ -64,6 +64,9 @@ function fakeApi() {
     if (path === '/v1/messenger/conversations') {
       return json(200, conversationsBySubject.get(subject) ?? []);
     }
+    if (path.startsWith('/v1/messenger/push-token')) {
+      return json(200, undefined);
+    }
     if (path.endsWith('/read')) {
       return new Response(null, {status: 204});
     }
@@ -283,5 +286,59 @@ describe('MessengerController', () => {
 
     expect(stream.connections).toBe(1);
     expect(controller.getUnreadConversationCount()).toBe(1);
+  });
+
+  describe('push notifications', () => {
+    const TOKEN = 'ExponentPushToken[device-1234]';
+    const pushCalls = () => api.calls.filter(call => call.path.startsWith('/v1/messenger/push-token'));
+
+    it('registers the device for each signed-in user, never for an anonymous session, and removes it on logout', async () => {
+      controller.registerPushToken(TOKEN);
+      await controller.loginUnidentifiedUser();
+      await flush();
+      expect(pushCalls()).toEqual([]);
+
+      await controller.loginUser({getUserToken: async () => 'alice.token'});
+      await flush();
+      expect(pushCalls()).toMatchObject([{path: '/v1/messenger/push-token', body: {token: TOKEN}}]);
+
+      await controller.logout();
+      await flush();
+      expect(pushCalls().at(-1)).toMatchObject({path: '/v1/messenger/push-token/remove', body: {token: TOKEN}});
+    });
+
+    it('sends a token that arrives while a user is already signed in', async () => {
+      await controller.loginUser({getUserToken: async () => 'alice.token'});
+      controller.registerPushToken(TOKEN);
+      await flush();
+
+      expect(pushCalls()).toMatchObject([{path: '/v1/messenger/push-token', body: {token: TOKEN}}]);
+    });
+
+    it('opens a tapped conversation once the user has signed in, as on a cold start', async () => {
+      expect(controller.handlePushNotification({plunk: {conversationId: 'c9'}})).toBe(true);
+      expect(controller.getState().visible).toBe(false);
+
+      await controller.loginUser({getUserToken: async () => 'alice.token'});
+
+      expect(controller.getState()).toMatchObject({visible: true, route: {screen: 'thread', conversationId: 'c9'}});
+    });
+
+    it('opens a tapped conversation straight away while signed in, and ignores other notifications', async () => {
+      await controller.loginUser({getUserToken: async () => 'alice.token'});
+
+      expect(controller.handlePushNotification({screen: 'meditations'})).toBe(false);
+      expect(controller.getState().visible).toBe(false);
+      expect(controller.handlePushNotification({plunk: {conversationId: 'c1'}})).toBe(true);
+      expect(controller.getState()).toMatchObject({visible: true, route: {screen: 'thread', conversationId: 'c1'}});
+    });
+
+    it('forgets a pending tap on logout', async () => {
+      controller.handlePushNotification({plunk: {conversationId: 'c9'}});
+      await controller.logout();
+      await controller.loginUser({getUserToken: async () => 'bob.token'});
+
+      expect(controller.getState().visible).toBe(false);
+    });
   });
 });

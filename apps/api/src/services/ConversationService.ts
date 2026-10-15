@@ -800,7 +800,7 @@ export class ConversationService {
     ]);
 
     if (input.authorType === 'AGENT' && kind === 'COMMENT') {
-      await this.scheduleReplyEmail(conversation.projectId, message.id);
+      await Promise.all([this.scheduleReplyEmail(conversation.projectId, message.id), this.queueContactPush(message.id)]);
     }
     if (fromContact) {
       await this.notifyAgents(conversation.projectId, message.id);
@@ -840,6 +840,15 @@ export class ConversationService {
       ]);
     } catch (error) {
       signale.warn(`[CHAT] Could not queue agent notifications for message ${messageId}:`, error);
+    }
+  }
+
+  /* The job looks up the contact's devices, so a reply to a contact without the app costs one read. */
+  private static async queueContactPush(messageId: string): Promise<void> {
+    try {
+      await QueueService.queueChatNotification({type: 'contact_push', messageId});
+    } catch (error) {
+      signale.warn(`[CHAT] Could not queue the push for message ${messageId}:`, error);
     }
   }
 

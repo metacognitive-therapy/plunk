@@ -8,6 +8,10 @@ export const VISITOR_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 
 export const MESSAGE_BODY_MAX_LENGTH = 5000;
 
+/* Only Expo tokens are accepted: the worker sends through Expo's push service, which takes these
+and not the raw APNs or FCM device tokens Intercom's SDK is given. */
+export const EXPO_PUSH_TOKEN_PATTERN = /^Expo(?:nent)?PushToken\[[A-Za-z0-9_-]{8,100}\]$/;
+
 const messageBody = z.string().trim().min(1, 'Message cannot be empty').max(MESSAGE_BODY_MAX_LENGTH);
 
 /* The text sent alongside a file, which may be empty. */
@@ -81,6 +85,9 @@ export const MessengerSchemas = {
     body: messageBody,
   }),
   sendAttachment: attachmentCaption,
+  pushToken: z.object({
+    token: z.string().trim().regex(EXPO_PUSH_TOKEN_PATTERN, 'Expected an Expo push token such as ExponentPushToken[...]'),
+  }),
   captureEmail: z.object({
     email: z.string().trim().toLowerCase().email('Enter a valid email address').max(254),
     /* Marketing consent is opt-in only: absent means no. */

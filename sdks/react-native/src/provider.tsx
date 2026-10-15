@@ -1,13 +1,15 @@
 import {type ReactNode, useEffect, useMemo} from 'react';
 import {AppState} from 'react-native';
 
-import {MessengerController} from './controller';
+import {conversationOf, MessengerController} from './controller';
 import {defaultStrings, type Strings} from './strings';
 import type {PlunkConfig, UserLogin} from './types';
 import {Messenger} from './ui';
 import {xhrTransport} from './xhr-transport';
 
 let current: MessengerController | null = null;
+/* A notification handled before <PlunkProvider> mounted, as on a cold start from a tap. */
+let early: {pushToken: string | null; notification: unknown} = {pushToken: null, notification: null};
 
 function controller(): MessengerController {
   if (!current) {
@@ -54,6 +56,28 @@ export const Plunk = {
   addUnreadCountListener(listener: (count: number) => void): () => void {
     return controller().addUnreadCountListener(listener);
   },
+  /** An Expo push token from `getExpoPushTokenAsync`. Registered for each signed-in user until logout. */
+  registerPushToken(token: string): void {
+    if (current) {
+      current.registerPushToken(token);
+    } else {
+      early = {...early, pushToken: token};
+    }
+  },
+  /**
+   * Pass a tapped notification's data (`response.notification.request.content.data`). Returns
+   * false when it isn't one of ours. The conversation opens once `loginUser` has signed in.
+   */
+  handlePushNotification(data: unknown): boolean {
+    if (current) {
+      return current.handlePushNotification(data);
+    }
+    if (!conversationOf(data)) {
+      return false;
+    }
+    early = {...early, notification: data};
+    return true;
+  },
 };
 
 export interface PlunkProviderProps extends PlunkConfig {
@@ -66,6 +90,13 @@ export function PlunkProvider({children, strings, apiUrl, publicKey, storage, pi
   /* Storage is read once, when the messenger is created; an inline picker may change every render. */
   const instance = useMemo(() => {
     const created = new MessengerController({apiUrl, publicKey, storage}, xhrTransport);
+    if (early.pushToken) {
+      created.registerPushToken(early.pushToken);
+    }
+    if (early.notification) {
+      created.handlePushNotification(early.notification);
+    }
+    early = {pushToken: null, notification: null};
     current = created;
     return created;
     // eslint-disable-next-line react-hooks/exhaustive-deps

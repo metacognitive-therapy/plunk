@@ -4,6 +4,8 @@ import {StatusBar} from 'expo-status-bar';
 import {useEffect, useState} from 'react';
 import {Pressable, StyleSheet, Text, View} from 'react-native';
 
+import {registerForPush, usePushTaps} from './notifications';
+
 /* Point these at your own API and project. The token server stands in for your app's backend. */
 const API_URL = process.env.EXPO_PUBLIC_PLUNK_API_URL ?? 'http://localhost:8082';
 const PUBLIC_KEY = process.env.EXPO_PUBLIC_PLUNK_PUBLIC_KEY ?? 'pk_your_public_key';
@@ -44,6 +46,8 @@ function Screen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => Plunk.addUnreadCountListener(setUnread), []);
+  useEffect(() => void registerForPush(), []);
+  usePushTaps();
 
   const login = async (next: keyof typeof USERS) => {
     setError(null);
