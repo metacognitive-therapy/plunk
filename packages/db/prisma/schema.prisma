@@ -240,6 +240,13 @@ model MessengerSettings {
   // Support agents whose avatars the messenger shows, in display order.
   teamUserIds      String[]                  @default([])
 
+  // Email loop. Agent replies the visitor has not read are emailed from replyFromEmail after
+  // emailDelayMinutes, with a reply-to of reply+<token>@replyDomain. Both addresses must sit on one
+  // of the project's verified domains; replyDomain needs an MX record to SES inbound.
+  replyDomain       String?
+  replyFromEmail    String?
+  emailDelayMinutes Int     @default(5)
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -322,6 +329,12 @@ model ConversationMessage {
 
   // Support agents @mentioned in a NOTE.
   mentionedUserIds String[] @default([])
+
+  // When an agent comment was handed to the email pipeline because the visitor had not read it.
+  emailedAt DateTime?
+
+  // Set on a NOTE made from an email reply whose sender is not the contact. Never shown to the visitor.
+  unverifiedSender String?
 
   attachments ConversationAttachment[]
 

@@ -10,6 +10,9 @@ import {ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
 import * as S3Service from './S3Service.js';
 
 export const ATTACHMENT_LINK_TTL_SECONDS = 5 * 60;
+/* An emailed reply may be opened weeks later. Its link only redirects to a fresh short one, after
+re-checking that the file still exists and still belongs to a visible message. */
+export const ATTACHMENT_EMAIL_LINK_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 const FILENAME_MAX_LENGTH = 200;
 
@@ -30,6 +33,7 @@ const EXTENSION_TYPES = new Map(
 );
 
 const signingKey = crypto.createHmac('sha256', JWT_SECRET).update('chat-attachment-link').digest();
+const emailSigningKey = crypto.createHmac('sha256', JWT_SECRET).update('chat-attachment-email-link').digest();
 
 export interface IncomingFile {
   buffer: Buffer;
@@ -134,16 +138,31 @@ export class ChatAttachmentService {
 
   /** Returns the seconds the link has left, or null when it is forged or expired. */
   public static verify(attachmentId: string, expires: unknown, signature: unknown): number | null {
-    if (typeof expires !== 'string' || typeof signature !== 'string' || !/^\d{1,12}$/.test(expires)) {
+    return this.check(signingKey, ATTACHMENT_LINK_TTL_SECONDS, attachmentId, expires, signature);
+  }
+
+  public static emailLink(attachmentId: string, now: number = Date.now()): string {
+    const expires = Math.floor(now / 1000) + ATTACHMENT_EMAIL_LINK_TTL_SECONDS;
+    const url = new URL(`/v1/chat-attachments/${attachmentId}/email`, API_URI);
+    url.searchParams.set('expires', String(expires));
+    url.searchParams.set('signature', this.sign(attachmentId, expires, emailSigningKey));
+    return url.toString();
+  }
+
+  /** Swaps a valid email link for a fresh short one, or null when the link or the file is gone. */
+  public static async redeemEmailLink(
+    attachmentId: string,
+    expires: unknown,
+    signature: unknown,
+  ): Promise<ChatAttachmentLink | null> {
+    if (this.check(emailSigningKey, ATTACHMENT_EMAIL_LINK_TTL_SECONDS, attachmentId, expires, signature) === null) {
       return null;
     }
-    const remaining = Number(expires) - Math.floor(Date.now() / 1000);
-    if (remaining <= 0 || remaining > ATTACHMENT_LINK_TTL_SECONDS) {
-      return null;
-    }
-    const expected = Buffer.from(this.sign(attachmentId, Number(expires)));
-    const given = Buffer.from(signature);
-    return expected.length === given.length && crypto.timingSafeEqual(expected, given) ? remaining : null;
+    const attachment = await prisma.conversationAttachment.findFirst({
+      where: {id: attachmentId, message: {kind: 'COMMENT'}},
+      select: {id: true},
+    });
+    return attachment ? this.link(attachment.id) : null;
   }
 
   public static async open(
@@ -157,8 +176,27 @@ export class ChatAttachmentService {
     return body ? {filename: attachment.filename, contentType: attachment.contentType, size: attachment.size, body} : null;
   }
 
-  private static sign(attachmentId: string, expires: number): string {
-    return crypto.createHmac('sha256', signingKey).update(`${attachmentId}.${expires}`).digest('base64url');
+  private static check(
+    key: Buffer,
+    ttlSeconds: number,
+    attachmentId: string,
+    expires: unknown,
+    signature: unknown,
+  ): number | null {
+    if (typeof expires !== 'string' || typeof signature !== 'string' || !/^\d{1,12}$/.test(expires)) {
+      return null;
+    }
+    const remaining = Number(expires) - Math.floor(Date.now() / 1000);
+    if (remaining <= 0 || remaining > ttlSeconds) {
+      return null;
+    }
+    const expected = Buffer.from(this.sign(attachmentId, Number(expires), key));
+    const given = Buffer.from(signature);
+    return expected.length === given.length && crypto.timingSafeEqual(expected, given) ? remaining : null;
+  }
+
+  private static sign(attachmentId: string, expires: number, key: Buffer = signingKey): string {
+    return crypto.createHmac('sha256', key).update(`${attachmentId}.${expires}`).digest('base64url');
   }
 
   private static cleanFilename(name: string): string {

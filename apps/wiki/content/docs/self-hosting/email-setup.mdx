@@ -104,6 +104,37 @@ Value: 10 inbound-smtp.<your-region>.amazonaws.com
 
 Plunk's dashboard will show the exact value to use for your configured region.
 
+### Live chat email replies
+
+When the live chat messenger emails an agent reply to a visitor who has left the page, the visitor can answer that email and the answer lands back in the same conversation. This uses the same SES receiving setup as above, on a dedicated subdomain.
+
+**Region.** SES receives email only in some regions. Europe (Frankfurt, `eu-central-1`) is one of them since September 2023. Check the [SES endpoints page](https://docs.aws.amazon.com/general/latest/gr/ses.html) for your region before you start.
+
+1. Pick a subdomain of a verified domain that receives nothing else, for example `reply.yourdomain.com`.
+2. Add an MX record **on that subdomain only**. Never put it on `yourdomain.com` itself: that would send your organisation's normal mail to SES.
+
+   ```
+   Type:  MX
+   Name:  reply.yourdomain.com
+   Value: 10 inbound-smtp.<your-region>.amazonaws.com
+   ```
+
+3. In your receipt rule set, add a rule:
+   - **Recipient conditions**: `reply.yourdomain.com` (a domain condition matches every address on it)
+   - **Actions**: Publish to Amazon SNS topic, with **Encoding: Base64**, to a topic subscribed to `https://api.yourdomain.com/webhooks/sns`
+4. In Plunk, open **Settings → Messenger → Email replies** and set the reply domain, the address replies are sent from (on a verified domain), and how many minutes a reply may sit unread before it is emailed (default 5).
+
+How replies are handled:
+
+- Each conversation has its own unguessable reply address, `reply+<token>@reply.yourdomain.com`. A reply reaches exactly that conversation. It never creates or subscribes a contact, never triggers `email.received`, and never counts against the inbound billing limit. Mail to an unknown token is dropped.
+- Quoted history and signatures are removed. Allowed attachment types are kept; others are listed by name.
+- A reply counts as the visitor only when it comes from the contact's address **and** SES reports an SPF or DKIM pass without a DMARC failure. Anything else is shown to your agents as a flagged note and never to the visitor.
+- Outgoing reply emails go through the transactional pipeline. They appear in the project's email log, are held while [sending is paused](/guides/sending-pause), and fire `email.sent` like any other transactional email.
+
+<Callout type="warn">
+SNS notifications carry the message content only up to 150 KB. A larger reply, usually one with big attachments, arrives without content and is dropped. Receiving larger replies needs an S3 receipt action, which Plunk does not support yet.
+</Callout>
+
 ## 7. (Optional) Move Out of the SES Sandbox
 
 By default, new AWS SES accounts are in **sandbox mode** with strict limits:

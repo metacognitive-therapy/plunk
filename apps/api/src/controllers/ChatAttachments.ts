@@ -19,6 +19,21 @@ function contentDisposition(type: 'inline' | 'attachment', filename: string): st
  */
 @Controller('v1/chat-attachments')
 export class ChatAttachments {
+  @Get(':id/email')
+  @CatchAsync
+  private async fromEmail(req: Request, res: Response, _next: NextFunction) {
+    const parsed = UtilitySchemas.id.safeParse(req.params);
+    const link = parsed.success
+      ? await ChatAttachmentService.redeemEmailLink(parsed.data.id, req.query.expires, req.query.signature)
+      : null;
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (!link) {
+      return res.status(404).type('text/plain').send('This file is no longer available');
+    }
+    return res.redirect(302, link.url);
+  }
+
   @Get(':id')
   @CatchAsync
   private async download(req: Request, res: Response, _next: NextFunction) {

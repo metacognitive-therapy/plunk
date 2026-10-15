@@ -356,12 +356,10 @@ export class DomainService {
 
     const domainName = emailParts[1];
 
-    // Find domain in database
-    const domain = await prisma.domain.findFirst({
-      where: {
-        domain: domainName,
-      },
-    });
+    /* The same domain may be added to several projects, so look for this project's row first. */
+    const domain =
+      (await prisma.domain.findFirst({where: {domain: domainName, projectId}})) ??
+      (await prisma.domain.findFirst({where: {domain: domainName}}));
 
     if (!domain) {
       throw new HttpException(

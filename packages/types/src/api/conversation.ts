@@ -104,6 +104,10 @@ export interface InboxMessage {
   /** Agents @mentioned in a note. */
   mentions: {id: string; name: string}[];
   attachments: ChatAttachment[];
+  /** When an agent comment was emailed because the visitor had not read it. */
+  emailedAt: string | null;
+  /** Sender of an email reply that did not come from the contact's address. Set on NOTEs only. */
+  unverifiedSender: string | null;
   createdAt: string;
 }
 
@@ -175,6 +179,12 @@ export interface MessengerSettingsData {
   launcherPosition: MessengerLauncherPositionValue;
   greeting: string | null;
   teamUserIds: string[];
+  /** Receiving subdomain for emailed replies, e.g. reply.example.com. */
+  replyDomain: string | null;
+  /** The address emailed replies are sent from. */
+  replyFromEmail: string | null;
+  /** How long an agent reply can sit unread before it is emailed to the visitor. */
+  emailDelayMinutes: number;
 }
 
 /** Pushed to one visitor's messenger. Never carries internal notes or another visitor's threads. */

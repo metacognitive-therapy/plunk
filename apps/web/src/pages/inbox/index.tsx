@@ -20,7 +20,7 @@ import type {
   InboxStreamEvent,
   InboxSystemEvent,
 } from '@plunk/types';
-import {AlarmClock, ArrowLeft, ChevronDown, Inbox as InboxIcon, MessageSquare, StickyNote, Tag as TagIcon} from 'lucide-react';
+import {AlarmClock, ArrowLeft, ChevronDown, Inbox as InboxIcon, MessageSquare, ShieldAlert, StickyNote, Tag as TagIcon} from 'lucide-react';
 import {NextSeo} from 'next-seo';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
@@ -571,6 +571,23 @@ function MessageRow({
       </div>
     );
   }
+  if (message.kind === 'NOTE' && message.unverifiedSender) {
+    return (
+      <div className="flex flex-col items-start gap-1.5">
+        <div className="max-w-[75%] rounded-2xl border border-red-200 bg-red-50 px-3.5 py-2 text-sm text-red-950">
+          <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-red-700">
+            <ShieldAlert className="h-3.5 w-3.5" />
+            Email from {message.unverifiedSender}
+          </p>
+          <p className="whitespace-pre-wrap break-words">{message.body}</p>
+        </div>
+        <MessageAttachments conversationId={conversationId} attachments={message.attachments} align="start" />
+        <div className="px-1 text-[11px] text-neutral-400">
+          Not the visitor’s address, so it was kept as a note and not shown to them · {formatRelativeTime(message.createdAt)}
+        </div>
+      </div>
+    );
+  }
   if (message.kind === 'NOTE') {
     return (
       <div className="flex flex-col items-end">
@@ -606,7 +623,8 @@ function MessageRow({
       <div className="px-1 text-[11px] text-neutral-400">
         {fromContact ? '' : `${message.author?.name ?? 'Team'} · `}
         {formatRelativeTime(message.createdAt)}
-        {seen && ' · Seen'}
+        {fromContact && message.source === 'EMAIL' && ' · By email'}
+        {seen ? ' · Seen' : message.emailedAt ? ' · Emailed' : ''}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import type {AgentStreamEvent, ChatNotificationJobData} from '@plunk/types';
 
 import {prisma} from '../database/prisma.js';
+import {ChatEmailService} from './ChatEmailService.js';
 import {ConversationService} from './ConversationService.js';
 import {Keys} from './keys.js';
 import {RealtimeHub} from './RealtimeHub.js';
@@ -11,10 +12,12 @@ import {RealtimeHub} from './RealtimeHub.js';
  * message was written is not notified.
  */
 export class ChatNotificationService {
-  public static async process(job: ChatNotificationJobData): Promise<{notified: number}> {
+  public static async process(job: ChatNotificationJobData): Promise<{notified: number} | {sent: number}> {
     switch (job.type) {
       case 'mention':
         return this.mention(job.messageId);
+      case 'reply_email':
+        return ChatEmailService.sendUnread(job.messageId);
     }
   }
 

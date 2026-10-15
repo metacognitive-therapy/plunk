@@ -189,6 +189,7 @@ You can set a per-project inbound cap under **Billing → Limits**. Once the cap
 - **No raw MIME**: the original message is not retained.
 - **No threading**: Plunk doesn't group inbound messages into threads or correlate them with outbound replies.
 - **40 MB size cap**: messages larger than 40 MB are rejected before processing.
+- **Live chat reply addresses are separate**: mail to a `reply+<token>@` address on a messenger reply domain goes to its live chat conversation. It never becomes an `email.received` event or a contact. See [live chat email replies](/self-hosting/email-setup#live-chat-email-replies).
 
 ## Troubleshooting
 

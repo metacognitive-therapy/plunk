@@ -346,8 +346,11 @@ export class QueueService {
    * Queue the agent notifications for a chat message. The job id makes a retried request
    * notify once.
    */
-  public static async queueChatNotification(data: ChatNotificationJobData): Promise<Job<ChatNotificationJobData>> {
-    return chatNotificationQueue.add(data.type, data, {jobId: `${data.type}-${data.messageId}`});
+  public static async queueChatNotification(
+    data: ChatNotificationJobData,
+    options: {delay?: number} = {},
+  ): Promise<Job<ChatNotificationJobData>> {
+    return chatNotificationQueue.add(data.type, data, {jobId: `${data.type}-${data.messageId}`, delay: options.delay});
   }
 
   /**

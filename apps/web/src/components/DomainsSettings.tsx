@@ -2,6 +2,7 @@ import {useEffect, useState} from 'react';
 import {useForm} from 'react-hook-form';
 import {zodResolver} from '@hookform/resolvers/zod';
 import {DomainSchemas} from '@plunk/shared';
+import type {MessengerSettingsData} from '@plunk/types';
 import {
   Badge,
   Button,
@@ -22,6 +23,7 @@ import {
   Input,
 } from '@plunk/ui';
 import {AnimatePresence, motion} from 'framer-motion';
+import useSWR from 'swr';
 import {Check, CheckCircle2, ChevronDown, Copy, Globe, RefreshCw, Trash2, XCircle} from 'lucide-react';
 import {useConfig} from '../lib/hooks/useConfig';
 import {useAddDomain, useCheckDomainVerification, useDomains, useRemoveDomain} from '../lib/hooks/useDomains';
@@ -211,6 +213,11 @@ export function DomainsSettings({projectId}: DomainsSettingsProps) {
   const {checkVerification} = useCheckDomainVerification();
   const {removeDomain} = useRemoveDomain();
   const {data: config} = useConfig();
+  const {data: messenger} = useSWR<{success: boolean; data: MessengerSettingsData}>(
+    projectId ? `/projects/${projectId}/messenger` : null,
+    {revalidateOnFocus: false, shouldRetryOnError: false},
+  );
+  const replyDomain = messenger?.data.replyDomain ?? null;
 
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -548,6 +555,32 @@ export function DomainsSettings({projectId}: DomainsSettingsProps) {
                       ],
                     },
                   );
+                  /* Only the reply subdomain points at SES: an MX on the domain itself would take
+                  over the organisation's normal inbox. */
+                  if (replyDomain?.endsWith(`.${domain.domain}`)) {
+                    dnsGroups.push({
+                      key: 'chat-replies',
+                      label: 'Live chat replies',
+                      hint: 'Required for email replies',
+                      collapsible: true,
+                      description: `Lets visitors answer emailed chat replies. Add it on ${replyDomain} only, never on ${domain.domain} itself.`,
+                      records: [
+                        {
+                          key: 'chat-replies-mx',
+                          type: 'MX',
+                          fields: [
+                            {
+                              label: 'Name',
+                              value: replyDomain.slice(0, -(domain.domain.length + 1)),
+                              suffix: `.${domain.domain}`,
+                            },
+                            {label: 'Priority', value: '10'},
+                            {label: 'Value', value: `inbound-smtp.${sesRegion}.amazonaws.com`},
+                          ],
+                        },
+                      ],
+                    });
+                  }
                 }
                 return (
                   <div key={domain.id} className="border border-neutral-200 rounded-lg p-4">
