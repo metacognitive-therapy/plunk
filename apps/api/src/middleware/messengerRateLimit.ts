@@ -22,6 +22,9 @@ const BUDGETS = {
   upload: {visitor: {burst: 10, refill: 1 / 30}, ip: {burst: 30, refill: 1 / 10}},
   email: {visitor: {burst: 5, refill: 1 / 60}, ip: {burst: 20, refill: 1 / 30}},
   push: {visitor: {burst: 10, refill: 1 / 60}, ip: {burst: 60, refill: 1 / 5}},
+  /* Apps update attributes on launch and log progress events as the user moves through content. */
+  user: {visitor: {burst: 20, refill: 1 / 10}, ip: {burst: 120, refill: 1}},
+  event: {visitor: {burst: 60, refill: 1}, ip: {burst: 300, refill: 5}},
 } satisfies Record<string, {visitor: Budget; ip: Budget}>;
 
 export type MessengerAction = keyof typeof BUDGETS;

@@ -15,6 +15,7 @@
     "custom-fields",
     "segment-filters",
     "unsubscribe-pages",
-    "data-retention"
+    "data-retention",
+    "intercom-migration"
   ]
 }

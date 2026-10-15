@@ -1,7 +1,16 @@
 import type {EventStream, EventStreamTransport} from '@plunk/shared/event-stream';
 
 import {MessengerApiError, MessengerClient} from './client';
-import type {BootResponse, ConversationSummary, KeyValueStorage, PlunkConfig, StreamEvent, UserLogin} from './types';
+import type {
+  BootResponse,
+  ConversationSummary,
+  KeyValueStorage,
+  LogEventOptions,
+  PlunkConfig,
+  StreamEvent,
+  UserAttributeValue,
+  UserLogin,
+} from './types';
 
 export type Route = {screen: 'home'} | {screen: 'thread'; conversationId: string | null; draft?: string};
 
@@ -55,6 +64,10 @@ export function conversationOf(data: unknown): string | null {
   return typeof plunk?.conversationId === 'string' && plunk.conversationId ? plunk.conversationId : null;
 }
 
+function warn(message: string): void {
+  console.warn(`[Plunk] ${message}`);
+}
+
 function memoryStorage(): KeyValueStorage {
   const values = new Map<string, string>();
   return {
@@ -88,6 +101,7 @@ export class MessengerController {
   private pushToken: string | null = null;
   /* A tapped notification waits here until a signed-in session can open its conversation. */
   private pendingConversation: string | null = null;
+  private starting: Promise<void> | null = null;
 
   public constructor(
     public readonly config: PlunkConfig,
@@ -168,6 +182,23 @@ export class MessengerController {
     return true;
   }
 
+  /**
+   * Never rejects: like Intercom's, it resolves false and warns. Nothing is queued for later, so
+   * what an anonymous user did can't be recorded against whoever signs in next.
+   */
+  public updateUser(attributes: Record<string, UserAttributeValue>): Promise<boolean> {
+    return this.asSignedInUser('updateUser', client => client.updateUser(attributes));
+  }
+
+  public logEvent(name: string, data?: Record<string, UserAttributeValue>, options: LogEventOptions = {}): Promise<boolean> {
+    const occurredAt = options.occurredAt === undefined ? undefined : new Date(options.occurredAt);
+    if (occurredAt && Number.isNaN(occurredAt.getTime())) {
+      warn('logEvent was given an occurredAt that is not a date');
+      return Promise.resolve(false);
+    }
+    return this.asSignedInUser('logEvent', client => client.logEvent(name, data, occurredAt?.toISOString()));
+  }
+
   public retry(): Promise<void> {
     return this.login ? this.loginUser(this.login) : this.loginUnidentifiedUser();
   }
@@ -238,7 +269,33 @@ export class MessengerController {
     this.set({visible: true, route});
   }
 
-  private async start(session: 'anonymous' | 'verified'): Promise<void> {
+  /* A call made while a sign-in is still booting waits for it rather than failing. */
+  private async asSignedInUser(action: string, call: (client: MessengerClient) => Promise<void>): Promise<boolean> {
+    const generation = this.generation;
+    if (this.state.session === 'verified' && !this.client) {
+      await this.starting;
+    }
+    const client = this.client;
+    if (!client || this.state.session !== 'verified' || generation !== this.generation) {
+      warn(`${action} needs a signed-in user: call Plunk.loginUser first`);
+      return false;
+    }
+    try {
+      await call(client);
+      return true;
+    } catch (error) {
+      warn(`${action} failed: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
+  private start(session: 'anonymous' | 'verified'): Promise<void> {
+    const started = this.startSession(session);
+    this.starting = started.catch(() => undefined);
+    return started;
+  }
+
+  private async startSession(session: 'anonymous' | 'verified'): Promise<void> {
     this.stop();
     const generation = ++this.generation;
     this.set({session, status: 'loading', error: null, boot: null, conversations: [], connected: false});

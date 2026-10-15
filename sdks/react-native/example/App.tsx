@@ -44,6 +44,8 @@ function Screen() {
   const [user, setUser] = useState<keyof typeof USERS | null>(null);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [modules, setModules] = useState(0);
+  const [recorded, setRecorded] = useState<string | null>(null);
 
   useEffect(() => Plunk.addUnreadCountListener(setUnread), []);
   useEffect(() => void registerForPush(), []);
@@ -57,6 +59,17 @@ function Screen() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
+  };
+
+  /* What an app sends as the user progresses: the event for workflows, the count for segments. */
+  const finishModule = async () => {
+    const count = modules + 1;
+    const logged = await Plunk.logEvent('finished_journey_module', {module_id: `module-${count}`});
+    const updated = await Plunk.updateUser({completed_modules_count: count});
+    if (logged && updated) {
+      setModules(count);
+    }
+    setRecorded(`Event ${logged ? 'logged' : 'refused'}, attributes ${updated ? 'updated' : 'refused'}`);
   };
 
   const logout = async () => {
@@ -74,6 +87,8 @@ function Screen() {
       <Button label="Sign in as Bob" onPress={() => login('bob')} />
       <Button label="Open messenger" onPress={() => Plunk.present()} />
       <Button label="Report a bug" onPress={() => Plunk.presentMessageComposer('I found a bug: ')} />
+      <Button label="Finish a module" onPress={finishModule} />
+      {recorded ? <Text testID="recorded">{recorded}</Text> : null}
       <Button label="Log out" onPress={logout} />
       <StatusBar style="auto" />
     </View>

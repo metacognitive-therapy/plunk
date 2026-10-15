@@ -1,6 +1,15 @@
 import {type EventStream, type EventStreamTransport, openEventStream} from '@plunk/shared/event-stream';
 
-import type {AttachmentLink, BootResponse, Conversation, ConversationSummary, Message, PickedFile, StartResponse} from './types';
+import type {
+  AttachmentLink,
+  BootResponse,
+  Conversation,
+  ConversationSummary,
+  Message,
+  PickedFile,
+  StartResponse,
+  UserAttributeValue,
+} from './types';
 
 export class MessengerApiError extends Error {
   public constructor(
@@ -94,6 +103,14 @@ export class MessengerClient {
 
   public removePushToken(token: string): Promise<void> {
     return this.withSession('POST', '/v1/messenger/push-token/remove', {token});
+  }
+
+  public updateUser(attributes: Record<string, UserAttributeValue>): Promise<void> {
+    return this.withSession('POST', '/v1/messenger/user', {attributes});
+  }
+
+  public logEvent(name: string, data?: Record<string, UserAttributeValue>, occurredAt?: string): Promise<void> {
+    return this.withSession('POST', '/v1/messenger/events', {name, data, occurredAt});
   }
 
   public openStream(handlers: {onEvent: (data: string) => void; onOpen: () => void; onDisconnect: () => void}): EventStream {

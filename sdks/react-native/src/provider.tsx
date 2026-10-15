@@ -3,13 +3,18 @@ import {AppState} from 'react-native';
 
 import {conversationOf, MessengerController} from './controller';
 import {defaultStrings, type Strings} from './strings';
-import type {PlunkConfig, UserLogin} from './types';
+import type {LogEventOptions, PlunkConfig, UserAttributeValue, UserLogin} from './types';
 import {Messenger} from './ui';
 import {xhrTransport} from './xhr-transport';
 
 let current: MessengerController | null = null;
 /* A notification handled before <PlunkProvider> mounted, as on a cold start from a tap. */
 let early: {pushToken: string | null; notification: unknown} = {pushToken: null, notification: null};
+
+function notMounted(action: string): Promise<boolean> {
+  console.warn(`[Plunk] ${action} needs <PlunkProvider> to be mounted and a signed-in user`);
+  return Promise.resolve(false);
+}
 
 function controller(): MessengerController {
   if (!current) {
@@ -55,6 +60,18 @@ export const Plunk = {
   /** Fires whenever the number of conversations with an unread reply changes. Returns an unsubscribe function. */
   addUnreadCountListener(listener: (count: number) => void): () => void {
     return controller().addUnreadCountListener(listener);
+  },
+  /**
+   * Sets attributes on the signed-in user's contact. Each must be declared in Settings > Messenger;
+   * a null removes one. Resolves false, with a warning, when there is no signed-in user or the
+   * update is refused.
+   */
+  updateUser(attributes: Record<string, UserAttributeValue>): Promise<boolean> {
+    return current ? current.updateUser(attributes) : notMounted('updateUser');
+  },
+  /** Records an event on the signed-in user's contact, which can start workflows. Resolves false like `updateUser`. */
+  logEvent(name: string, data?: Record<string, UserAttributeValue>, options?: LogEventOptions): Promise<boolean> {
+    return current ? current.logEvent(name, data, options) : notMounted('logEvent');
   },
   /** An Expo push token from `getExpoPushTokenAsync`. Registered for each signed-in user until logout. */
   registerPushToken(token: string): void {

@@ -108,6 +108,28 @@ fresh token each time rather than return a cached one.
 `logout` closes the connection, forgets the session and starts a new visitor id, so the next person
 on the device sees none of the previous user's conversations.
 
+## User attributes and events
+
+What the app knows about the signed-in user goes onto their contact, where segments and workflows
+can use it:
+
+```ts
+await Plunk.updateUser({is_premium: true, completed_modules_count: 4}); // null removes one
+await Plunk.logEvent('finished_journey_module', {moduleId: 'm-4'});
+await Plunk.logEvent('purchase_completed', {plan: 'yearly'}, {occurredAt: purchase.date});
+```
+
+- `updateUser` only sets the attributes declared in Settings > Messenger > App user attributes. An
+  update with any other name is refused whole.
+- Values are strings, numbers or booleans. Event data holds up to 25 of them and stays on the
+  event: it is never copied onto the contact.
+- Both need a signed-in user. For an anonymous user they record nothing, and nothing is kept for
+  later, so one person's activity never lands on the next person who signs in on the device. A
+  call made while `loginUser` is still in progress waits for it.
+- Neither throws. Each resolves `true` once recorded, or `false` with a `[Plunk]` warning saying why.
+
+The wiki's "Moving from Intercom" guide maps noworries' Intercom attributes and events.
+
 ## Push notifications
 
 Agent replies are pushed to signed-in users through Expo's push service. Your app asks for
@@ -157,6 +179,8 @@ with its APNs key and FCM credentials uploaded. Raw APNs or FCM device tokens ar
 | `presentConversation(id)`                                    | `Plunk.presentConversation(id)`               |
 | `getUnreadConversationCount()` / unread event listener       | `Plunk.getUnreadConversationCount()` / `Plunk.addUnreadCountListener` |
 | `hideIntercom()`                                             | `Plunk.hide()`                                |
+| `updateUser({customAttributes})`                             | `Plunk.updateUser(attributes)`: declared attributes only |
+| `logEvent(name, metaData)`                                   | `Plunk.logEvent(name, data, {occurredAt})`    |
 | `sendTokenToIntercom(deviceToken)`                           | `Plunk.registerPushToken(expoPushToken)`: an Expo token from `getExpoPushTokenAsync`, not the device token |
 | Intercom's notification tap handling                         | `Plunk.handlePushNotification(data)`          |
 
@@ -194,7 +218,8 @@ EXPO_PUBLIC_PLUNK_PUBLIC_KEY=pk_... npx expo start --ios
 `EXPO_PUBLIC_PLUNK_API_URL` (default `http://localhost:8082`) and `EXPO_PUBLIC_TOKEN_SERVER`
 (default `http://localhost:5602`) point it elsewhere. `notifications.ts` shows push wiring: set
 `EXPO_PUBLIC_EAS_PROJECT_ID` on a real device, or `EXPO_PUBLIC_TEST_PUSH_TOKEN` to register a made-up
-token on a simulator, which can't get a real one.
+token on a simulator, which can't get a real one. "Finish a module" logs an event and sets
+`completed_modules_count`, so declare that attribute first.
 
 ## Development
 

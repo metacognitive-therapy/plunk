@@ -106,6 +106,14 @@ export interface PlunkConfig {
   pickAttachment?: () => Promise<PickedFile | null>;
 }
 
+/** A contact attribute value; null removes the attribute. */
+export type UserAttributeValue = string | number | boolean | null;
+
+export interface LogEventOptions {
+  /** When it happened, if not now: a Date, an ISO string or epoch milliseconds. */
+  occurredAt?: Date | string | number;
+}
+
 /** Signs a user in. The token comes from the app's backend, signed with the messenger's identity secret. */
 export interface UserLogin {
   /** Called whenever a token is needed, so it can return a fresh one: tokens last an hour at most. */
