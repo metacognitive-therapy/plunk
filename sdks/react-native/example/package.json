@@ -6,6 +6,7 @@
     "@plunk/react-native": "file:plunk-react-native-0.1.0.tgz",
     "expo": "~56.0.23",
     "expo-image-picker": "~56.0.25",
+    "expo-notifications": "~56.0.26",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
     "react-native": "0.85.3"

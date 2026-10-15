@@ -21,6 +21,7 @@ const BUDGETS = {
   message: {visitor: {burst: 30, refill: 1 / 2}, ip: {burst: 120, refill: 2}},
   upload: {visitor: {burst: 10, refill: 1 / 30}, ip: {burst: 30, refill: 1 / 10}},
   email: {visitor: {burst: 5, refill: 1 / 60}, ip: {burst: 20, refill: 1 / 30}},
+  push: {visitor: {burst: 10, refill: 1 / 60}, ip: {burst: 60, refill: 1 / 5}},
 } satisfies Record<string, {visitor: Budget; ip: Budget}>;
 
 export type MessengerAction = keyof typeof BUDGETS;

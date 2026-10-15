@@ -5,6 +5,7 @@ import React from 'react';
 import {DASHBOARD_URI} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {ChatEmailService} from './ChatEmailService.js';
+import {ContactPushService} from './ContactPushService.js';
 import {ConversationService} from './ConversationService.js';
 import {Keys} from './keys.js';
 import {MessengerSettingsService} from './MessengerSettingsService.js';
@@ -23,7 +24,7 @@ const UNREAD_EMAIL_MAX_MESSAGES = 5;
 export class ChatNotificationService {
   public static async process(
     job: ChatNotificationJobData,
-  ): Promise<{notified: number} | {sent: number} | {posted: boolean}> {
+  ): Promise<{notified: number} | {sent: number} | {posted: boolean} | {removed: number}> {
     switch (job.type) {
       case 'mention':
         return this.mention(job.messageId);
@@ -35,6 +36,10 @@ export class ChatNotificationService {
         return this.agentEmail(job.messageId);
       case 'slack':
         return SlackService.notify(job.messageId);
+      case 'contact_push':
+        return ContactPushService.sendForMessage(job.messageId);
+      case 'push_receipts':
+        return ContactPushService.checkReceipts(job.projectId, job.receipts);
     }
   }
 

@@ -8,6 +8,7 @@ import {chatAttachmentUpload} from '../middleware/attachmentUpload.js';
 import {messengerSession, requireMessengerSession} from '../middleware/messenger.js';
 import {messengerRateLimit} from '../middleware/messengerRateLimit.js';
 import {ChatAttachmentService} from '../services/ChatAttachmentService.js';
+import {ContactPushService} from '../services/ContactPushService.js';
 import {ConversationService} from '../services/ConversationService.js';
 import {MessengerContactService} from '../services/MessengerContactService.js';
 import {Keys} from '../services/keys.js';
@@ -59,6 +60,24 @@ export class Messenger {
     const input = MessengerSchemas.captureEmail.parse(req.body);
     const data = await MessengerContactService.captureEmail(messengerSession(res), input);
     return res.json({success: true, data});
+  }
+
+  @Post('push-token')
+  @Middleware([requireMessengerSession, messengerRateLimit('push')])
+  @CatchAsync
+  private async registerPushToken(req: Request, res: Response, _next: NextFunction) {
+    const {token} = MessengerSchemas.pushToken.parse(req.body);
+    await ContactPushService.register(messengerSession(res), token);
+    return res.json({success: true});
+  }
+
+  @Post('push-token/remove')
+  @Middleware([requireMessengerSession, messengerRateLimit('push')])
+  @CatchAsync
+  private async removePushToken(req: Request, res: Response, _next: NextFunction) {
+    const {token} = MessengerSchemas.pushToken.parse(req.body);
+    await ContactPushService.unregister(messengerSession(res), token);
+    return res.json({success: true});
   }
 
   @Get('conversations')

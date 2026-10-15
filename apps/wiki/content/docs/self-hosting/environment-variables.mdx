@@ -172,7 +172,7 @@ Plunk bundles a self-hosted [ntfy](https://ntfy.sh) server for internal system n
 
 ## Messenger (Live Chat)
 
-The messenger always rate limits boots, new conversations, messages, uploads and email capture per visitor and per IP, independent of `RATE_LIMIT_ENABLED`. A visitor who hits a limit sees a "too quickly" message and can continue once the window passes.
+The messenger always rate limits boots, new conversations, messages, uploads, email capture and push token registration per visitor and per IP, independent of `RATE_LIMIT_ENABLED`. A visitor who hits a limit sees a "too quickly" message and can continue once the window passes.
 
 | Variable               | Required | Description                                                                                                                                                                                               | Default |
 | ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -191,6 +191,12 @@ Generate the key pair once with `npx web-push generate-vapid-keys` and keep it. 
 | `VAPID_PUBLIC_KEY`  | No       | Public key of the Web Push (VAPID) key pair. Sent to browsers when an agent subscribes.            | —       |
 | `VAPID_PRIVATE_KEY` | No       | Private key of the pair, used by the worker to sign push messages. Keep it secret.                | —       |
 | `VAPID_SUBJECT`     | No       | A `mailto:` or `https:` contact the push services can use to reach you, e.g. `mailto:support@example.com`. | —       |
+
+Agent replies are also pushed to signed-in users of apps built with the React Native SDK. These go through Expo's push service and need no variables unless the Expo account that owns the apps has enhanced push security turned on.
+
+| Variable            | Required | Description                                                                                       | Default |
+| ------------------- | -------- | ------------------------------------------------------------------------------------------------- | ------- |
+| `EXPO_ACCESS_TOKEN` | No       | An Expo access token, sent with every push. Needed only when enhanced push security is on for the Expo account. | —       |
 
 ## Advanced
 

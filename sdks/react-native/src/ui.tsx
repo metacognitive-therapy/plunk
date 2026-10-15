@@ -255,8 +255,13 @@ function Thread({
     client
       .getConversation(conversationId)
       .then(setConversation)
-      .catch(() => undefined);
-  }, [client, conversationId]);
+      .catch(error => {
+        /* A notification for a conversation this user can't see, e.g. another user's on this device. */
+        if (error instanceof MessengerApiError && error.status === 404) {
+          controller.navigate({screen: 'home'});
+        }
+      });
+  }, [client, controller, conversationId]);
 
   const append = useCallback((message: Message) => {
     setConversation(current =>

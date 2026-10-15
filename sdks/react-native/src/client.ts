@@ -88,6 +88,14 @@ export class MessengerClient {
     return this.withSession('POST', `/v1/messenger/conversations/${encodeURIComponent(id)}/read`, {});
   }
 
+  public registerPushToken(token: string): Promise<void> {
+    return this.withSession('POST', '/v1/messenger/push-token', {token});
+  }
+
+  public removePushToken(token: string): Promise<void> {
+    return this.withSession('POST', '/v1/messenger/push-token/remove', {token});
+  }
+
   public openStream(handlers: {onEvent: (data: string) => void; onOpen: () => void; onDisconnect: () => void}): EventStream {
     return openEventStream({
       url: `${this.apiUrl}/v1/messenger/stream`,
