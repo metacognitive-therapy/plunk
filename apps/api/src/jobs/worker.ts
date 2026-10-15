@@ -25,6 +25,7 @@ import {createImportWorker} from './import-processor.js';
 import {createMeterWorker} from './meter-processor.js';
 import {createScheduledCampaignWorker} from './scheduled-processor.js';
 import {createSegmentCountWorker} from './segment-count-processor.js';
+import {createChatNotificationWorker} from './chat-notification-processor.js';
 import {createSequenceSweepWorker} from './sequence-sweep-processor.js';
 import {createSnoozeSweepWorker} from './snooze-sweep-processor.js';
 import {createWorkflowWorker} from './workflow-processor-queue.js';
@@ -84,6 +85,11 @@ async function startWorkers() {
     const sequenceSweepWorker = createSequenceSweepWorker();
     workers.push({name: 'sequence-sweep', worker: sequenceSweepWorker});
     signale.success('[WORKER] Sequence sweep worker started');
+
+    // Start live chat notification worker
+    const chatNotificationWorker = createChatNotificationWorker();
+    workers.push({name: 'chat-notification', worker: chatNotificationWorker});
+    signale.success('[WORKER] Chat notification worker started');
 
     // Start snoozed conversation wake-up sweep worker
     const snoozeSweepWorker = createSnoozeSweepWorker();

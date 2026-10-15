@@ -4,20 +4,25 @@ import {createServer, type Server} from 'node:http';
 import {Role} from '@plunk/db';
 import {openEventStream} from '@plunk/shared/event-stream';
 import request from 'supertest';
-import {afterAll, beforeAll, describe, expect, it} from 'vitest';
+import {afterAll, beforeAll, describe, expect, it, vi} from 'vitest';
 
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 import {Conversations} from '../../controllers/Conversations';
 import {Messenger} from '../../controllers/Messenger';
+import {Users} from '../../controllers/Users';
 import {redis} from '../../database/redis';
+import {ChatNotificationService} from '../../services/ChatNotificationService';
 import {ConversationService} from '../../services/ConversationService';
+import {QueueService} from '../../services/QueueService';
 import {RealtimeHub, realtime} from '../../services/RealtimeHub';
 import {buildHttpApp} from '../helpers/httpApp';
 import {asAgent, messengerClient, messengerProject} from '../helpers/messenger';
 
 const hub = new RealtimeHub();
 const streamOptions = {heartbeatMs: 150, hub};
-const app = buildHttpApp({controllers: [new Messenger(streamOptions), new Conversations(streamOptions)]});
+const app = buildHttpApp({
+  controllers: [new Messenger(streamOptions), new Conversations(streamOptions), new Users(streamOptions)],
+});
 const shortLivedApp = buildHttpApp({
   controllers: [new Messenger({...streamOptions, maxLifetimeMs: 300}), new Conversations(streamOptions)],
 });
@@ -275,6 +280,34 @@ describe('Live chat realtime', () => {
     expect((await fetch(`${base}/v1/messenger/stream`)).status).toBe(401);
     expect((await fetch(`${base}/v1/messenger/stream`, {headers: {Authorization: 'Bearer nope'}})).status).toBe(401);
     expect((await fetch(`${base}/conversations/stream`, {headers: asAgent(member.id, project.id)})).status).toBe(403);
+  });
+
+  it('delivers a mention to the mentioned agent on their personal stream', async () => {
+    vi.spyOn(QueueService, 'queueChatNotification').mockResolvedValue(undefined as never);
+    const {owner, project, conversationId} = await chatProject();
+    const kari = await factories.createUser();
+    await prisma.user.update({where: {id: kari.id}, data: {emailVerified: true, name: 'Kari Nordmann'}});
+    await prisma.membership.create({
+      data: {userId: kari.id, projectId: project.id, role: Role.MEMBER, supportAgent: true},
+    });
+    const kariStream = await connect('/users/@me/stream', asAgent(kari.id, project.id));
+    const ownerStream = await connect('/users/@me/stream', asAgent(owner.id, project.id));
+
+    const note = await ConversationService.addNote(project.id, owner.id, conversationId, {
+      body: '@Kari Nordmann can you look at this?',
+      mentionedUserIds: [kari.id],
+    });
+    await ChatNotificationService.process({type: 'mention', messageId: note.id});
+
+    const mention = await kariStream.waitFor(event => event.type === 'mention');
+    expect(mention).toMatchObject({projectId: project.id, conversationId, messageId: note.id});
+    await sleep(100);
+    expect(ownerStream.events().map(event => event.type)).toEqual(['ready']);
+    expect((await fetch(`${base}/users/@me/stream`)).status).toBe(401);
+
+    kariStream.close();
+    ownerStream.close();
+    vi.restoreAllMocks();
   });
 
   it('delivers a message published by one instance to a stream held by another', async () => {

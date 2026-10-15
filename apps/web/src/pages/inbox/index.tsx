@@ -1,5 +1,5 @@
-import {Button, EmptyState, IconSpinner, Textarea} from '@plunk/ui';
-import {CONVERSATION_VIEWS, type ConversationSchemas, type ConversationView} from '@plunk/shared';
+import {Button, EmptyState, IconSpinner} from '@plunk/ui';
+import {CONVERSATION_VIEWS, type ConversationView} from '@plunk/shared';
 import type {
   InboxConversation,
   InboxConversationSummary,
@@ -9,16 +9,16 @@ import type {
   InboxStreamEvent,
   InboxSystemEvent,
 } from '@plunk/types';
-import {AlarmClock, ArrowLeft, Inbox as InboxIcon, MessageSquare, Send} from 'lucide-react';
+import {AlarmClock, ArrowLeft, Inbox as InboxIcon, MessageSquare, StickyNote} from 'lucide-react';
 import {NextSeo} from 'next-seo';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
 import {useCallback, useEffect, useRef, useState} from 'react';
-import {toast} from 'sonner';
 import useSWR from 'swr';
 import useSWRInfinite from 'swr/infinite';
 
 import {DashboardLayout} from '../../components/DashboardLayout';
+import {Composer} from '../../components/inbox/Composer';
 import {ConversationActions, formatSnoozeDate} from '../../components/inbox/ConversationActions';
 import {formatRelativeTime} from '../../lib/dateUtils';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
@@ -31,7 +31,6 @@ import {network} from '../../lib/network';
 const LIST_REFRESH_MS = 10_000;
 const THREAD_REFRESH_MS = 5_000;
 const LIST_REFRESH_DEBOUNCE_MS = 250;
-const TYPING_SEND_INTERVAL_MS = 2500;
 const TYPING_VISIBLE_MS = 4000;
 const PAGE_SIZE = 30;
 
@@ -291,10 +290,7 @@ function Thread({
   const {data, mutate, error} = useSWR<{success: boolean; data: InboxConversation}>(`/conversations/${conversationId}`, {
     refreshInterval: connected ? 0 : THREAD_REFRESH_MS,
   });
-  const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState<string | null>(null);
-  const lastTypingSent = useRef(0);
   const bottom = useRef<HTMLDivElement>(null);
   const conversation = data?.data;
   const messageCount = conversation?.messages.length ?? 0;
@@ -359,15 +355,6 @@ function Thread({
     bottom.current?.scrollIntoView({block: 'end'});
   }, [messageCount, typing]);
 
-  const onDraft = (value: string) => {
-    setDraft(value);
-    const now = Date.now();
-    if (value.trim() && now - lastTypingSent.current > TYPING_SEND_INTERVAL_MS) {
-      lastTypingSent.current = now;
-      void network.fetch('POST', `/conversations/${conversationId}/typing`).catch(() => undefined);
-    }
-  };
-
   const seenMessageId = (() => {
     if (!conversation?.contactLastReadAt) return null;
     const lastReply = [...conversation.messages]
@@ -375,26 +362,6 @@ function Thread({
       .find(message => message.authorType === 'AGENT' && message.kind === 'COMMENT');
     return lastReply && new Date(conversation.contactLastReadAt) >= new Date(lastReply.createdAt) ? lastReply.id : null;
   })();
-
-  const send = async () => {
-    const body = draft.trim();
-    if (!body || sending) return;
-    setSending(true);
-    try {
-      await network.fetch<{data: InboxMessage}, typeof ConversationSchemas.reply>(
-        'POST',
-        `/conversations/${conversationId}/messages`,
-        {body},
-      );
-      setDraft('');
-      await mutate();
-      onChanged();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Couldn’t send the reply. Try again.');
-    } finally {
-      setSending(false);
-    }
-  };
 
   if (error) {
     return <div className="m-auto text-sm text-neutral-500">Couldn’t load this conversation.</div>;
@@ -454,35 +421,14 @@ function Thread({
           )}
           <div ref={bottom} />
         </div>
-        <form
-          className="border-t border-neutral-200 bg-white p-3"
-          onSubmit={event => {
-            event.preventDefault();
-            void send();
+        <Composer
+          conversationId={conversationId}
+          currentUserId={currentUserId}
+          onSent={async () => {
+            await mutate();
+            onChanged();
           }}
-        >
-          <Textarea
-            value={draft}
-            onChange={event => onDraft(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-            placeholder="Reply to the visitor…"
-            rows={3}
-            maxLength={5000}
-            aria-label="Reply"
-          />
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-xs text-neutral-400">⌘ Enter to send</span>
-            <Button type="submit" size="sm" disabled={sending || !draft.trim()}>
-              <Send className="mr-2 h-4 w-4" />
-              Send
-            </Button>
-          </div>
-        </form>
+        />
       </div>
       <aside className="hidden w-64 shrink-0 border-l border-neutral-200 p-4 xl:block">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Contact</h2>
@@ -530,6 +476,21 @@ function MessageRow({
       </div>
     );
   }
+  if (message.kind === 'NOTE') {
+    return (
+      <div className="flex flex-col items-end">
+        <div className="max-w-[75%] whitespace-pre-wrap break-words rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-sm text-amber-950">
+          <NoteBody body={message.body} mentions={message.mentions} currentUserId={currentUserId} />
+        </div>
+        <div className="mt-1 flex items-center gap-1 px-1 text-[11px] text-neutral-400">
+          <StickyNote className="h-3 w-3 text-amber-600" />
+          <span className="font-medium text-amber-700">Note</span>
+          {` · ${message.author?.id === currentUserId ? 'You' : (message.author?.name ?? 'Team')} · `}
+          {formatRelativeTime(message.createdAt)}
+        </div>
+      </div>
+    );
+  }
   const fromContact = message.authorType === 'CONTACT';
   return (
     <div className={`flex flex-col ${fromContact ? 'items-start' : 'items-end'}`}>
@@ -546,5 +507,38 @@ function MessageRow({
         {seen && ' · Seen'}
       </div>
     </div>
+  );
+}
+
+function NoteBody({
+  body,
+  mentions,
+  currentUserId,
+}: {
+  body: string;
+  mentions: InboxMessage['mentions'];
+  currentUserId: string | undefined;
+}) {
+  if (mentions.length === 0) {
+    return <>{body}</>;
+  }
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const names = [...mentions].sort((a, b) => b.name.length - a.name.length);
+  const pattern = new RegExp(`(${names.map(mention => `@${escape(mention.name)}`).join('|')})`, 'g');
+  return (
+    <>
+      {body.split(pattern).map((part, index) => {
+        const mention = names.find(candidate => part === `@${candidate.name}`);
+        if (!mention) return part;
+        return (
+          <span
+            key={index}
+            className={`rounded px-0.5 font-medium ${mention.id === currentUserId ? 'bg-amber-300 text-amber-950' : 'text-amber-800'}`}
+          >
+            {part}
+          </span>
+        );
+      })}
+    </>
   );
 }

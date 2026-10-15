@@ -67,6 +67,17 @@ export class Conversations {
     return res.status(201).json({success: true, data});
   }
 
+  @Post(':id/notes')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async note(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const input = ConversationSchemas.note.parse(req.body);
+    const data = await ConversationService.addNote(auth.projectId!, auth.userId!, id, input);
+    return res.status(201).json({success: true, data});
+  }
+
   @Post(':id/status')
   @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
   @CatchAsync

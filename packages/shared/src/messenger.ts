@@ -79,6 +79,10 @@ export const ConversationSchemas = {
   assign: z.object({
     assigneeId: z.string().uuid().nullable(),
   }),
+  note: z.object({
+    body: messageBody,
+    mentionedUserIds: z.array(z.string().uuid()).max(20).optional().default([]),
+  }),
 } as const;
 
 export const MESSENGER_DEFAULT_ACCENT = '#111827';
