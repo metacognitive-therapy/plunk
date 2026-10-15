@@ -63,6 +63,21 @@ export interface MessengerAppearance {
   team: {id: string; name: string}[];
 }
 
+export type MessengerReplyTimeValue = 'FEW_MINUTES' | 'FEW_HOURS' | 'ONE_DAY';
+
+/** One open stretch on an ISO weekday (1 = Monday), in minutes after local midnight. End is exclusive, up to 1440. */
+export interface OfficeHoursDay {
+  day: number;
+  start: number;
+  end: number;
+}
+
+export interface MessengerAvailability {
+  replyTime: MessengerReplyTimeValue;
+  /** Null when the project has no office hours, so the team is never shown as away. */
+  officeHours: {timezone: string; days: OfficeHoursDay[]} | null;
+}
+
 export interface MessengerBootResponse {
   token: string;
   expiresAt: string;
@@ -72,6 +87,9 @@ export interface MessengerBootResponse {
     language: string;
   };
   appearance: MessengerAppearance;
+  availability: MessengerAvailability;
+  /** The server's clock, so office hours are judged by it rather than by the visitor's device. */
+  serverTime: string;
   visitor: {
     hasEmail: boolean;
   };
@@ -211,6 +229,11 @@ export interface MessengerSettingsData {
   emailDelayMinutes: number;
   /** Whether a Slack webhook is saved. The URL itself is a credential and never leaves the server. */
   slackConnected: boolean;
+  replyTime: MessengerReplyTimeValue;
+  officeHoursEnabled: boolean;
+  officeHours: OfficeHoursDay[];
+  /** IANA time zone the office hours are kept in, e.g. Europe/Oslo. */
+  timezone: string;
 }
 
 /** Pushed to one visitor's messenger. Never carries internal notes or another visitor's threads. */

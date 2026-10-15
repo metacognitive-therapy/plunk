@@ -153,6 +153,67 @@ describe('Live chat messenger appearance', () => {
   });
 });
 
+describe('Live chat office hours', () => {
+  const WEEKDAYS = [1, 2, 3, 4, 5].map(day => ({day, start: 540, end: 1020}));
+
+  async function availabilityOf(publicKey: string) {
+    const res = await boot(publicKey, {visitorId: visitorId(), parentOrigin: ALLOWED}, API_ORIGIN);
+    expect(res.status).toBe(200);
+    return res.body.data;
+  }
+
+  it('boots with a reply time, no office hours and the server clock', async () => {
+    const {project} = await messengerProject();
+    const before = Date.now();
+
+    const data = await availabilityOf(project.public);
+
+    expect(data.availability).toEqual({replyTime: 'FEW_HOURS', officeHours: null});
+    expect(Date.parse(data.serverTime)).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it('sends the schedule once office hours are on, and drops it again when they are off', async () => {
+    const {owner, project} = await messengerProject();
+    const headers = asAgent(owner.id, project.id);
+    await availabilityOf(project.public);
+
+    const saved = await request(app)
+      .patch(`/projects/${project.id}/messenger`)
+      .set(headers)
+      .send({officeHoursEnabled: true, officeHours: WEEKDAYS, timezone: 'Europe/Oslo', replyTime: 'FEW_MINUTES'});
+    expect(saved.status).toBe(200);
+    expect(saved.body.data).toMatchObject({
+      officeHoursEnabled: true,
+      officeHours: WEEKDAYS,
+      timezone: 'Europe/Oslo',
+      replyTime: 'FEW_MINUTES',
+    });
+    expect((await availabilityOf(project.public)).availability).toEqual({
+      replyTime: 'FEW_MINUTES',
+      officeHours: {timezone: 'Europe/Oslo', days: WEEKDAYS},
+    });
+
+    await request(app).patch(`/projects/${project.id}/messenger`).set(headers).send({officeHoursEnabled: false}).expect(200);
+    expect((await availabilityOf(project.public)).availability.officeHours).toBeNull();
+    const settings = await request(app).get(`/projects/${project.id}/messenger`).set(headers);
+    expect(settings.body.data.officeHours).toEqual(WEEKDAYS);
+  });
+
+  it('refuses office hours with no open day, an unknown time zone or a day closing before it opens', async () => {
+    const {owner, project} = await messengerProject();
+    const headers = asAgent(owner.id, project.id);
+    const patch = (body: object) => request(app).patch(`/projects/${project.id}/messenger`).set(headers).send(body);
+
+    expect((await patch({officeHoursEnabled: true})).status).toBe(400);
+    expect((await patch({officeHoursEnabled: true, officeHours: []})).status).toBe(400);
+    expect((await patch({timezone: 'Mars/Olympus'})).status).toBe(422);
+    expect((await patch({officeHours: [{day: 1, start: 1020, end: 540}]})).status).toBe(422);
+
+    await patch({officeHoursEnabled: true, officeHours: WEEKDAYS}).expect(200);
+    expect((await patch({officeHours: []})).status).toBe(400);
+  });
+});
+
 describe('Profile name', () => {
   it('sets, trims and clears the signed-in user name', async () => {
     const {owner, project} = await messengerProject();

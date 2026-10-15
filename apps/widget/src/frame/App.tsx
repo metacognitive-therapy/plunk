@@ -1,4 +1,5 @@
 import {CHAT_ATTACHMENT_ACCEPT, CHAT_ATTACHMENT_MAX_BYTES, formatFileSize, isInlineImage} from '@plunk/shared/attachments';
+import {officeHoursStatus} from '@plunk/shared/office-hours';
 import type {
   ChatAttachment,
   MessengerBootResponse,
@@ -20,11 +21,19 @@ const FALLBACK_POLL_MS = 15_000;
 const TYPING_SEND_INTERVAL_MS = 2500;
 const TYPING_VISIBLE_MS = 4000;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const AVAILABILITY_REFRESH_MS = 60_000;
 
 type StreamListener = (event: MessengerStreamEvent) => void;
 type Subscribe = (listener: StreamListener) => () => void;
 
 type View = {name: 'home'} | {name: 'thread'; conversationId: string | null};
+
+/** `online` is null when the project keeps no office hours. `now` is the server's clock. */
+interface Availability {
+  online: boolean | null;
+  nextOpenAt: Date | null;
+  now: Date;
+}
 
 interface AppProps {
   publicKey: string;
@@ -42,6 +51,7 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
   const [view, setView] = useState<View>({name: 'home'});
   const [conversations, setConversations] = useState<MessengerConversationSummary[]>([]);
   const [hasEmail, setHasEmail] = useState(true);
+  const [clockSkew, setClockSkew] = useState(0);
 
   const strings = stringsFor(boot?.project.language);
 
@@ -53,6 +63,7 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
     api
       .boot()
       .then(result => {
+        setClockSkew(Date.parse(result.serverTime) - Date.now());
         applyAccent(result.appearance.accentColor);
         setHasEmail(result.visitor.hasEmail);
         setBoot(result);
@@ -144,6 +155,8 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
     );
   }, []);
 
+  const availability = useAvailability(boot, clockSkew, panelOpen);
+
   const unread = conversations.filter(conversation => conversation.unread).length;
   useEffect(() => {
     bridge?.post({type: 'unread', count: unread});
@@ -186,6 +199,7 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
         <Home
           boot={boot}
           strings={strings}
+          availability={availability}
           conversations={conversations}
           onOpen={conversationId => setView({name: 'thread', conversationId})}
         />
@@ -199,6 +213,7 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
           streamConnected={streamConnected}
           canMarkRead={panelOpen && pageVisible}
           askForEmail={!hasEmail}
+          away={availability.online === false}
           onEmailCaptured={() => setHasEmail(true)}
           onRead={onRead}
           onStarted={conversationId => setView({name: 'thread', conversationId})}
@@ -206,6 +221,73 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
       )}
     </div>
   );
+}
+
+/* The frame stays mounted for as long as the page is open, so the status is re-judged every minute
+and whenever the panel opens, on the server's clock in case the visitor's device is off. */
+function useAvailability(boot: MessengerBootResponse | null, clockSkew: number, panelOpen: boolean): Availability {
+  const compute = useCallback((): Availability => {
+    const now = new Date(Date.now() + clockSkew);
+    const hours = boot?.availability?.officeHours;
+    if (!hours) {
+      return {online: null, nextOpenAt: null, now};
+    }
+    return {...officeHoursStatus(hours.days, hours.timezone, now), now};
+  }, [boot, clockSkew]);
+  const [availability, setAvailability] = useState(compute);
+
+  useEffect(() => {
+    setAvailability(compute());
+    if (!boot?.availability?.officeHours) {
+      return;
+    }
+    const timer = setInterval(() => setAvailability(compute()), AVAILABILITY_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [boot, compute, panelOpen]);
+
+  return availability;
+}
+
+function replyTimeText(boot: MessengerBootResponse, strings: Strings): string {
+  switch (boot.availability?.replyTime) {
+    case 'FEW_MINUTES':
+      return strings.replyFewMinutes;
+    case 'ONE_DAY':
+      return strings.replyOneDay;
+    default:
+      return strings.replyFewHours;
+  }
+}
+
+function availabilityText(availability: Availability, strings: Strings, language: string): string | null {
+  const {online, nextOpenAt, now} = availability;
+  if (online === null) {
+    return null;
+  }
+  if (online) {
+    return strings.online;
+  }
+  if (!nextOpenAt) {
+    return strings.away;
+  }
+  const minutes = Math.ceil((nextOpenAt.getTime() - now.getTime()) / 60_000);
+  if (minutes < 60) {
+    return strings.backInMinutes.replace('{minutes}', String(Math.max(1, minutes)));
+  }
+  const time = nextOpenAt.toLocaleTimeString(language, {hour: '2-digit', minute: '2-digit'});
+  const days = Math.round((startOfDay(nextOpenAt) - startOfDay(now)) / 86_400_000);
+  if (days === 0) {
+    return strings.backToday.replace('{time}', time);
+  }
+  if (days === 1) {
+    return strings.backTomorrow.replace('{time}', time);
+  }
+  const day = nextOpenAt.toLocaleDateString(language, {weekday: 'long'});
+  return strings.backOn.replace('{day}', day).replace('{time}', time);
+}
+
+function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
 function applyAccent(accent: string) {
@@ -249,11 +331,13 @@ function Header({
 function Home({
   boot,
   strings,
+  availability,
   conversations,
   onOpen,
 }: {
   boot: MessengerBootResponse;
   strings: Strings;
+  availability: Availability;
   conversations: MessengerConversationSummary[];
   onOpen: (conversationId: string | null) => void;
 }) {
@@ -271,6 +355,15 @@ function Home({
         ) : null}
         <h1>{boot.appearance.greeting ?? strings.greeting}</h1>
         <p>{strings.intro}</p>
+        <div class="pm-availability">
+          {availability.online !== null ? (
+            <div class="pm-presence" data-online={availability.online ? 'true' : 'false'}>
+              <span class="pm-presence-dot" aria-hidden="true" />
+              {availabilityText(availability, strings, boot.project.language)}
+            </div>
+          ) : null}
+          <div class="pm-reply-time">{replyTimeText(boot, strings)}</div>
+        </div>
         <button class="pm-primary" type="button" onClick={() => onOpen(null)}>
           {strings.newConversation}
         </button>
@@ -289,7 +382,7 @@ function Home({
                   </span>
                   <span class="pm-list-meta">
                     {formatTime(conversation.lastMessageAt)}
-                    {conversation.unread ? <span class="pm-dot" aria-label="unread" /> : null}
+                    {conversation.unread ? <span class="pm-dot" role="img" aria-label={strings.unread} /> : null}
                   </span>
                 </button>
               </li>
@@ -310,6 +403,7 @@ function Thread({
   streamConnected,
   canMarkRead,
   askForEmail,
+  away,
   onEmailCaptured,
   onRead,
   onStarted,
@@ -322,6 +416,8 @@ function Thread({
   streamConnected: boolean;
   canMarkRead: boolean;
   askForEmail: boolean;
+  /** Outside office hours. A new conversation then asks for an email before anything is sent. */
+  away: boolean;
   onEmailCaptured: () => void;
   onRead: (conversationId: string) => void;
   onStarted: (conversationId: string) => void;
@@ -337,6 +433,9 @@ function Thread({
   const lastMarkedRead = useRef<string | null>(null);
   const lastTypingSent = useRef(0);
   const [capturedEmail, setCapturedEmail] = useState<string | null>(null);
+  const [earlyEmail, setEarlyEmail] = useState('');
+  const [earlySubscribe, setEarlySubscribe] = useState(false);
+  const asksEarly = !conversationId && askForEmail && away;
   const messageCount = conversation?.messages.length ?? 0;
   const humanCheckContainer = useRef<HTMLDivElement>(null);
   const humanCheck = useRef<HumanCheck | null>(null);
@@ -453,6 +552,11 @@ function Thread({
     if (!body || sending) {
       return;
     }
+    const email = asksEarly ? earlyEmail.trim() : '';
+    if (email && !EMAIL_PATTERN.test(email)) {
+      setError(strings.emailInvalid);
+      return;
+    }
     setSending(true);
     setError(null);
     try {
@@ -471,6 +575,17 @@ function Thread({
         }
         const started = await api.startConversation(body, token);
         setConversation(started);
+        /* The address can only be tied to a conversation that passed the human check, so it is
+        sent once the conversation exists. If that fails, the usual prompt shows in the thread. */
+        if (email) {
+          try {
+            await api.captureEmail(started.id, email, earlySubscribe);
+            setCapturedEmail(email.toLowerCase());
+            onEmailCaptured();
+          } catch {
+            setEarlyEmail('');
+          }
+        }
         onStarted(started.id);
       }
       setDraft('');
@@ -537,6 +652,32 @@ function Thread({
               <span />
               <span />
             </div>
+          </div>
+        ) : null}
+        {asksEarly ? (
+          <div class="pm-email">
+            <div class="pm-email-title">{strings.emailPrompt}</div>
+            <div class="pm-email-hint">{strings.emailAwayHint}</div>
+            <div class="pm-email-row">
+              <input
+                type="email"
+                autocomplete="email"
+                inputMode="email"
+                value={earlyEmail}
+                maxLength={254}
+                placeholder={strings.emailPlaceholder}
+                aria-label={strings.emailPrompt}
+                onInput={event => setEarlyEmail((event.target as HTMLInputElement).value)}
+              />
+            </div>
+            <label class="pm-email-consent">
+              <input
+                type="checkbox"
+                checked={earlySubscribe}
+                onChange={event => setEarlySubscribe((event.target as HTMLInputElement).checked)}
+              />
+              {strings.emailConsent}
+            </label>
           </div>
         ) : null}
         {conversationId && askForEmail && conversation?.messages.some(message => message.authorType === 'CONTACT') ? (

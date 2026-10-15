@@ -250,6 +250,13 @@ model MessengerSettings {
   // Support agents whose avatars the messenger shows, in display order.
   teamUserIds      String[]                  @default([])
 
+  // Availability. officeHours holds at most one {day, start, end} per ISO weekday (1 = Monday), in
+  // minutes after midnight in `timezone`; it is only applied while officeHoursEnabled is true.
+  replyTime          MessengerReplyTime @default(FEW_HOURS)
+  officeHoursEnabled Boolean            @default(false)
+  officeHours        Json               @default("[]")
+  timezone           String             @default("UTC")
+
   // Email loop. Agent replies the visitor has not read are emailed from replyFromEmail after
   // emailDelayMinutes, with a reply-to of reply+<token>@replyDomain. Both addresses must sit on one
   // of the project's verified domains; replyDomain needs an MX record to SES inbound.
@@ -1233,6 +1240,12 @@ model IdempotencyKey {
 enum MessengerLauncherPosition {
   LEFT
   RIGHT
+}
+
+enum MessengerReplyTime {
+  FEW_MINUTES
+  FEW_HOURS
+  ONE_DAY
 }
 
 enum ConversationStatus {

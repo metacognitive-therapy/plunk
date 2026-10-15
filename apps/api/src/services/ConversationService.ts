@@ -155,6 +155,8 @@ export class ConversationService {
       expiresAt: expiresAt.toISOString(),
       project: {name: brand.name, logoUrl: brand.logoUrl, language: project.language},
       appearance: await MessengerSettingsService.appearance(project.id, settings),
+      availability: MessengerSettingsService.availability(settings),
+      serverTime: new Date().toISOString(),
       visitor: {hasEmail: await MessengerContactService.hasEmail(project.id, input.visitorId)},
       turnstileSiteKey: TurnstileService.siteKey(),
     };
