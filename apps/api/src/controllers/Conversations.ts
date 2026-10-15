@@ -3,7 +3,9 @@ import type {NextFunction, Request, Response} from 'express';
 import {ConversationSchemas, UtilitySchemas} from '@plunk/shared';
 
 import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
+import {chatAttachmentUpload} from '../middleware/attachmentUpload.js';
 import {requireAuth, requireEmailVerified, requireSupportAgent} from '../middleware/auth.js';
+import {ChatAttachmentService} from '../services/ChatAttachmentService.js';
 import {ConversationService} from '../services/ConversationService.js';
 import {ConversationTagService} from '../services/ConversationTagService.js';
 import {Keys} from '../services/keys.js';
@@ -139,6 +141,27 @@ export class Conversations {
     const {body} = ConversationSchemas.reply.parse(req.body);
     const data = await ConversationService.replyAsAgent(auth.projectId!, auth.userId!, id, body);
     return res.status(201).json({success: true, data});
+  }
+
+  @Post(':id/attachments')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent, chatAttachmentUpload])
+  @CatchAsync
+  private async replyWithAttachment(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {body} = ConversationSchemas.replyAttachment.parse(req.body ?? {});
+    const data = await ConversationService.replyWithAttachment(auth.projectId!, auth.userId!, id, req.file!, body);
+    return res.status(201).json({success: true, data});
+  }
+
+  @Get(':id/attachments/:attachmentId')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async attachmentLink(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {id: attachmentId} = UtilitySchemas.id.parse({id: req.params.attachmentId});
+    const data = await ChatAttachmentService.linkForAgent(res.locals.auth.projectId!, id, attachmentId);
+    return res.json({success: true, data});
   }
 
   @Post(':id/notes')

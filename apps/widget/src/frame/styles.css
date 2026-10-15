@@ -325,6 +325,95 @@ button {
   color: var(--pm-accent-contrast);
 }
 
+.pm-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--pm-muted);
+}
+
+.pm-attach:hover:not(:disabled) {
+  color: var(--pm-text);
+  background: var(--pm-theirs);
+}
+
+.pm-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--pm-border);
+  border-top-color: var(--pm-accent);
+  border-radius: 50%;
+  animation: pm-spin 0.8s linear infinite;
+}
+
+@keyframes pm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pm-image {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  border: 1px solid var(--pm-border);
+  border-radius: var(--pm-radius);
+  overflow: hidden;
+  background: var(--pm-theirs);
+  cursor: zoom-in;
+}
+
+.pm-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+
+.pm-image-placeholder {
+  display: block;
+  width: 180px;
+  height: 120px;
+}
+
+.pm-file {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: center;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--pm-border);
+  border-radius: var(--pm-radius);
+  background: var(--pm-surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.pm-file svg {
+  grid-row: span 2;
+  color: var(--pm-muted);
+}
+
+.pm-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.pm-file-size {
+  font-size: 11px;
+  color: var(--pm-muted);
+}
+
 .pm-send:disabled {
   opacity: 0.4;
   cursor: default;

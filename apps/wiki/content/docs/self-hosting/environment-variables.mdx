@@ -53,6 +53,7 @@ The bundled Docker setup includes Minio with defaults that work out of the box. 
 | `S3_ACCESS_KEY_SECRET` | No       | S3 or Minio secret key.                                            | —                   |
 | `S3_BUCKET`            | No       | Bucket name for file uploads.                                      | `uploads`           |
 | `S3_PUBLIC_URL`        | No       | Publicly accessible base URL for stored files.                     | —                   |
+| `S3_PRIVATE_BUCKET`    | No       | Private bucket for live chat attachments. Never made public; files are served only through five-minute signed links issued by the API. Created on startup. | `chat-attachments` |
 | `S3_FORCE_PATH_STYLE`  | No       | Use path-style URLs instead of virtual-hosted. Required for Minio. | `true`              |
 
 ## Attachments

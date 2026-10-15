@@ -20,6 +20,7 @@
   },
   "exports": {
     ".": "./dist/index.js",
-    "./event-stream": "./dist/event-stream.js"
+    "./event-stream": "./dist/event-stream.js",
+    "./attachments": "./dist/attachments.js"
   }
 }

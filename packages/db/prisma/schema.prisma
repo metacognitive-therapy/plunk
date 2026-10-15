@@ -323,6 +323,8 @@ model ConversationMessage {
   // Support agents @mentioned in a NOTE.
   mentionedUserIds String[] @default([])
 
+  attachments ConversationAttachment[]
+
   // Timestamps
   createdAt DateTime @default(now())
 
@@ -346,6 +348,30 @@ model ConversationRead {
 }
 
 // Inbox labels. Separate from contact tags: they describe the conversation, not the person.
+// A file sent in a conversation. The object lives in the private attachment bucket and is only
+// ever served through a short-lived signed link.
+model ConversationAttachment {
+  id String @id @default(uuid())
+
+  message   ConversationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId String
+
+  // Denormalized so access checks and erasure never join through messages.
+  conversationId String
+  projectId      String
+
+  key         String @unique
+  filename    String
+  contentType String
+  size        Int
+
+  createdAt DateTime @default(now())
+
+  @@index([messageId])
+  @@index([conversationId])
+  @@map("conversation_attachments")
+}
+
 model ConversationTag {
   id String @id @default(uuid())
 

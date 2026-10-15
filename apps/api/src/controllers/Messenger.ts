@@ -4,7 +4,9 @@ import {MessengerSchemas, UtilitySchemas} from '@plunk/shared';
 
 import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
 import {ErrorCode, HttpException} from '../exceptions/index.js';
+import {chatAttachmentUpload} from '../middleware/attachmentUpload.js';
 import {messengerSession, requireMessengerSession} from '../middleware/messenger.js';
+import {ChatAttachmentService} from '../services/ChatAttachmentService.js';
 import {ConversationService} from '../services/ConversationService.js';
 import {MessengerContactService} from '../services/MessengerContactService.js';
 import {Keys} from '../services/keys.js';
@@ -85,6 +87,26 @@ export class Messenger {
     const {body} = MessengerSchemas.sendMessage.parse(req.body);
     const data = await ConversationService.sendFromContact(messengerSession(res), id, body);
     return res.status(201).json({success: true, data});
+  }
+
+  @Post('conversations/:id/attachments')
+  @Middleware([requireMessengerSession, chatAttachmentUpload])
+  @CatchAsync
+  private async sendAttachment(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {body} = MessengerSchemas.sendAttachment.parse(req.body ?? {});
+    const data = await ConversationService.sendAttachmentFromContact(messengerSession(res), id, req.file!, body);
+    return res.status(201).json({success: true, data});
+  }
+
+  @Get('conversations/:id/attachments/:attachmentId')
+  @Middleware([requireMessengerSession])
+  @CatchAsync
+  private async attachmentLink(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {id: attachmentId} = UtilitySchemas.id.parse({id: req.params.attachmentId});
+    const data = await ChatAttachmentService.linkForSession(messengerSession(res), id, attachmentId);
+    return res.json({success: true, data});
   }
 
   @Post('conversations/:id/typing')

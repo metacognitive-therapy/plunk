@@ -37,6 +37,7 @@ export const S3_ACCESS_KEY_ID = validateEnv('S3_ACCESS_KEY_ID', '');
 export const S3_ACCESS_KEY_SECRET = validateEnv('S3_ACCESS_KEY_SECRET', '');
 export const S3_BUCKET = validateEnv('S3_BUCKET', 'uploads');
 export const S3_PUBLIC_URL = validateEnv('S3_PUBLIC_URL', '');
+export const S3_PRIVATE_BUCKET = validateEnv('S3_PRIVATE_BUCKET', 'chat-attachments');
 export const S3_FORCE_PATH_STYLE = validateEnv('S3_FORCE_PATH_STYLE', 'true') === 'true';
 export const S3_ENABLED = S3_ACCESS_KEY_ID !== '' && S3_ACCESS_KEY_SECRET !== '';
 

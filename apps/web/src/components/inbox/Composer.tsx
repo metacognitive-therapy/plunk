@@ -1,7 +1,7 @@
 import {Button, Textarea} from '@plunk/ui';
-import type {ConversationSchemas} from '@plunk/shared';
+import {CHAT_ATTACHMENT_ACCEPT, CHAT_ATTACHMENT_MAX_BYTES, type ConversationSchemas} from '@plunk/shared';
 import type {InboxAgent, InboxMessage, SavedReply} from '@plunk/types';
-import {MessageSquareText, Send, StickyNote} from 'lucide-react';
+import {Loader2, MessageSquareText, Paperclip, Send, StickyNote} from 'lucide-react';
 import Link from 'next/link';
 import {useRef, useState} from 'react';
 import {toast} from 'sonner';
@@ -63,6 +63,8 @@ export function Composer({
   const [highlight, setHighlight] = useState(0);
   const lastTypingSent = useRef(0);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
   const needle = trigger?.query.toLowerCase() ?? '';
   const suggestions: Suggestion[] = !trigger
@@ -174,6 +176,28 @@ export function Composer({
     }
   };
 
+  /* The draft is sent as the file's caption, so the agent can say what they are sharing. */
+  const attach = async (file: File | undefined) => {
+    if (!file || uploading) return;
+    if (file.size > CHAT_ATTACHMENT_MAX_BYTES) {
+      toast.error('Files can be up to 10 MB.');
+      return;
+    }
+    const form = new FormData();
+    form.append('body', draft.trim());
+    form.append('file', file);
+    setUploading(true);
+    try {
+      await network.upload<{data: InboxMessage}>('POST', `/conversations/${conversationId}/attachments`, form);
+      setDraft('');
+      await onSent();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Couldn’t send the file. Try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const note = mode === 'note';
 
   return (
@@ -203,11 +227,34 @@ export function Composer({
             {option === 'reply' ? 'Reply' : 'Note'}
           </button>
         ))}
+        {!note && (
+          <>
+            <input
+              ref={fileInput}
+              type="file"
+              hidden
+              accept={CHAT_ATTACHMENT_ACCEPT}
+              onChange={event => {
+                void attach(event.target.files?.[0]);
+                event.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => fileInput.current?.click()}
+              className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+            >
+              {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+              {uploading ? 'Sending…' : 'Attach'}
+            </button>
+          </>
+        )}
         <button
           type="button"
           onMouseDown={event => event.preventDefault()}
           onClick={openSavedReplies}
-          className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100"
+          className={`${note ? 'ml-auto ' : ''}flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100`}
         >
           <MessageSquareText className="h-3.5 w-3.5" />
           Saved replies

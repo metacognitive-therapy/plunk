@@ -32,6 +32,7 @@ import {DashboardLayout} from '../../components/DashboardLayout';
 import {Composer} from '../../components/inbox/Composer';
 import {ConversationActions, formatSnoozeDate} from '../../components/inbox/ConversationActions';
 import {ConversationTags, TagChip, useConversationTags} from '../../components/inbox/ConversationTags';
+import {MessageAttachments} from '../../components/inbox/MessageAttachments';
 import {formatRelativeTime} from '../../lib/dateUtils';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
 import {useInboxStream} from '../../lib/hooks/useInboxStream';
@@ -500,6 +501,7 @@ function Thread({
           {conversation.messages.map(message => (
             <MessageRow
               key={message.id}
+              conversationId={conversation.id}
               message={message}
               seen={message.id === seenMessageId}
               currentUserId={currentUserId}
@@ -547,10 +549,12 @@ function Thread({
 }
 
 function MessageRow({
+  conversationId,
   message,
   seen,
   currentUserId,
 }: {
+  conversationId: string;
   message: InboxMessage;
   seen: boolean;
   currentUserId: string | undefined;
@@ -584,15 +588,22 @@ function MessageRow({
   }
   const fromContact = message.authorType === 'CONTACT';
   return (
-    <div className={`flex flex-col ${fromContact ? 'items-start' : 'items-end'}`}>
-      <div
-        className={`max-w-[75%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm ${
-          fromContact ? 'border border-neutral-200 bg-white text-neutral-900' : 'bg-neutral-900 text-white'
-        }`}
-      >
-        {message.body}
-      </div>
-      <div className="mt-1 px-1 text-[11px] text-neutral-400">
+    <div className={`flex flex-col gap-1.5 ${fromContact ? 'items-start' : 'items-end'}`}>
+      {message.body && (
+        <div
+          className={`max-w-[75%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm ${
+            fromContact ? 'border border-neutral-200 bg-white text-neutral-900' : 'bg-neutral-900 text-white'
+          }`}
+        >
+          {message.body}
+        </div>
+      )}
+      <MessageAttachments
+        conversationId={conversationId}
+        attachments={message.attachments}
+        align={fromContact ? 'start' : 'end'}
+      />
+      <div className="px-1 text-[11px] text-neutral-400">
         {fromContact ? '' : `${message.author?.name ?? 'Team'} · `}
         {formatRelativeTime(message.createdAt)}
         {seen && ' · Seen'}
