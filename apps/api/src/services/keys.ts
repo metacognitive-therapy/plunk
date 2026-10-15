@@ -123,6 +123,9 @@ export const Keys = {
     settings(projectId: string): string {
       return `messenger:settings:${projectId}`;
     },
+    appearance(projectId: string): string {
+      return `messenger:appearance:${projectId}`;
+    },
   },
   Project: {
     id(id: string): string {

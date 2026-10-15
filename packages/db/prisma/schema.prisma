@@ -231,6 +231,13 @@ model MessengerSettings {
   // Exact origins (scheme + host + port) of the sites allowed to embed the messenger.
   allowedOrigins String[] @default([])
 
+  // Appearance
+  accentColor      String                    @default("#111827")
+  launcherPosition MessengerLauncherPosition @default(RIGHT)
+  greeting         String?
+  // Support agents whose avatars the messenger shows, in display order.
+  teamUserIds      String[]                  @default([])
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1090,6 +1097,11 @@ model IdempotencyKey {
 // ============================================
 // ENUMS
 // ============================================
+
+enum MessengerLauncherPosition {
+  LEFT
+  RIGHT
+}
 
 enum ConversationStatus {
   OPEN

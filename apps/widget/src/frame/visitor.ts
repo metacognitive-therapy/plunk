@@ -1,13 +1,6 @@
-const STORAGE_KEY = 'plunk_messenger_visitor';
+import {generateVisitorId} from '../shared/protocol';
 
-export function generateVisitorId(): string {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
+const STORAGE_KEY = 'plunk_messenger_visitor';
 
 /* Only used when the frame is opened on its own. Embedded, the loader owns the visitor id because
 third-party storage inside an iframe is partitioned or blocked by Safari. */

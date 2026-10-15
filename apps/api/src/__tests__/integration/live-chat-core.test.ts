@@ -10,7 +10,7 @@ import request from 'supertest';
 import {beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {factories, getPrismaClient} from '../../../../../test/helpers';
-import {API_URI, JWT_SECRET} from '../../app/constants';
+import {JWT_SECRET} from '../../app/constants';
 import {widgetRouter} from '../../app/widget';
 import {Conversations} from '../../controllers/Conversations';
 import {Messenger} from '../../controllers/Messenger';
@@ -18,55 +18,11 @@ import {jwt} from '../../middleware/auth';
 import {MembershipService} from '../../services/MembershipService';
 import {MessengerSettingsService} from '../../services/MessengerSettingsService';
 import {buildHttpApp} from '../helpers/httpApp';
-
-const ALLOWED = 'https://www.example.com';
-const API_ORIGIN = new URL(API_URI).origin;
+import {ALLOWED, API_ORIGIN, asAgent, messengerClient, messengerProject, visitorId} from '../helpers/messenger';
 
 const app = buildHttpApp({controllers: [new Messenger(), new Conversations()]});
 const prisma = getPrismaClient();
-
-function visitorId(): string {
-  return `v_${randomUUID().replace(/-/g, '')}`;
-}
-
-async function messengerProject(settings: {enabled?: boolean; allowedOrigins?: string[]} = {}) {
-  const {user: owner, project} = await factories.createUserWithProject();
-  await prisma.membership.update({
-    where: {userId_projectId: {userId: owner.id, projectId: project.id}},
-    data: {role: Role.OWNER},
-  });
-  await prisma.user.update({where: {id: owner.id}, data: {emailVerified: true}});
-  await MessengerSettingsService.update(project.id, {
-    enabled: settings.enabled ?? true,
-    allowedOrigins: settings.allowedOrigins ?? [ALLOWED],
-  });
-  return {owner, project};
-}
-
-function boot(publicKey: string, body: {visitorId: string; parentOrigin?: string}, origin?: string) {
-  const req = request(app).post('/v1/messenger/boot').set('Authorization', `Bearer ${publicKey}`);
-  if (origin) req.set('Origin', origin);
-  return req.send(body);
-}
-
-async function session(publicKey: string, visitor = visitorId()) {
-  const res = await boot(publicKey, {visitorId: visitor, parentOrigin: ALLOWED}, API_ORIGIN);
-  expect(res.status).toBe(200);
-  return {token: res.body.data.token as string, visitor};
-}
-
-async function startConversation(token: string, body = 'Hello, I need help') {
-  const res = await request(app)
-    .post('/v1/messenger/conversations')
-    .set('Authorization', `Bearer ${token}`)
-    .send({body});
-  expect(res.status).toBe(201);
-  return res.body.data as {token: string; conversation: {id: string; messages: {body: string}[]}};
-}
-
-function asAgent(userId: string, projectId: string) {
-  return {Cookie: `next_token=${jwt.sign(userId)}`, 'X-Project-Id': projectId};
-}
+const {boot, session, startConversation} = messengerClient(app);
 
 describe('Live chat core', () => {
   describe('boot', () => {

@@ -6,6 +6,7 @@ const en = {
   placeholder: 'Write a message…',
   send: 'Send',
   back: 'Back',
+  close: 'Close',
   you: 'You',
   team: 'The team',
   sending: 'Sending…',

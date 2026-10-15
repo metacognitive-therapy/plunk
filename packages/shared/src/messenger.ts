@@ -66,9 +66,39 @@ export const ConversationSchemas = {
   }),
 } as const;
 
+export const MESSENGER_DEFAULT_ACCENT = '#111827';
+export const MESSENGER_GREETING_MAX_LENGTH = 80;
+export const MESSENGER_TEAM_MAX = 5;
+export const MESSENGER_LAUNCHER_POSITIONS = ['LEFT', 'RIGHT'] as const;
+
 export const MessengerSettingsSchemas = {
   update: z.object({
     enabled: z.boolean().optional(),
     allowedOrigins: z.array(origin).max(50).optional(),
+    accentColor: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, 'Use a six-digit hex colour such as #111827')
+      .transform(value => value.toLowerCase())
+      .optional(),
+    launcherPosition: z.enum(MESSENGER_LAUNCHER_POSITIONS).optional(),
+    greeting: z
+      .string()
+      .trim()
+      .max(MESSENGER_GREETING_MAX_LENGTH)
+      .nullable()
+      .transform(value => value || null)
+      .optional(),
+    teamUserIds: z.array(z.string().uuid()).max(MESSENGER_TEAM_MAX).optional(),
+  }),
+} as const;
+
+export const ProfileSchemas = {
+  update: z.object({
+    name: z
+      .string()
+      .trim()
+      .max(60)
+      .nullable()
+      .transform(value => value || null),
   }),
 } as const;
