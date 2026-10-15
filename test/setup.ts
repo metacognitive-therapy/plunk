@@ -2,6 +2,10 @@
 // We rewrite DATABASE_URL and REDIS_URL here so per-worker isolation is
 // applied before any service module constructs a Prisma/Redis client.
 
+import http from 'node:http';
+import {createRequire} from 'node:module';
+import type {AddressInfo} from 'node:net';
+
 import dotenv from 'dotenv';
 import path from 'path';
 import {afterAll, afterEach, beforeAll, vi} from 'vitest';
@@ -31,6 +35,46 @@ if (process.env.REDIS_URL) {
 }
 
 process.env.NODE_ENV = 'test';
+
+/* supertest starts each app with listen(0), which binds every address, and then requests
+127.0.0.1. macOS allows that bind even when another local process already holds the same port on
+127.0.0.1 alone, and the request then lands in that unrelated process: a stray 403 or 501 with no
+body, failing a random test. Binding loopback explicitly makes the OS pick a port free there; that
+bind completes asynchronously, so the request is held until the server is listening. */
+interface SupertestTest {
+  _server?: http.Server;
+  _loopbackPath?: string;
+  url: string;
+  serverAddress(app: http.Server, path: string): string;
+  end(fn?: unknown): unknown;
+}
+const {prototype: supertestTest} = createRequire(import.meta.url)('supertest/lib/test.js') as {
+  prototype: SupertestTest;
+};
+const serverAddress = supertestTest.serverAddress;
+const end = supertestTest.end;
+supertestTest.serverAddress = function (this: SupertestTest, app, path) {
+  if (app instanceof http.Server && !app.address()) {
+    this._server = app.listen(0, '127.0.0.1');
+    this._loopbackPath = path;
+    return `http://127.0.0.1${path}`;
+  }
+  return serverAddress.call(this, app, path);
+};
+supertestTest.end = function (this: SupertestTest, fn) {
+  const server = this._server;
+  if (server && this._loopbackPath !== undefined && !server.listening) {
+    server.once('listening', () => {
+      this.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}${this._loopbackPath}`;
+      end.call(this, fn);
+    });
+    return this;
+  }
+  if (server && this._loopbackPath !== undefined) {
+    this.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}${this._loopbackPath}`;
+  }
+  return end.call(this, fn);
+};
 
 // constants.ts calls validateEnv() with no default for the SES credentials, so
 // importing any module that transitively pulls in constants.ts throws when they
