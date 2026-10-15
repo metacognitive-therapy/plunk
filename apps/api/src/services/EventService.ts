@@ -376,6 +376,7 @@ export class EventService {
    * - email.* (email.sent, email.delivery, email.open, email.click, email.bounce, email.complaint)
    * - contact.subscribed, contact.unsubscribed, contact.identified
    * - segment.*.entry, segment.*.exit
+   * - chat.email_captured
    *
    * @param eventName - The event name to check
    * @returns true if the event is reserved, false otherwise
@@ -398,6 +399,10 @@ export class EventService {
     // Segment events: segment.*.entry, segment.*.exit
     // Pattern: segment.<slug>.entry or segment.<slug>.exit
     if (eventName.startsWith('segment.') && (eventName.endsWith('.entry') || eventName.endsWith('.exit'))) {
+      return true;
+    }
+
+    if (eventName === 'chat.email_captured') {
       return true;
     }
 

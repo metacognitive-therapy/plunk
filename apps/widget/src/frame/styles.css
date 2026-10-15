@@ -330,6 +330,74 @@ button {
   cursor: default;
 }
 
+.pm-email {
+  margin: 4px 0 12px;
+  padding: 12px;
+  background: var(--pm-surface);
+  border: 1px solid var(--pm-border);
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.pm-email-title {
+  font-weight: 600;
+}
+
+.pm-email-hint {
+  margin: 2px 0 10px;
+  color: var(--pm-muted);
+}
+
+.pm-email-row {
+  display: flex;
+  gap: 8px;
+}
+
+.pm-email-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--pm-border);
+  border-radius: 8px;
+  font: inherit;
+  color: var(--pm-text);
+  background: var(--pm-surface);
+}
+
+.pm-email-row input:focus {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: -1px;
+}
+
+.pm-email-row button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--pm-accent-contrast);
+  background: var(--pm-accent);
+  cursor: pointer;
+}
+
+.pm-email-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pm-email-consent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--pm-muted);
+  cursor: pointer;
+}
+
+.pm-email .pm-error {
+  margin: 8px 0 0;
+}
+
 .pm-error {
   margin-bottom: 6px;
   color: #b91c1c;
