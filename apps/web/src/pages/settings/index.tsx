@@ -64,6 +64,8 @@ import {BrandingSettings} from '../../components/BrandingSettings';
 import {SmtpSettings} from '../../components/SmtpSettings';
 import {DataManagementSettings} from '../../components/DataManagementSettings';
 import {TeamSettings} from '../../components/TeamSettings';
+import {useSupportAccess} from '../../lib/hooks/useSupportAccess';
+import {InboxLibrarySettings} from '../../components/inbox/InboxLibrarySettings';
 import {MessengerSettings} from '../../components/MessengerSettings';
 import {SecuritySettings} from '../../components/SecuritySettings';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
@@ -123,6 +125,7 @@ export default function Settings() {
 
   const currentUserMembership = membershipData?.data.find(m => m.userId === user?.id);
   const currentUserRole = currentUserMembership?.role || 'MEMBER';
+  const hasSupportAccess = useSupportAccess();
 
   const {securityMetrics, isLoading: isLoadingSecurityMetrics} = useProjectSecurity(activeProject?.id);
 
@@ -828,7 +831,10 @@ export default function Settings() {
             </TabsContent>
 
             <TabsContent value="messenger">
-              <MessengerSettings canEdit={currentUserRole !== 'MEMBER'} />
+              <div className="space-y-6">
+                <MessengerSettings canEdit={currentUserRole !== 'MEMBER'} />
+                {hasSupportAccess && <InboxLibrarySettings />}
+              </div>
             </TabsContent>
 
             {/* Security Tab */}

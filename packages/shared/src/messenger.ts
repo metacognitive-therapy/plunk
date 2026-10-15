@@ -59,6 +59,7 @@ export type ConversationView = (typeof CONVERSATION_VIEWS)[number];
 export const ConversationSchemas = {
   list: z.object({
     view: z.enum(CONVERSATION_VIEWS).default('all'),
+    tag: z.string().uuid().optional(),
     cursor: z.string().optional(),
     limit: z
       .union([z.number(), z.string()])
@@ -82,6 +83,20 @@ export const ConversationSchemas = {
   note: z.object({
     body: messageBody,
     mentionedUserIds: z.array(z.string().uuid()).max(20).optional().default([]),
+  }),
+  tag: z.object({
+    name: z.string().trim().min(1, 'Name the tag').max(40),
+  }),
+  applyTag: z.object({
+    tagId: z.string().uuid(),
+  }),
+  savedReply: z.object({
+    title: z.string().trim().min(1, 'Give the reply a title').max(80),
+    body: messageBody,
+  }),
+  savedReplyUpdate: z.object({
+    title: z.string().trim().min(1, 'Give the reply a title').max(80).optional(),
+    body: messageBody.optional(),
   }),
 } as const;
 
