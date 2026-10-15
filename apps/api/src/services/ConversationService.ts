@@ -8,6 +8,7 @@ import {
   Prisma,
 } from '@plunk/db';
 import {CONTACT_IDENTITY_TYPES, type ConversationView, normalizeOrigin, resolveBrand} from '@plunk/shared';
+import signale from 'signale';
 import type {
   ChatAttachment,
   InboxAgent,
@@ -88,7 +89,8 @@ interface PostMessageInput {
   body: string;
   source: MessageSource;
   mentionedUserIds?: string[];
-  attachment?: StoredAttachment;
+  attachments?: StoredAttachment[];
+  unverifiedSender?: string;
 }
 
 type MentionNames = Map<string, string>;
@@ -653,10 +655,14 @@ export class ConversationService {
     const conversationUpdate: Prisma.ConversationUpdateInput = {};
     if (kind === 'COMMENT') {
       conversationUpdate.lastMessageAt = now;
-      conversationUpdate.lastMessagePreview = this.preview(input.body || (input.attachment ? `📎 ${input.attachment.filename}` : ''));
+      const firstFile = input.attachments?.[0];
+      conversationUpdate.lastMessagePreview = this.preview(input.body || (firstFile ? `📎 ${firstFile.filename}` : ''));
       conversationUpdate.lastMessageAuthorType = input.authorType;
     }
-    if (input.authorType === 'CONTACT') {
+    /* A NOTE from the contact side is an email from an unverified sender: it must neither reopen
+    the conversation nor mark it unread as if the visitor had written. */
+    const fromContact = input.authorType === 'CONTACT' && kind === 'COMMENT';
+    if (fromContact) {
       conversationUpdate.lastContactMessageAt = now;
     }
     if (input.authorType === 'AGENT' && kind === 'COMMENT' && !conversation.firstResponseAt) {
@@ -667,7 +673,7 @@ export class ConversationService {
       /* Guarded on the stored status, not the possibly stale one passed in, so a reply racing an
       agent's close still reopens exactly once. */
       let reopened: MessageWithAuthor | null = null;
-      if (input.authorType === 'CONTACT') {
+      if (fromContact) {
         const {count} = await tx.conversation.updateMany({
           where: {id: conversation.id, status: {in: ['CLOSED', 'SNOOZED']}},
           data: {status: 'OPEN', closedAt: null, snoozedUntil: null},
@@ -692,9 +698,16 @@ export class ConversationService {
           body: input.body,
           source: input.source,
           mentionedUserIds: input.mentionedUserIds ?? [],
+          unverifiedSender: input.unverifiedSender ?? null,
           createdAt: now,
-          attachments: input.attachment
-            ? {create: {...input.attachment, conversationId: conversation.id, projectId: conversation.projectId}}
+          attachments: input.attachments?.length
+            ? {
+                create: input.attachments.map(attachment => ({
+                  ...attachment,
+                  conversationId: conversation.id,
+                  projectId: conversation.projectId,
+                })),
+              }
             : undefined,
         },
         include: messageInclude,
@@ -724,17 +737,66 @@ export class ConversationService {
         : undefined,
     ]);
 
+    if (input.authorType === 'AGENT' && kind === 'COMMENT') {
+      await this.scheduleReplyEmail(conversation.projectId, message.id);
+    }
+
     return message;
+  }
+
+  /* The job re-checks everything when it fires (read, email on file, settings), so scheduling is
+  cheap and a visitor who gives an email during the delay still gets the reply. A queue failure
+  must not fail a reply that is already saved and delivered live. */
+  private static async scheduleReplyEmail(projectId: string, messageId: string): Promise<void> {
+    try {
+      const settings = await MessengerSettingsService.get(projectId);
+      if (!MessengerSettingsService.emailEnabled(settings)) {
+        return;
+      }
+      await QueueService.queueChatNotification(
+        {type: 'reply_email', messageId},
+        {delay: settings.emailDelayMinutes * 60_000},
+      );
+    } catch (error) {
+      signale.warn(`[CHAT] Could not schedule the reply email for message ${messageId}:`, error);
+    }
+  }
+
+  /**
+   * An email reply to a conversation. From the contact's own address it is a visitor message;
+   * from anyone else it is a NOTE flagged with the sender, which the visitor never sees.
+   */
+  public static async postFromEmail(
+    conversation: Conversation,
+    input: {body: string; files: IncomingFile[]; unverifiedSender: string | null},
+  ): Promise<MessageWithAuthor> {
+    const stored: StoredAttachment[] = [];
+    try {
+      for (const file of input.files) {
+        stored.push(await ChatAttachmentService.store(conversation.projectId, conversation.id, file));
+      }
+      return await this.postMessage(conversation, {
+        authorType: 'CONTACT',
+        kind: input.unverifiedSender ? 'NOTE' : 'COMMENT',
+        body: input.body,
+        source: 'EMAIL',
+        attachments: stored,
+        unverifiedSender: input.unverifiedSender ?? undefined,
+      });
+    } catch (error) {
+      await Promise.all(stored.map(attachment => ChatAttachmentService.discard(attachment.key)));
+      throw error;
+    }
   }
 
   private static async postWithAttachment(
     conversation: Conversation,
     file: IncomingFile,
-    input: Omit<PostMessageInput, 'attachment'>,
+    input: Omit<PostMessageInput, 'attachments'>,
   ): Promise<MessageWithAuthor> {
     const attachment = await ChatAttachmentService.store(conversation.projectId, conversation.id, file);
     try {
-      return await this.postMessage(conversation, {...input, attachment});
+      return await this.postMessage(conversation, {...input, attachments: [attachment]});
     } catch (error) {
       await ChatAttachmentService.discard(attachment.key);
       throw error;
@@ -891,6 +953,8 @@ export class ConversationService {
         return name ? [{id, name}] : [];
       }),
       attachments: message.attachments,
+      emailedAt: message.emailedAt?.toISOString() ?? null,
+      unverifiedSender: message.unverifiedSender,
       createdAt: message.createdAt.toISOString(),
     };
   }

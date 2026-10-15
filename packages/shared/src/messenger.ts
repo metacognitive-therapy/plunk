@@ -112,6 +112,9 @@ export const MESSENGER_DEFAULT_ACCENT = '#111827';
 export const MESSENGER_GREETING_MAX_LENGTH = 80;
 export const MESSENGER_TEAM_MAX = 5;
 export const MESSENGER_LAUNCHER_POSITIONS = ['LEFT', 'RIGHT'] as const;
+export const MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES = 5;
+export const MESSENGER_EMAIL_DELAY_MAX_MINUTES = 1440;
+const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 export const MessengerSettingsSchemas = {
   update: z.object({
@@ -131,6 +134,23 @@ export const MessengerSettingsSchemas = {
       .transform(value => value || null)
       .optional(),
     teamUserIds: z.array(z.string().uuid()).max(MESSENGER_TEAM_MAX).optional(),
+    replyDomain: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .refine(value => value === '' || HOSTNAME.test(value), 'Use a domain name such as reply.example.com')
+      .nullable()
+      .transform(value => value || null)
+      .optional(),
+    replyFromEmail: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .refine(value => value === '' || z.string().email().safeParse(value).success, 'Use an email address such as support@example.com')
+      .nullable()
+      .transform(value => value || null)
+      .optional(),
+    emailDelayMinutes: z.number().int().min(1).max(MESSENGER_EMAIL_DELAY_MAX_MINUTES).optional(),
   }),
 } as const;
 

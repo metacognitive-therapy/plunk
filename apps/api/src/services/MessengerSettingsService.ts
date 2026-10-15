@@ -1,5 +1,5 @@
 import type {MessengerSettings} from '@plunk/db';
-import {MESSENGER_DEFAULT_ACCENT} from '@plunk/shared';
+import {MESSENGER_DEFAULT_ACCENT, MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES} from '@plunk/shared';
 import type {MessengerAppearance, MessengerSettingsData} from '@plunk/types';
 
 import {prisma} from '../database/prisma.js';
@@ -17,6 +17,9 @@ const DEFAULT_SETTINGS: MessengerSettingsData = {
   launcherPosition: 'RIGHT',
   greeting: null,
   teamUserIds: [],
+  replyDomain: null,
+  replyFromEmail: null,
+  emailDelayMinutes: MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES,
 };
 
 export class MessengerSettingsService {
@@ -42,6 +45,9 @@ export class MessengerSettingsService {
       if (agents.size !== patch.teamUserIds.length) {
         throw new HttpException(400, 'Team avatars must be support agents of this project', ErrorCode.VALIDATION_ERROR);
       }
+    }
+    if (patch.replyDomain || patch.replyFromEmail) {
+      await this.assertEmailAddresses(projectId, patch);
     }
 
     const row = await prisma.messengerSettings.upsert({
@@ -93,6 +99,37 @@ export class MessengerSettingsService {
     return settings.allowedOrigins.includes(origin);
   }
 
+  /** Whether agent replies can be emailed: both addresses are set. */
+  public static emailEnabled(
+    settings: MessengerSettingsData,
+  ): settings is MessengerSettingsData & {replyDomain: string; replyFromEmail: string} {
+    return Boolean(settings.replyDomain && settings.replyFromEmail);
+  }
+
+  /* The reply domain must be a subdomain, never the verified domain itself: its MX record would
+  otherwise take over the organisation's normal inbox. */
+  private static async assertEmailAddresses(
+    projectId: string,
+    patch: Pick<Partial<MessengerSettingsData>, 'replyDomain' | 'replyFromEmail'>,
+  ): Promise<void> {
+    const verified = await prisma.domain.findMany({where: {projectId, verified: true}, select: {domain: true}});
+    const domains = verified.map(row => row.domain.toLowerCase());
+    if (patch.replyDomain && !domains.some(domain => patch.replyDomain!.endsWith(`.${domain}`))) {
+      throw new HttpException(
+        400,
+        'The reply domain must be a subdomain of one of this project’s verified domains, such as reply.example.com',
+        ErrorCode.VALIDATION_ERROR,
+      );
+    }
+    if (patch.replyFromEmail && !domains.includes(patch.replyFromEmail.split('@')[1]!)) {
+      throw new HttpException(
+        400,
+        'Replies must be sent from an address on one of this project’s verified domains',
+        ErrorCode.VALIDATION_ERROR,
+      );
+    }
+  }
+
   private static async supportAgentIds(projectId: string, userIds: string[]): Promise<Set<string>> {
     const memberships = await prisma.membership.findMany({
       where: {projectId, userId: {in: userIds}, OR: [{role: 'OWNER'}, {supportAgent: true}]},
@@ -109,6 +146,9 @@ export class MessengerSettingsService {
       launcherPosition: row.launcherPosition,
       greeting: row.greeting,
       teamUserIds: row.teamUserIds,
+      replyDomain: row.replyDomain,
+      replyFromEmail: row.replyFromEmail,
+      emailDelayMinutes: row.emailDelayMinutes,
     };
   }
 }

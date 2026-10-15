@@ -2,7 +2,7 @@ import {Controller, Post} from '@overnightjs/core';
 import type {Prisma} from '@plunk/db';
 import {EmailSourceType, EmailStatus} from '@plunk/db';
 import type {Request, Response} from 'express';
-import {simpleParser} from 'mailparser';
+import {type ParsedMail, simpleParser} from 'mailparser';
 import sanitizeHtml from 'sanitize-html';
 import signale from 'signale';
 import type Stripe from 'stripe';
@@ -15,6 +15,7 @@ import {stripe} from '../app/stripe.js';
 import {prisma} from '../database/prisma.js';
 import {BillingLimitService} from '../services/BillingLimitService.js';
 import {CampaignService} from '../services/CampaignService.js';
+import {ChatEmailService} from '../services/ChatEmailService.js';
 import {ContactService} from '../services/ContactService.js';
 import {EventService} from '../services/EventService.js';
 import {MembershipService} from '../services/MembershipService.js';
@@ -126,6 +127,16 @@ export class Webhooks {
             return res.status(200).json({success: true, message: 'No recipients found'});
           }
 
+          let parsed: ParsedMail | null = null;
+          if (body.content && typeof body.content === 'string') {
+            try {
+              const isBase64 = body.receipt?.action?.encoding === 'BASE64';
+              parsed = await simpleParser(isBase64 ? Buffer.from(body.content, 'base64') : Buffer.from(body.content));
+            } catch (parseError) {
+              signale.error('[WEBHOOK] Failed to parse email content:', parseError);
+            }
+          }
+
           // For each recipient, identify the domain and create events
           for (const recipient of recipients) {
             const recipientEmail = recipient as string;
@@ -133,6 +144,18 @@ export class Webhooks {
 
             if (!domain) {
               signale.warn('[WEBHOOK] Invalid recipient email format:', recipientEmail);
+              continue;
+            }
+
+            /* Conversation replies are routed by their token to exactly one conversation. They must
+            never reach the fan-out below, which delivers to every project sharing the domain and
+            subscribes the sender. */
+            const chatReply = await ChatEmailService.receive(recipientEmail, parsed, {
+              spf: body.receipt?.spfVerdict?.status,
+              dkim: body.receipt?.dkimVerdict?.status,
+              dmarc: body.receipt?.dmarcVerdict?.status,
+            });
+            if (chatReply) {
               continue;
             }
 
@@ -164,14 +187,8 @@ export class Webhooks {
             // Parse email content if available
             let htmlBody: string | undefined;
 
-            if (body.content && typeof body.content === 'string') {
+            if (parsed) {
               try {
-                const isBase64 = body.receipt?.action?.encoding === 'BASE64';
-                const emailBuffer = isBase64
-                  ? Buffer.from(body.content, 'base64')
-                  : Buffer.from(body.content);
-
-                const parsed = await simpleParser(emailBuffer);
                 const raw =
                   (parsed.html ? String(parsed.html) : undefined) ??
                   parsed.textAsHtml ??

@@ -1,5 +1,7 @@
 import {
   MESSENGER_DEFAULT_ACCENT,
+  MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES,
+  MESSENGER_EMAIL_DELAY_MAX_MINUTES,
   MESSENGER_GREETING_MAX_LENGTH,
   MESSENGER_TEAM_MAX,
   type MessengerSettingsSchemas,
@@ -33,6 +35,8 @@ import useSWR from 'swr';
 
 import {useActiveProject} from '../lib/contexts/ActiveProjectProvider';
 import {API_URI} from '../lib/constants';
+import {useConfig} from '../lib/hooks/useConfig';
+import {useDomains} from '../lib/hooks/useDomains';
 import {useUser} from '../lib/hooks/useUser';
 import {network} from '../lib/network';
 
@@ -58,6 +62,11 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
   const [launcherPosition, setLauncherPosition] = useState<MessengerLauncherPositionValue>('RIGHT');
   const [greeting, setGreeting] = useState('');
   const [teamUserIds, setTeamUserIds] = useState<string[]>([]);
+  const [replyDomain, setReplyDomain] = useState('');
+  const [replyFromEmail, setReplyFromEmail] = useState('');
+  const [emailDelay, setEmailDelay] = useState(String(MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES));
+  const {domains} = useDomains(activeProject?.id ?? '');
+  const {data: config} = useConfig();
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -69,6 +78,9 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       setLauncherPosition(data.data.launcherPosition);
       setGreeting(data.data.greeting ?? '');
       setTeamUserIds(data.data.teamUserIds);
+      setReplyDomain(data.data.replyDomain ?? '');
+      setReplyFromEmail(data.data.replyFromEmail ?? '');
+      setEmailDelay(String(data.data.emailDelayMinutes));
     }
   }, [data]);
 
@@ -90,6 +102,11 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
     `<script async src="${API_URI}/widget/loader.js"></script>`,
   ].join('\n');
 
+  const verifiedDomains = (domains ?? []).filter(domain => domain.verified).map(domain => domain.domain);
+  const delayMinutes = Number(emailDelay);
+  const delayValid = Number.isInteger(delayMinutes) && delayMinutes >= 1 && delayMinutes <= MESSENGER_EMAIL_DELAY_MAX_MINUTES;
+  const sesRegion = config?.aws?.sesRegion;
+
   const saved = data?.data;
   const dirty =
     !!saved &&
@@ -98,7 +115,10 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       accentColor.toLowerCase() !== saved.accentColor ||
       launcherPosition !== saved.launcherPosition ||
       (greeting.trim() || null) !== saved.greeting ||
-      teamUserIds.join(',') !== saved.teamUserIds.join(','));
+      teamUserIds.join(',') !== saved.teamUserIds.join(',') ||
+      (replyDomain.trim().toLowerCase() || null) !== saved.replyDomain ||
+      (replyFromEmail.trim().toLowerCase() || null) !== saved.replyFromEmail ||
+      delayMinutes !== saved.emailDelayMinutes);
 
   const toggleTeamMember = (userId: string, checked: boolean) => {
     setTeamUserIds(current =>
@@ -125,6 +145,10 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       toast.error('Use a six-digit hex colour such as #111827');
       return;
     }
+    if (!delayValid) {
+      toast.error(`The email delay must be between 1 and ${MESSENGER_EMAIL_DELAY_MAX_MINUTES} minutes`);
+      return;
+    }
     setSaving(true);
     try {
       await network.fetch<void, typeof MessengerSettingsSchemas.update>('PATCH', `/projects/${activeProject.id}/messenger`, {
@@ -134,6 +158,9 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
         launcherPosition,
         greeting: greeting.trim() || null,
         teamUserIds,
+        replyDomain: replyDomain.trim() || null,
+        replyFromEmail: replyFromEmail.trim() || null,
+        emailDelayMinutes: delayMinutes,
       });
       await mutate();
       toast.success('Messenger settings saved');
@@ -275,6 +302,72 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
               </ul>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Email replies</CardTitle>
+          <CardDescription>
+            When a visitor has left an email address and hasn’t read your reply, it’s emailed to them. Their answer
+            comes back into the same conversation.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {verifiedDomains.length === 0 && (
+            <p className="text-sm text-neutral-500">Verify a domain in the Domains tab before turning this on.</p>
+          )}
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="messenger-reply-from">Send from</Label>
+              <Input
+                id="messenger-reply-from"
+                type="email"
+                value={replyFromEmail}
+                disabled={!canEdit}
+                placeholder={`support@${verifiedDomains[0] ?? 'example.com'}`}
+                onChange={event => setReplyFromEmail(event.target.value)}
+              />
+              <p className="text-sm text-neutral-500">An address on one of your verified domains.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="messenger-reply-domain">Reply domain</Label>
+              <Input
+                id="messenger-reply-domain"
+                value={replyDomain}
+                disabled={!canEdit}
+                placeholder={`reply.${verifiedDomains[0] ?? 'example.com'}`}
+                onChange={event => setReplyDomain(event.target.value)}
+                className="font-mono"
+              />
+              <p className="text-sm text-neutral-500">A subdomain used only for receiving replies.</p>
+            </div>
+          </div>
+          <div className="space-y-1.5 sm:max-w-xs">
+            <Label htmlFor="messenger-email-delay">Email after (minutes)</Label>
+            <Input
+              id="messenger-email-delay"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={MESSENGER_EMAIL_DELAY_MAX_MINUTES}
+              value={emailDelay}
+              disabled={!canEdit}
+              onChange={event => setEmailDelay(event.target.value)}
+            />
+            {!delayValid && (
+              <p className="text-sm text-red-600">Use a whole number from 1 to {MESSENGER_EMAIL_DELAY_MAX_MINUTES}.</p>
+            )}
+          </div>
+          {replyDomain.trim() && sesRegion && (
+            <div className="space-y-1.5 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm">
+              <p className="font-medium text-neutral-900">DNS record for the reply domain</p>
+              <p className="break-all font-mono text-xs text-neutral-700">
+                {replyDomain.trim().toLowerCase()} MX 10 inbound-smtp.{sesRegion}.amazonaws.com
+              </p>
+              <p className="text-neutral-500">It is also listed under the domain in the Domains tab.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
