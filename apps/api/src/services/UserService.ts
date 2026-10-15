@@ -1,3 +1,4 @@
+import type {AgentNotificationPrefs} from '@plunk/types';
 import dayjs from 'dayjs';
 
 import {API_URI, NODE_ENV} from '../app/constants.js';
@@ -5,6 +6,8 @@ import {prisma} from '../database/prisma.js';
 import {redis, wrapRedis} from '../database/redis.js';
 
 import {Keys} from './keys.js';
+
+const NOTIFICATION_PREFS = {inboxBadge: true, inboxTitleCount: true, inboxSound: true, pushPreview: true} as const;
 
 /**
  * Extract base domain from URL for cookie sharing across subdomains
@@ -65,6 +68,20 @@ export class UserService {
       ...memberships.map(m => Keys.Messenger.appearance(m.projectId)),
     );
     return user;
+  }
+
+  public static async notificationPrefs(id: string): Promise<AgentNotificationPrefs> {
+    return prisma.user.findUniqueOrThrow({where: {id}, select: NOTIFICATION_PREFS});
+  }
+
+  public static async updateNotificationPrefs(
+    id: string,
+    prefs: Partial<AgentNotificationPrefs>,
+  ): Promise<AgentNotificationPrefs> {
+    const user = await prisma.user.update({where: {id}, data: prefs, select: {...NOTIFICATION_PREFS, email: true}});
+    await redis.del(Keys.User.id(id), Keys.User.email(user.email));
+    const {email: _email, ...updated} = user;
+    return updated;
   }
 
   public static async email(email: string) {

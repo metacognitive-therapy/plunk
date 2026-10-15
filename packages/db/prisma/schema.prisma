@@ -26,11 +26,19 @@ model User {
   // local part of the email address.
   name String?
 
+  // Live chat notifications, per agent across every project and device.
+  inboxBadge      Boolean @default(true)
+  inboxTitleCount Boolean @default(true)
+  inboxSound      Boolean @default(true)
+  // Push notifications show only who wrote when false, so message text stays off lock screens.
+  pushPreview     Boolean @default(true)
+
   // Relations
   memberships           Membership[]
   assignedConversations Conversation[]        @relation("ConversationAssignee")
   conversationMessages  ConversationMessage[]
   conversationReads     ConversationRead[]
+  pushSubscriptions     WebPushSubscription[]
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -254,6 +262,24 @@ model MessengerSettings {
   @@map("messenger_settings")
 }
 
+// A browser or installed dashboard that receives live chat push notifications for one user.
+model WebPushSubscription {
+  id String @id @default(uuid())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  endpoint  String  @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("web_push_subscriptions")
+}
+
 // A support conversation between one contact and the project's support agents.
 model Conversation {
   id String @id @default(uuid())
@@ -282,13 +308,13 @@ model Conversation {
   replyToken String @unique @default(uuid())
 
   // Denormalized from the latest COMMENT so inbox and messenger lists never scan messages.
-  lastMessageAt          DateTime           @default(now())
-  lastMessagePreview     String?
-  lastMessageAuthorType  MessageAuthorType?
-  lastContactMessageAt   DateTime?
-  contactLastReadAt    DateTime?
-  firstResponseAt      DateTime?
-  closedAt             DateTime?
+  lastMessageAt         DateTime           @default(now())
+  lastMessagePreview    String?
+  lastMessageAuthorType MessageAuthorType?
+  lastContactMessageAt  DateTime?
+  contactLastReadAt     DateTime?
+  firstResponseAt       DateTime?
+  closedAt              DateTime?
 
   messages ConversationMessage[]
   reads    ConversationRead[]

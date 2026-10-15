@@ -119,7 +119,7 @@ describe('Live chat notes and mentions', () => {
     const {owner, project, conversationId} = await inbox();
 
     expect((await addNote(owner, project.id, conversationId, 'Note to self', [owner.id])).status).toBe(201);
-    expect(queue).not.toHaveBeenCalled();
+    expect(queue).not.toHaveBeenCalledWith(expect.objectContaining({type: 'mention'}));
   });
 
   it('refuses to mention anyone who is not a support agent of the project', async () => {
@@ -133,7 +133,7 @@ describe('Live chat notes and mentions', () => {
       expect(res.status).toBe(400);
     }
     expect(await prisma.conversationMessage.count({where: {conversationId, kind: 'NOTE', authorType: 'AGENT'}})).toBe(0);
-    expect(queue).not.toHaveBeenCalled();
+    expect(queue).not.toHaveBeenCalledWith(expect.objectContaining({type: 'mention'}));
   });
 
   it('only lets support agents write notes', async () => {

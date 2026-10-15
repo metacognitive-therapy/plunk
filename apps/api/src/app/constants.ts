@@ -176,6 +176,13 @@ export const TURNSTILE_SITE_KEY = validateEnv('TURNSTILE_SITE_KEY', '');
 export const TURNSTILE_SECRET_KEY = validateEnv('TURNSTILE_SECRET_KEY', '');
 export const TURNSTILE_ENABLED = TURNSTILE_SITE_KEY !== '' && TURNSTILE_SECRET_KEY !== '';
 
+// Web Push for live chat agents (optional). Generate the pair once with `npx web-push
+// generate-vapid-keys`; changing it invalidates every existing browser subscription.
+export const VAPID_PUBLIC_KEY = validateEnv('VAPID_PUBLIC_KEY', '');
+export const VAPID_PRIVATE_KEY = validateEnv('VAPID_PRIVATE_KEY', '');
+export const VAPID_SUBJECT = validateEnv('VAPID_SUBJECT', '');
+export const WEB_PUSH_ENABLED = VAPID_PUBLIC_KEY !== '' && VAPID_PRIVATE_KEY !== '' && VAPID_SUBJECT !== '';
+
 // Email Verification & Password Reset
 export const TOKEN_EXPIRY_SECONDS = 3600; // 1 hour
 export const EMAIL_VERIFICATION_RATE_LIMIT = 3; // Max 3 emails per hour

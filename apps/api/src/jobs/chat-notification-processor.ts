@@ -1,7 +1,7 @@
 /**
  * Background Job: Chat Notifications
  *
- * Delivers agent notifications for live chat messages (currently @mentions in notes) so the
+ * Delivers live chat notifications (mentions, new visitor messages and emailed replies) so the
  * request that wrote the message never waits on fan-out.
  */
 

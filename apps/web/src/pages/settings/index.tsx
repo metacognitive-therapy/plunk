@@ -66,6 +66,7 @@ import {DataManagementSettings} from '../../components/DataManagementSettings';
 import {TeamSettings} from '../../components/TeamSettings';
 import {useSupportAccess} from '../../lib/hooks/useSupportAccess';
 import {InboxLibrarySettings} from '../../components/inbox/InboxLibrarySettings';
+import {NotificationSettings} from '../../components/inbox/NotificationSettings';
 import {MessengerSettings} from '../../components/MessengerSettings';
 import {SecuritySettings} from '../../components/SecuritySettings';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
@@ -834,6 +835,7 @@ export default function Settings() {
               <div className="space-y-6">
                 <MessengerSettings canEdit={currentUserRole !== 'MEMBER'} />
                 {hasSupportAccess && <InboxLibrarySettings />}
+                {hasSupportAccess && <NotificationSettings />}
               </div>
             </TabsContent>
 

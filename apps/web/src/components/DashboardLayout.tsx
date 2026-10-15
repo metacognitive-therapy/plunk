@@ -1,9 +1,11 @@
 import {useActiveProject} from '../lib/contexts/ActiveProjectProvider';
+import {formatUnread, useInboxUnread, useNotificationPrefs} from '../lib/hooks/useAgentNotifications';
 import {useBrand} from '../lib/hooks/useBrand';
 import {useSupportAccess} from '../lib/hooks/useSupportAccess';
 import {useUser} from '../lib/hooks/useUser';
 import {WIKI_URI} from '../lib/constants';
 import {network} from '../lib/network';
+import {disablePush} from '../lib/push';
 import {BrandMark} from './BrandMark';
 import {OnboardingBanner} from './onboarding/OnboardingBanner';
 import {
@@ -103,6 +105,10 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
   const brand = useBrand();
   const hasSupportAccess = useSupportAccess();
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const {data: prefs} = useNotificationPrefs(Boolean(user));
+  const {data: unreadData} = useInboxUnread(Boolean(user) && prefs?.data.inboxBadge === true);
+  const unread = unreadData?.data;
+  const unreadLabel = formatUnread(unread);
 
   // Sort projects alphabetically by name
   const sortedProjects = useMemo(() => {
@@ -110,6 +116,8 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
   }, [availableProjects]);
 
   const handleLogout = useCallback(async () => {
+    /* Before the session ends, so this device stops receiving the agent's notifications. */
+    await disablePush().catch(() => undefined);
     await network.fetch('GET', '/auth/logout').catch(() => undefined);
     localStorage.removeItem('token');
     localStorage.removeItem('activeProjectId');
@@ -159,6 +167,11 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
                   {project.name.charAt(0).toUpperCase()}
                 </div>
                 <span className="text-neutral-900 text-left flex-1 truncate">{project.name}</span>
+                {unread?.projects[project.id] ? (
+                  <span className="text-xs font-medium text-neutral-500 tabular-nums">
+                    {unread.projects[project.id]! > 99 ? '99+' : unread.projects[project.id]}
+                  </span>
+                ) : null}
                 {activeProject?.id === project.id && (
                   <div className="ml-auto h-1.5 w-1.5 rounded-full bg-neutral-900 flex-shrink-0" />
                 )}
@@ -202,6 +215,14 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
                   >
                     <Icon className="h-5 w-5" />
                     {item.name}
+                    {item.href === '/inbox' && unreadLabel && (
+                      <span
+                        className="ml-auto min-w-5 h-5 px-1.5 rounded-full bg-neutral-900 text-white text-[11px] font-semibold leading-5 text-center tabular-nums"
+                        aria-label={`${unreadLabel} unread conversations`}
+                      >
+                        {unreadLabel}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
@@ -293,10 +314,11 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
         <div className="lg:hidden h-16 bg-white border-b border-neutral-200 flex items-center px-4">
           <button
             onClick={() => setShowMobileMenu(true)}
-            className="p-2 rounded-lg hover:bg-neutral-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            aria-label="Open menu"
+            aria-label={unreadLabel ? `Open menu, ${unreadLabel} unread conversations` : 'Open menu'}
+            className="relative p-2 rounded-lg hover:bg-neutral-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <Menu className="h-6 w-6 text-neutral-900" />
+            {unreadLabel && <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />}
           </button>
           <div className="ml-4 min-w-0">
             <BrandMark brand={brand} size="sm" />
