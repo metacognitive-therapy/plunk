@@ -139,9 +139,15 @@ What survives:
 
 What does **not** survive: its [identities](#contact-identities) — an anonymized contact holding a live `anonymous_id` or `analytics_distinct_id` would be exactly the identifying-value leak anonymization exists to prevent, so every identity row is deleted, not just neutralised.
 
+Its live chat conversations don't survive either: every conversation, message and attachment file is deleted outright, files first, so a failure leaves the rows in place for the next attempt instead of files nothing points at.
+
 What an anonymized contact can never do again: it's excluded from every mailable and lead count, and from every audience (campaigns, sequences, transactional/workflow sends) — see [Leads](#leads) above for the underlying `deletedAt` check. Re-identifying it via `/v1/identify` on the same `externalId` is refused with `409` rather than resurrecting it with a new email, and creating a new contact with its old (now-freed) email address creates a genuinely new, unrelated row.
 
-Deleting an already-anonymized contact is a no-op, not an error — safe to retry or to include in a bulk operation alongside contacts that haven't been touched yet.
+Deleting an already-anonymized contact is a no-op, not an error (apart from deleting any conversation it still has) — safe to retry or to include in a bulk operation alongside contacts that haven't been touched yet.
+
+### Live chat retention
+
+Closed conversations are deleted, with their messages and files, once they have been closed longer than the period set under **Settings → Messenger → Data retention** (24 months by default, between 1 and 120). Open and snoozed conversations are never deleted this way. A nightly job also deletes messenger leads, contacts with no email and no `externalId` that only ever chatted, after 90 days without a message, event or other activity, together with all their conversations.
 
 ## Subscription State
 

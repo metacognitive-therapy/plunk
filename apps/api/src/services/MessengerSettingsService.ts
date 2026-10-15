@@ -1,5 +1,10 @@
 import type {MessengerSettings, Prisma} from '@plunk/db';
-import {MESSENGER_DEFAULT_ACCENT, MESSENGER_DEFAULT_TIMEZONE, MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES} from '@plunk/shared';
+import {
+  MESSENGER_DEFAULT_ACCENT,
+  MESSENGER_DEFAULT_TIMEZONE,
+  MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES,
+  MESSENGER_RETENTION_DEFAULT_MONTHS,
+} from '@plunk/shared';
 import type {MessengerAppearance, MessengerAvailability, MessengerSettingsData, OfficeHoursDay} from '@plunk/types';
 
 import {prisma} from '../database/prisma.js';
@@ -25,6 +30,7 @@ const DEFAULT_SETTINGS: MessengerSettingsData = {
   officeHoursEnabled: false,
   officeHours: [],
   timezone: MESSENGER_DEFAULT_TIMEZONE,
+  retentionMonths: MESSENGER_RETENTION_DEFAULT_MONTHS,
 };
 
 export type MessengerSettingsPatch = Partial<Omit<MessengerSettingsData, 'slackConnected'>> & {
@@ -200,6 +206,7 @@ export class MessengerSettingsService {
         ? (row.officeHours as unknown as OfficeHoursDay[]).map(({day, start, end}) => ({day, start, end}))
         : [],
       timezone: row.timezone,
+      retentionMonths: row.retentionMonths,
     };
   }
 }

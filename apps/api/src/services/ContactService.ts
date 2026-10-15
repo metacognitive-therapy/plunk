@@ -7,6 +7,7 @@ import signale from 'signale';
 import {mailableContactWhere} from '../database/contact-filters.js';
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
+import {ChatRetentionService} from './ChatRetentionService.js';
 import {EventService} from './EventService.js';
 import {TagService} from './TagService.js';
 
@@ -440,7 +441,9 @@ export class ContactService {
 
   /**
    * Anonymize a contact in place: null its email, clear its `data` attributes, strip the
-   * payload from every event it fired, and set `deletedAt`. The row and its send history
+   * payload from every event it fired, and set `deletedAt`. Its live chat conversations, messages
+   * and attachment objects are hard-deleted, after `deletedAt` is set so the messenger can't attach
+   * a new conversation to the row meanwhile. The row and its send history
    * (Email rows) are RETAINED -- destroying them would break unsubscribe/manage links already
    * embedded in delivered mail and desync campaign counters, which are derived from Email rows
    * rather than stored redundantly. See docs/issues/07-anonymize-replaces-hard-delete.md.
@@ -481,6 +484,7 @@ export class ContactService {
         where: {contactId: contact.id},
       }),
     ]);
+    await ChatRetentionService.eraseForContacts([contact.id]);
 
     return anonymized;
   }
@@ -1377,6 +1381,8 @@ export class ContactService {
     const unchanged = contacts.length - toAnonymizeIds.length;
 
     if (toAnonymizeIds.length === 0) {
+      // Already-anonymized rows still have their conversations erased, as on the single-contact path.
+      await ChatRetentionService.eraseForContacts(contacts.map(c => c.id));
       return {deleted: 0, unchanged};
     }
 
@@ -1396,6 +1402,7 @@ export class ContactService {
         where: {contactId: {in: toAnonymizeIds}},
       }),
     ]);
+    await ChatRetentionService.eraseForContacts(contacts.map(c => c.id));
 
     return {deleted: updateResult.count, unchanged};
   }

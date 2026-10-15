@@ -179,7 +179,7 @@ describe('Live chat email capture', () => {
 
     const res = await captureEmail(chat.token, {email: 'ghost@example.com', conversationId: chat.conversationId});
 
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(404);
     expect((await prisma.contact.findUniqueOrThrow({where: {id: chat.leadId}})).email).toBeNull();
   });
 

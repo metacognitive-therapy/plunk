@@ -5,6 +5,7 @@ import {
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   PutBucketPolicyCommand,
   PutObjectCommand,
   S3Client,
@@ -108,6 +109,37 @@ export async function deletePrivateObjects(keys: string[]): Promise<void> {
       }),
     );
   }
+}
+
+/**
+ * Deletes every private object under `prefix` and returns how many there were. Throws if any
+ * object could not be deleted: erasure callers must not report success with objects left behind.
+ */
+export async function deletePrivatePrefix(prefix: string): Promise<number> {
+  const client = requireClient();
+  let deleted = 0;
+  let continuationToken: string | undefined;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({Bucket: S3_PRIVATE_BUCKET, Prefix: prefix, ContinuationToken: continuationToken}),
+    );
+    const keys = (page.Contents ?? []).flatMap(object => (object.Key ? [object.Key] : []));
+    if (keys.length > 0) {
+      const result = await client.send(
+        new DeleteObjectsCommand({
+          Bucket: S3_PRIVATE_BUCKET,
+          Delete: {Objects: keys.map(Key => ({Key})), Quiet: true},
+        }),
+      );
+      if (result.Errors?.length) {
+        const first = result.Errors[0]!;
+        throw new Error(`Could not delete ${result.Errors.length} object(s) under ${prefix}: ${first.Code} ${first.Key}`);
+      }
+      deleted += keys.length;
+    }
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return deleted;
 }
 
 /**
