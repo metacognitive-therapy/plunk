@@ -17,6 +17,7 @@ import type {
   InboxMessage,
   InboxPage,
   InboxSystemEvent,
+  InboxTag,
   MessengerBootResponse,
   MessengerConversation,
   MessengerConversationSummary,
@@ -29,6 +30,7 @@ import {API_URI} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {redis} from '../database/redis.js';
 import {ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
+import {ConversationTagService} from './ConversationTagService.js';
 import {Keys} from './keys.js';
 import {MembershipService} from './MembershipService.js';
 import {type MessengerSession, MessengerSessionService} from './MessengerSessionService.js';
@@ -230,7 +232,7 @@ export class ConversationService {
   public static async list(
     projectId: string,
     userId: string,
-    options: {view: ConversationView; cursor?: string; limit: number},
+    options: {view: ConversationView; tag?: string; cursor?: string; limit: number},
   ): Promise<InboxPage> {
     const cursor = options.cursor ? this.decodeCursor(options.cursor) : null;
     const after: Prisma.ConversationWhereInput = cursor
@@ -241,13 +243,16 @@ export class ConversationService {
           ],
         }
       : {};
+    /* Probed per row through the assignment primary key, or driven from the tagId index when the
+    tag is rare; the planner picks, both are index-backed. */
+    const tagged: Prisma.ConversationWhereInput = options.tag ? {tags: {some: {tagId: options.tag}}} : {};
 
     /* A view spanning several statuses is read as one index-ordered range per status and merged,
     because a single status IN (...) query cannot be read in lastMessageAt order from the index. */
     const ranges = await Promise.all(
       this.viewRanges(options.view, userId).map(range =>
         prisma.conversation.findMany({
-          where: {projectId, ...range, ...after},
+          where: {projectId, ...range, ...after, ...tagged},
           orderBy: [{lastMessageAt: 'desc'}, {id: 'desc'}],
           take: options.limit + 1,
           include: {contact: {select: {id: true, email: true, externalId: true, data: true}}},
@@ -260,14 +265,12 @@ export class ConversationService {
       .slice(0, options.limit + 1);
 
     const page = rows.slice(0, options.limit);
-    const reads = await this.readsFor(
-      userId,
-      page.map(row => row.id),
-    );
+    const ids = page.map(row => row.id);
+    const [reads, tags] = await Promise.all([this.readsFor(userId, ids), ConversationTagService.forConversations(ids)]);
 
     const last = page[page.length - 1];
     return {
-      conversations: page.map(row => this.toInboxSummary(row, reads.get(row.id))),
+      conversations: page.map(row => this.toInboxSummary(row, reads.get(row.id), tags.get(row.id))),
       nextCursor: rows.length > options.limit && last ? this.encodeCursor(last) : null,
     };
   }
@@ -281,14 +284,15 @@ export class ConversationService {
       throw new NotFound('Conversation', conversationId);
     }
 
-    const [messages, reads] = await Promise.all([
+    const [messages, reads, tags] = await Promise.all([
       this.loadThread(conversation.id),
       this.readsFor(userId, [conversation.id]),
+      ConversationTagService.forConversations([conversation.id]),
     ]);
     const names = await this.mentionNames(messages);
 
     return {
-      ...this.toInboxSummary(conversation, reads.get(conversation.id)),
+      ...this.toInboxSummary(conversation, reads.get(conversation.id), tags.get(conversation.id)),
       channel: conversation.channel,
       contactLastReadAt: conversation.contactLastReadAt?.toISOString() ?? null,
       createdAt: conversation.createdAt.toISOString(),
@@ -835,6 +839,7 @@ export class ConversationService {
       contact: {id: string; email: string | null; externalId: string | null; data: Prisma.JsonValue};
     },
     lastReadAt: Date | undefined,
+    tags: InboxTag[] = [],
   ): InboxConversationSummary {
     const unread =
       conversation.lastContactMessageAt !== null && (!lastReadAt || conversation.lastContactMessageAt > lastReadAt);
@@ -859,6 +864,7 @@ export class ConversationService {
           ? {body: conversation.lastMessagePreview, authorType: conversation.lastMessageAuthorType}
           : null,
       unread,
+      tags,
     };
   }
 }

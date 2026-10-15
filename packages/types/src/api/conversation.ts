@@ -122,6 +122,20 @@ export interface InboxConversationSummary {
   lastMessageAt: string;
   lastMessage: {body: string; authorType: MessageAuthorTypeValue} | null;
   unread: boolean;
+  tags: InboxTag[];
+}
+
+export interface InboxTag {
+  id: string;
+  name: string;
+}
+
+export interface SavedReply {
+  id: string;
+  title: string;
+  /** Template source; variables are filled in when it is inserted into a conversation. */
+  body: string;
+  updatedAt: string;
 }
 
 export interface InboxConversation extends InboxConversationSummary {
@@ -174,4 +188,6 @@ export type InboxStreamEvent =
   | {type: 'message'; conversationId: string; message: InboxMessage}
   | {type: 'conversation'; conversationId: string}
   | {type: 'typing'; conversationId: string; author: InboxTypingAuthor}
-  | {type: 'read'; conversationId: string; reader: InboxReader};
+  | {type: 'read'; conversationId: string; reader: InboxReader}
+  /* Tags were renamed or deleted, which can change any conversation in the list. */
+  | {type: 'tags'};

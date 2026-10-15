@@ -1,11 +1,13 @@
-import {Controller, Get, Middleware, Post} from '@overnightjs/core';
+import {Controller, Delete, Get, Middleware, Patch, Post} from '@overnightjs/core';
 import type {NextFunction, Request, Response} from 'express';
 import {ConversationSchemas, UtilitySchemas} from '@plunk/shared';
 
 import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
 import {requireAuth, requireEmailVerified, requireSupportAgent} from '../middleware/auth.js';
 import {ConversationService} from '../services/ConversationService.js';
+import {ConversationTagService} from '../services/ConversationTagService.js';
 import {Keys} from '../services/keys.js';
+import {SavedReplyService} from '../services/SavedReplyService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
 @Controller('conversations')
@@ -34,6 +36,78 @@ export class Conversations {
   private async agents(req: Request, res: Response, _next: NextFunction) {
     const data = await ConversationService.agents(res.locals.auth.projectId!);
     return res.json({success: true, data});
+  }
+
+  @Get('tags')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async tags(_req: Request, res: Response, _next: NextFunction) {
+    const data = await ConversationTagService.list(res.locals.auth.projectId!);
+    return res.json({success: true, data});
+  }
+
+  @Post('tags')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async createTag(req: Request, res: Response, _next: NextFunction) {
+    const {name} = ConversationSchemas.tag.parse(req.body);
+    const data = await ConversationTagService.create(res.locals.auth.projectId!, name);
+    return res.status(201).json({success: true, data});
+  }
+
+  @Patch('tags/:id')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async renameTag(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {name} = ConversationSchemas.tag.parse(req.body);
+    const data = await ConversationTagService.rename(res.locals.auth.projectId!, id, name);
+    return res.json({success: true, data});
+  }
+
+  @Delete('tags/:id')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async deleteTag(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    await ConversationTagService.remove(res.locals.auth.projectId!, id);
+    return res.json({success: true});
+  }
+
+  @Get('saved-replies')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async savedReplies(_req: Request, res: Response, _next: NextFunction) {
+    const data = await SavedReplyService.list(res.locals.auth.projectId!);
+    return res.json({success: true, data});
+  }
+
+  @Post('saved-replies')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async createSavedReply(req: Request, res: Response, _next: NextFunction) {
+    const input = ConversationSchemas.savedReply.parse(req.body);
+    const data = await SavedReplyService.create(res.locals.auth.projectId!, input);
+    return res.status(201).json({success: true, data});
+  }
+
+  @Patch('saved-replies/:id')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async updateSavedReply(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const input = ConversationSchemas.savedReplyUpdate.parse(req.body);
+    const data = await SavedReplyService.update(res.locals.auth.projectId!, id, input);
+    return res.json({success: true, data});
+  }
+
+  @Delete('saved-replies/:id')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async deleteSavedReply(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    await SavedReplyService.remove(res.locals.auth.projectId!, id);
+    return res.json({success: true});
   }
 
   @Get('')
@@ -76,6 +150,36 @@ export class Conversations {
     const input = ConversationSchemas.note.parse(req.body);
     const data = await ConversationService.addNote(auth.projectId!, auth.userId!, id, input);
     return res.status(201).json({success: true, data});
+  }
+
+  @Post(':id/tags')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async applyTag(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {tagId} = ConversationSchemas.applyTag.parse(req.body);
+    const data = await ConversationTagService.apply(res.locals.auth.projectId!, id, tagId);
+    return res.json({success: true, data});
+  }
+
+  @Delete(':id/tags/:tagId')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async removeTag(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {tagId} = ConversationSchemas.applyTag.parse(req.params);
+    const data = await ConversationTagService.unapply(res.locals.auth.projectId!, id, tagId);
+    return res.json({success: true, data});
+  }
+
+  @Get(':id/saved-replies/:replyId')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async renderSavedReply(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {id: replyId} = UtilitySchemas.id.parse({id: req.params.replyId});
+    const data = await SavedReplyService.render(res.locals.auth.projectId!, replyId, id);
+    return res.json({success: true, data});
   }
 
   @Post(':id/status')

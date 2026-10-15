@@ -1,4 +1,15 @@
-import {Button, EmptyState, IconSpinner} from '@plunk/ui';
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  EmptyState,
+  IconSpinner,
+} from '@plunk/ui';
 import {CONVERSATION_VIEWS, type ConversationView} from '@plunk/shared';
 import type {
   InboxConversation,
@@ -9,7 +20,7 @@ import type {
   InboxStreamEvent,
   InboxSystemEvent,
 } from '@plunk/types';
-import {AlarmClock, ArrowLeft, Inbox as InboxIcon, MessageSquare, StickyNote} from 'lucide-react';
+import {AlarmClock, ArrowLeft, ChevronDown, Inbox as InboxIcon, MessageSquare, StickyNote, Tag as TagIcon} from 'lucide-react';
 import {NextSeo} from 'next-seo';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
@@ -20,6 +31,7 @@ import useSWRInfinite from 'swr/infinite';
 import {DashboardLayout} from '../../components/DashboardLayout';
 import {Composer} from '../../components/inbox/Composer';
 import {ConversationActions, formatSnoozeDate} from '../../components/inbox/ConversationActions';
+import {ConversationTags, TagChip, useConversationTags} from '../../components/inbox/ConversationTags';
 import {formatRelativeTime} from '../../lib/dateUtils';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
 import {useInboxStream} from '../../lib/hooks/useInboxStream';
@@ -33,6 +45,8 @@ const THREAD_REFRESH_MS = 5_000;
 const LIST_REFRESH_DEBOUNCE_MS = 250;
 const TYPING_VISIBLE_MS = 4000;
 const PAGE_SIZE = 30;
+const LIST_TAG_CHIPS = 2;
+const ALL_TAGS = 'all';
 
 type StreamListener = (event: InboxStreamEvent) => void;
 type Subscribe = (listener: StreamListener) => () => void;
@@ -88,13 +102,24 @@ export default function InboxPageView() {
     ? (router.query.view as ConversationView)
     : 'all';
   const selectedId = typeof router.query.c === 'string' ? router.query.c : null;
+  const tagId = typeof router.query.tag === 'string' ? router.query.tag : null;
+  const {data: tags, mutate: mutateTags} = useConversationTags();
+  const activeTag = tags?.data.find(tag => tag.id === tagId) ?? null;
 
-  const setQuery = (next: {view?: ConversationView; c?: string | null}) => {
+  const setQuery = (next: {view?: ConversationView; c?: string | null; tag?: string | null}) => {
     const query: Record<string, string> = {view: next.view ?? view};
     const conversation = next.c === undefined ? selectedId : next.c;
     if (conversation) query.c = conversation;
+    const tag = next.tag === undefined ? tagId : next.tag;
+    if (tag) query.tag = tag;
     void router.replace({pathname: '/inbox', query}, undefined, {shallow: true});
   };
+
+  const staleTag = Boolean(tagId && tags && !activeTag);
+  useEffect(() => {
+    if (staleTag) setQuery({tag: null});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reacts to the filtered tag disappearing
+  }, [staleTag]);
 
   const listeners = useRef(new Set<StreamListener>());
   const subscribe = useCallback<Subscribe>(listener => {
@@ -111,7 +136,8 @@ export default function InboxPageView() {
       if (!activeProject?.id || !hasAccess) return null;
       if (previous && !previous.data.nextCursor) return null;
       const cursor = previous?.data.nextCursor ? `&cursor=${encodeURIComponent(previous.data.nextCursor)}` : '';
-      return `/conversations?view=${view}&limit=${PAGE_SIZE}${cursor}`;
+      const tag = tagId ? `&tag=${tagId}` : '';
+      return `/conversations?view=${view}&limit=${PAGE_SIZE}${tag}${cursor}`;
     },
     {refreshInterval: connected ? 0 : LIST_REFRESH_MS, revalidateFirstPage: true},
   );
@@ -128,7 +154,16 @@ export default function InboxPageView() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const off = subscribe(event => {
       const ownRead = event.type === 'read' && event.reader.type === 'AGENT' && event.reader.userId === user?.id;
-      if (event.type === 'ready' || event.type === 'message' || event.type === 'conversation' || ownRead) {
+      if (event.type === 'tags') {
+        void mutateTags();
+      }
+      if (
+        event.type === 'ready' ||
+        event.type === 'message' ||
+        event.type === 'conversation' ||
+        event.type === 'tags' ||
+        ownRead
+      ) {
         clearTimeout(timer);
         timer = setTimeout(refreshList, LIST_REFRESH_DEBOUNCE_MS);
       }
@@ -137,7 +172,7 @@ export default function InboxPageView() {
       off();
       clearTimeout(timer);
     };
-  }, [subscribe, refreshList, user?.id]);
+  }, [subscribe, refreshList, mutateTags, user?.id]);
 
   const conversations = data?.flatMap(page => page.data.conversations) ?? [];
   const hasMore = Boolean(data?.[data.length - 1]?.data.nextCursor);
@@ -158,7 +193,38 @@ export default function InboxPageView() {
               className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full flex-col border-r border-neutral-200 md:w-80 md:shrink-0`}
             >
               <div className="border-b border-neutral-200 px-4 py-3">
-                <h1 className="text-lg font-semibold text-neutral-900">Inbox</h1>
+                <div className="flex items-center justify-between gap-2">
+                  <h1 className="text-lg font-semibold text-neutral-900">Inbox</h1>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant={activeTag ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-7 max-w-[11rem] px-2 text-xs"
+                        aria-label="Filter by tag"
+                      >
+                        <TagIcon className="mr-1 h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{activeTag ? activeTag.name : 'All tags'}</span>
+                        <ChevronDown className="ml-1 h-3 w-3 shrink-0 opacity-60" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="max-h-80 w-56 overflow-y-auto">
+                      <DropdownMenuLabel>Filter by tag</DropdownMenuLabel>
+                      <DropdownMenuRadioGroup
+                        value={activeTag?.id ?? ALL_TAGS}
+                        onValueChange={value => setQuery({tag: value === ALL_TAGS ? null : value, c: null})}
+                      >
+                        <DropdownMenuRadioItem value={ALL_TAGS}>All tags</DropdownMenuRadioItem>
+                        {(tags?.data.length ?? 0) > 0 && <DropdownMenuSeparator />}
+                        {tags?.data.map(tag => (
+                          <DropdownMenuRadioItem key={tag.id} value={tag.id}>
+                            <span className="truncate">{tag.name}</span>
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
                 <div className="mt-3 flex flex-wrap gap-0.5" role="tablist">
                   {CONVERSATION_VIEWS.map(option => (
                     <button
@@ -188,7 +254,11 @@ export default function InboxPageView() {
                 ) : error && conversations.length === 0 ? (
                   <EmptyState icon={MessageSquare} title="Couldn’t load conversations" description="Retrying shortly." />
                 ) : conversations.length === 0 ? (
-                  <EmptyState icon={MessageSquare} title="No conversations" description="Nothing in this view yet." />
+                  <EmptyState
+                    icon={MessageSquare}
+                    title="No conversations"
+                    description={activeTag ? `Nothing tagged ${activeTag.name} in this view.` : 'Nothing in this view yet.'}
+                  />
                 ) : (
                   <ul>
                     {conversations.map(conversation => (
@@ -227,9 +297,19 @@ export default function InboxPageView() {
                                 Snoozed
                               </span>
                             )}
+                            {conversation.tags.length > 0 && (
+                              <span className={`flex shrink-0 items-center gap-1 ${conversation.status === 'SNOOZED' ? '' : 'ml-auto'}`}>
+                                {conversation.tags.slice(0, LIST_TAG_CHIPS).map(tag => (
+                                  <TagChip key={tag.id} tag={tag} />
+                                ))}
+                                {conversation.tags.length > LIST_TAG_CHIPS && (
+                                  <span className="text-[11px] text-neutral-400">+{conversation.tags.length - LIST_TAG_CHIPS}</span>
+                                )}
+                              </span>
+                            )}
                             {conversation.unread && (
                               <span
-                                className={`${conversation.status === 'SNOOZED' ? '' : 'ml-auto '}h-2 w-2 shrink-0 rounded-full bg-blue-500`}
+                                className={`${conversation.status === 'SNOOZED' || conversation.tags.length > 0 ? '' : 'ml-auto '}h-2 w-2 shrink-0 rounded-full bg-blue-500`}
                                 aria-label="Unread"
                               />
                             )}
@@ -298,7 +378,7 @@ function Thread({
   useEffect(() => {
     let typingTimer: ReturnType<typeof setTimeout> | undefined;
     const off = subscribe(event => {
-      if (event.type === 'ready') {
+      if (event.type === 'ready' || event.type === 'tags') {
         void mutate();
         return;
       }
@@ -316,6 +396,7 @@ function Thread({
         );
       } else if (event.type === 'conversation') {
         void mutate();
+
       } else if (event.type === 'read' && event.reader.type === 'CONTACT') {
         const readAt = event.reader.readAt;
         void mutate(current => (current ? {...current, data: {...current.data, contactLastReadAt: readAt}} : current), {
@@ -382,7 +463,7 @@ function Thread({
           <button className="rounded-md p-1 hover:bg-neutral-100 md:hidden" onClick={onBack} aria-label="Back">
             <ArrowLeft className="h-5 w-5" />
           </button>
-          <div className="min-w-0">
+          <div className="min-w-0 space-y-1">
             <div className="truncate font-semibold text-neutral-900">{contactLabel(conversation.contact)}</div>
             <div className="text-xs text-neutral-500">
               {conversation.status === 'SNOOZED'
@@ -393,6 +474,16 @@ function Thread({
                   ? 'Closed'
                   : `Started ${formatRelativeTime(conversation.createdAt)}`}
             </div>
+            <ConversationTags
+              conversationId={conversation.id}
+              tags={conversation.tags}
+              onChanged={next => {
+                void mutate(current => (current ? {...current, data: {...current.data, tags: next}} : current), {
+                  revalidate: false,
+                });
+                onChanged();
+              }}
+            />
           </div>
           <div className="w-full sm:ml-auto sm:w-auto">
             <ConversationActions
