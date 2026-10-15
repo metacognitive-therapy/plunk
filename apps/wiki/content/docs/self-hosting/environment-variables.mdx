@@ -138,12 +138,12 @@ On top of the onboarding fee, activating a subscription places a second charge o
 
 ## Platform Emails
 
-When configured, Plunk will send email notifications to users for critical events (e.g. project disabled, billing limits reached). Without these, only ntfy notifications are sent.
+When configured, Plunk will send email notifications to users for critical events (e.g. project disabled, billing limits reached) and email support agents about live chat messages that no one has read within the project's delay. Without these, only ntfy notifications are sent and agents get no unread-chat emails.
 
 | Variable             | Required | Description                                                | Example                  |
 | -------------------- | -------- | ---------------------------------------------------------- | ------------------------ |
 | `PLUNK_API_KEY`      | No       | API key for a Plunk instance to send transactional emails. | `pk_...`                 |
-| `PLUNK_FROM_ADDRESS` | No       | From address used for platform notification emails.        | `noreply@yourdomain.com` |
+| `PLUNK_FROM_ADDRESS` | No       | From address used for platform notification emails, including emails to support agents about live chat messages left unread. Both variables must be set. | `noreply@yourdomain.com` |
 
 ## Notifications (ntfy)
 

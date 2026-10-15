@@ -7,6 +7,7 @@ import {
   type MessageSource,
   Prisma,
 } from '@plunk/db';
+import {isPlatformEmailEnabled} from '@plunk/email';
 import {CONTACT_IDENTITY_TYPES, type ConversationView, normalizeOrigin, resolveBrand} from '@plunk/shared';
 import signale from 'signale';
 import type {
@@ -405,6 +406,10 @@ export class ConversationService {
       create: {userId, conversationId, lastReadAt: now},
       update: {lastReadAt: now},
     });
+    await prisma.conversation.updateMany({
+      where: {id: conversationId, agentsEmailedAt: {not: null}},
+      data: {agentsEmailedAt: null},
+    });
     await this.publishToInbox(projectId, {type: 'read', conversationId, reader: {type: 'AGENT', userId}});
   }
 
@@ -698,8 +703,11 @@ export class ConversationService {
     if (fromContact) {
       conversationUpdate.lastContactMessageAt = now;
     }
-    if (input.authorType === 'AGENT' && kind === 'COMMENT' && !conversation.firstResponseAt) {
-      conversationUpdate.firstResponseAt = now;
+    if (input.authorType === 'AGENT' && kind === 'COMMENT') {
+      conversationUpdate.agentsEmailedAt = null;
+      if (!conversation.firstResponseAt) {
+        conversationUpdate.firstResponseAt = now;
+      }
     }
 
     const {message, reopened} = await prisma.$transaction(async tx => {
@@ -774,7 +782,7 @@ export class ConversationService {
       await this.scheduleReplyEmail(conversation.projectId, message.id);
     }
     if (fromContact) {
-      await this.notifyAgents(message.id);
+      await this.notifyAgents(conversation.projectId, message.id);
     }
 
     return message;
@@ -782,9 +790,16 @@ export class ConversationService {
 
   /* Agents are notified by the worker. The message is already saved and live in the Inbox, so a
   queue failure is logged rather than failing the visitor's send. */
-  private static async notifyAgents(messageId: string): Promise<void> {
+  private static async notifyAgents(projectId: string, messageId: string): Promise<void> {
     try {
-      await QueueService.queueChatNotification({type: 'visitor_message', messageId});
+      const settings = await MessengerSettingsService.get(projectId);
+      await Promise.all([
+        QueueService.queueChatNotification({type: 'visitor_message', messageId}),
+        isPlatformEmailEnabled()
+          ? QueueService.queueChatNotification({type: 'agent_email', messageId}, {delay: settings.emailDelayMinutes * 60_000})
+          : undefined,
+        settings.slackConnected ? QueueService.queueChatNotification({type: 'slack', messageId}) : undefined,
+      ]);
     } catch (error) {
       signale.warn(`[CHAT] Could not queue agent notifications for message ${messageId}:`, error);
     }
@@ -954,6 +969,17 @@ export class ConversationService {
   public static preview(body: string): string {
     const flat = body.replace(/\s+/g, ' ').trim();
     return flat.length > PREVIEW_LENGTH ? `${flat.slice(0, PREVIEW_LENGTH - 1)}…` : flat;
+  }
+
+  public static contactLabel(contact: {email: string | null; externalId: string | null; data: unknown}): string {
+    const data = (contact.data ?? {}) as Record<string, unknown>;
+    const name = [data.firstName, data.lastName].filter(part => typeof part === 'string' && part).join(' ');
+    return name || contact.email || contact.externalId || 'A visitor';
+  }
+
+  /** A dashboard path that switches to the project and opens the conversation. */
+  public static inboxPath(projectId: string, conversationId: string): string {
+    return `/inbox?${new URLSearchParams({project: projectId, view: 'all', c: conversationId})}`;
   }
 
   public static agentName(user: {name: string | null; email: string}): string {

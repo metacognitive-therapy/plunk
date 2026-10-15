@@ -25,6 +25,24 @@ export function normalizeOrigin(value: string): string | null {
   }
 }
 
+/* Posting goes server-side to whatever URL is saved, so only Slack's own webhook host is accepted. */
+export function isSlackWebhookUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'hooks.slack.com' && url.pathname.startsWith('/services/') && !url.port;
+  } catch {
+    return false;
+  }
+}
+
+const slackWebhookUrl = z
+  .string()
+  .trim()
+  .max(500)
+  .refine(value => value === '' || isSlackWebhookUrl(value), 'Use a Slack incoming webhook URL such as https://hooks.slack.com/services/…')
+  .nullable()
+  .transform(value => value || null);
+
 const origin = z
   .string()
   .trim()
@@ -151,6 +169,10 @@ export const MessengerSettingsSchemas = {
       .transform(value => value || null)
       .optional(),
     emailDelayMinutes: z.number().int().min(1).max(MESSENGER_EMAIL_DELAY_MAX_MINUTES).optional(),
+    slackWebhookUrl: slackWebhookUrl.optional(),
+  }),
+  slackTest: z.object({
+    url: slackWebhookUrl.optional(),
   }),
 } as const;
 
@@ -172,6 +194,7 @@ export const NotificationSchemas = {
       inboxTitleCount: z.boolean(),
       inboxSound: z.boolean(),
       pushPreview: z.boolean(),
+      inboxEmail: z.boolean(),
     })
     .partial(),
   subscribe: z.object({

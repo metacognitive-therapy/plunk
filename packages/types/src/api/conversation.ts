@@ -131,6 +131,7 @@ export interface AgentNotificationPrefs {
   inboxTitleCount: boolean;
   inboxSound: boolean;
   pushPreview: boolean;
+  inboxEmail: boolean;
 }
 
 /** What the dashboard's service worker shows for one push. */
@@ -206,8 +207,10 @@ export interface MessengerSettingsData {
   replyDomain: string | null;
   /** The address emailed replies are sent from. */
   replyFromEmail: string | null;
-  /** How long an agent reply can sit unread before it is emailed to the visitor. */
+  /** How long a message can sit unread before it is emailed: agent replies to the visitor, visitor messages to agents. */
   emailDelayMinutes: number;
+  /** Whether a Slack webhook is saved. The URL itself is a credential and never leaves the server. */
+  slackConnected: boolean;
 }
 
 /** Pushed to one visitor's messenger. Never carries internal notes or another visitor's threads. */

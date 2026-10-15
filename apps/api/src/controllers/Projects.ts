@@ -7,6 +7,7 @@ import {HttpException} from '../exceptions/index.js';
 import {requireAuth, requireEmailVerified} from '../middleware/auth.js';
 import {MembershipService} from '../services/MembershipService.js';
 import {MessengerSettingsService} from '../services/MessengerSettingsService.js';
+import {SlackService} from '../services/SlackService.js';
 import {SecurityService} from '../services/SecurityService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
@@ -316,5 +317,22 @@ export class Projects {
     });
 
     return res.json({success: true, data});
+  }
+
+  /**
+   * POST /projects/:id/messenger/slack/test
+   */
+  @Post(':id/messenger/slack/test')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  private async testSlackWebhook(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {url} = MessengerSettingsSchemas.slackTest.parse(req.body ?? {});
+
+    await MembershipService.requireAdminAccess(auth.userId!, id);
+    await SlackService.test(id, url);
+
+    return res.json({success: true});
   }
 }
