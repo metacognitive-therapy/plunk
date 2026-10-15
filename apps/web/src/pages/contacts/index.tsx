@@ -975,7 +975,7 @@ export default function ContactsPage() {
           onOpenChange={setShowDeleteDialog}
           onConfirm={handleDelete}
           title="Delete this contact?"
-          description="Their email and details are erased and they'll never receive email again, but their send history is kept. This can't be undone."
+          description="Their email, details and live chat conversations are erased and they'll never receive email again, but their send history is kept. This can't be undone."
           confirmText="Delete contact"
           variant="destructive"
         />

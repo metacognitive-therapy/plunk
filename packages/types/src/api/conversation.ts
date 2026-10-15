@@ -262,6 +262,8 @@ export interface MessengerSettingsData {
   officeHours: OfficeHoursDay[];
   /** IANA time zone the office hours are kept in, e.g. Europe/Oslo. */
   timezone: string;
+  /** Closed conversations are deleted this many months after they were closed. */
+  retentionMonths: number;
 }
 
 /** Pushed to one visitor's messenger. Never carries internal notes or another visitor's threads. */

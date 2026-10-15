@@ -55,6 +55,7 @@ import {HttpException} from './exceptions/index.js';
 import {
   apiRequestCleanupQueue,
   campaignStatsSweepQueue,
+  chatRetentionQueue,
   domainVerificationQueue,
   cardVerificationSweepQueue,
   emailBodyCleanupQueue,
@@ -443,4 +444,19 @@ void prisma.$connect().then(async () => {
   );
 
   signale.info('[BACKGROUND-JOB] Snooze sweep scheduled (BullMQ repeatable job, runs every minute)');
+
+  // Set up repeatable job for live chat retention (BullMQ)
+  // Daily at 4:30 AM, offset from the 4 AM email body cleanup so the two don't overlap
+  await chatRetentionQueue.add(
+    'chat-retention',
+    {},
+    {
+      repeat: {
+        pattern: '30 4 * * *', // Daily at 4:30 AM
+      },
+      jobId: 'chat-retention-repeatable', // Fixed ID to prevent duplicates
+    },
+  );
+
+  signale.info('[BACKGROUND-JOB] Chat retention scheduled (BullMQ repeatable job, runs daily at 4:30 AM)');
 });

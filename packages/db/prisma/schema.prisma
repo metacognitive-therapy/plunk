@@ -268,6 +268,9 @@ model MessengerSettings {
   // replies on unassigned ones are posted to. A credential: never sent to the dashboard.
   slackWebhookUrl String?
 
+  // Closed conversations are deleted this many months after closedAt by the chat retention sweep.
+  retentionMonths Int @default(24)
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

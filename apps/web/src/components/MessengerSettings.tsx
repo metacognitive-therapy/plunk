@@ -3,6 +3,8 @@ import {
   MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES,
   MESSENGER_EMAIL_DELAY_MAX_MINUTES,
   MESSENGER_GREETING_MAX_LENGTH,
+  MESSENGER_RETENTION_DEFAULT_MONTHS,
+  MESSENGER_RETENTION_MAX_MONTHS,
   MESSENGER_DEFAULT_TIMEZONE,
   MESSENGER_TEAM_MAX,
   type MessengerSettingsSchemas,
@@ -130,6 +132,7 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
   const [replyFromEmail, setReplyFromEmail] = useState('');
   const [emailDelay, setEmailDelay] = useState(String(MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES));
   const [replyTime, setReplyTime] = useState<MessengerReplyTimeValue>('FEW_HOURS');
+  const [retention, setRetention] = useState(String(MESSENGER_RETENTION_DEFAULT_MONTHS));
   const [officeHoursEnabled, setOfficeHoursEnabled] = useState(false);
   const [timezone, setTimezone] = useState(MESSENGER_DEFAULT_TIMEZONE);
   const [hours, setHours] = useState<HoursRow[]>(() => toRows([]));
@@ -153,6 +156,7 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       setOfficeHoursEnabled(data.data.officeHoursEnabled);
       setTimezone(data.data.timezone);
       setHours(toRows(data.data.officeHours));
+      setRetention(String(data.data.retentionMonths));
     }
   }, [data]);
 
@@ -178,6 +182,9 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
   const delayMinutes = Number(emailDelay);
   const delayValid = Number.isInteger(delayMinutes) && delayMinutes >= 1 && delayMinutes <= MESSENGER_EMAIL_DELAY_MAX_MINUTES;
   const sesRegion = config?.aws?.sesRegion;
+  const retentionMonths = Number(retention);
+  const retentionValid =
+    Number.isInteger(retentionMonths) && retentionMonths >= 1 && retentionMonths <= MESSENGER_RETENTION_MAX_MONTHS;
 
   const officeHours = toDays(hours);
   const hoursValid = officeHours !== null && (!officeHoursEnabled || officeHours.length > 0);
@@ -197,6 +204,7 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       replyTime !== saved.replyTime ||
       officeHoursEnabled !== saved.officeHoursEnabled ||
       timezone !== saved.timezone ||
+      retentionMonths !== saved.retentionMonths ||
       hoursKey(officeHours) !== hoursKey(saved.officeHours));
 
   const updateRow = (index: number, patch: Partial<HoursRow>) => {
@@ -240,6 +248,10 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       toast.error(`The email delay must be between 1 and ${MESSENGER_EMAIL_DELAY_MAX_MINUTES} minutes`);
       return;
     }
+    if (!retentionValid) {
+      toast.error(`Keep closed conversations for 1 to ${MESSENGER_RETENTION_MAX_MONTHS} months`);
+      return;
+    }
     if (!officeHours) {
       toast.error('Each open day needs a closing time after its opening time');
       return;
@@ -264,6 +276,7 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
         officeHoursEnabled,
         officeHours,
         timezone,
+        retentionMonths,
       });
       await mutate();
       toast.success('Messenger settings saved');
@@ -593,6 +606,38 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
               <p className="text-neutral-500">It is also listed under the domain in the Domains tab.</p>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Data retention</CardTitle>
+          <CardDescription>
+            Conversations can hold sensitive details, so they aren’t kept forever. Deleted conversations and their
+            files can’t be recovered.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-1.5 sm:max-w-xs">
+            <Label htmlFor="messenger-retention">Delete closed conversations after (months)</Label>
+            <Input
+              id="messenger-retention"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={MESSENGER_RETENTION_MAX_MONTHS}
+              value={retention}
+              disabled={!canEdit}
+              onChange={event => setRetention(event.target.value)}
+            />
+            {!retentionValid && (
+              <p className="text-sm text-red-600">Use a whole number from 1 to {MESSENGER_RETENTION_MAX_MONTHS}.</p>
+            )}
+          </div>
+          <p className="text-sm text-neutral-500">
+            Visitors who never left an email address are deleted, with their conversations, after 90 days without a
+            message. Deleting a contact deletes their conversations right away.
+          </p>
         </CardContent>
       </Card>
 

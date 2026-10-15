@@ -13,6 +13,7 @@ import type {
   CardVerificationJobData,
   CardVerificationSweepJobData,
   ChatNotificationJobData,
+  ChatRetentionJobData,
   ContactImportJobData,
   DomainVerificationJobData,
   EmailBodyCleanupJobData,
@@ -304,6 +305,21 @@ export const snoozeSweepQueue = new Queue<SnoozeSweepJobData>('snooze-sweep', {
     backoff: {
       type: 'exponential',
       delay: 10000,
+    },
+    removeOnComplete: 20,
+    removeOnFail: 50,
+  },
+});
+
+// Deletes expired conversations and inactive messenger leads daily. A failed run is redone by the
+// next one; each batch commits on its own, so a retry resumes where the last one stopped.
+export const chatRetentionQueue = new Queue<ChatRetentionJobData>('chat-retention', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 60000,
     },
     removeOnComplete: 20,
     removeOnFail: 50,

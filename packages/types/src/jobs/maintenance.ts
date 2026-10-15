@@ -54,3 +54,7 @@ export interface EmailBodyCleanupJobData {
 export interface SnoozeSweepJobData {
   // Empty - wakes every due conversation
 }
+
+export interface ChatRetentionJobData {
+  // Empty - deletes every expired conversation and inactive messenger lead
+}
