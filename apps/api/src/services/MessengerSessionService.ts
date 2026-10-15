@@ -1,5 +1,6 @@
 import {createHmac} from 'node:crypto';
 
+import {MESSENGER_USER_TOKEN_MAX_TTL_SECONDS, MessengerSchemas} from '@plunk/shared';
 import jsonwebtoken from 'jsonwebtoken';
 
 import {JWT_SECRET} from '../app/constants.js';
@@ -7,6 +8,7 @@ import {ErrorCode, HttpException} from '../exceptions/index.js';
 
 const AUDIENCE = 'plunk-messenger';
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
+const USER_TOKEN_CLOCK_TOLERANCE_SECONDS = 60;
 
 /* A key derived from JWT_SECRET plus a distinct audience means a dashboard session token can never
 be accepted as a messenger session, and a messenger token can never be accepted by the dashboard. */
@@ -21,6 +23,12 @@ export interface MessengerSession {
 
 export interface VerifiedMessengerSession extends MessengerSession {
   expiresAt: Date;
+}
+
+export interface UserTokenClaims {
+  sub: string;
+  email?: string;
+  name?: string;
 }
 
 interface SessionClaims {
@@ -44,6 +52,33 @@ export class MessengerSessionService {
       algorithm: 'HS256',
     });
     return {token, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000)};
+  }
+
+  /**
+   * Checks a user token from the customer's backend: HS256 with the project's identity secret, a
+   * `sub`, and an `exp` no more than an hour ahead. jsonwebtoken accepts a token without `exp`,
+   * so its presence and bound are checked here.
+   */
+  public static verifyUserToken(token: string, secret: string): UserTokenClaims {
+    let payload: unknown;
+    try {
+      payload = jsonwebtoken.verify(token, secret, {
+        algorithms: ['HS256'],
+        clockTolerance: USER_TOKEN_CLOCK_TOLERANCE_SECONDS,
+      });
+    } catch {
+      throw new HttpException(401, 'The user token is invalid or has expired', ErrorCode.UNAUTHORIZED);
+    }
+
+    const claims = MessengerSchemas.userTokenClaims.safeParse(payload);
+    if (!claims.success) {
+      throw new HttpException(401, 'The user token needs a sub and an exp', ErrorCode.UNAUTHORIZED);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (claims.data.exp - now > MESSENGER_USER_TOKEN_MAX_TTL_SECONDS + USER_TOKEN_CLOCK_TOLERANCE_SECONDS) {
+      throw new HttpException(401, 'The user token must expire within an hour', ErrorCode.UNAUTHORIZED);
+    }
+    return {sub: claims.data.sub, email: claims.data.email, name: claims.data.name};
   }
 
   public static verify(token: string): VerifiedMessengerSession {

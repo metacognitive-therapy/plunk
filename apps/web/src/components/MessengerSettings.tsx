@@ -14,6 +14,7 @@ import {
 } from '@plunk/shared';
 import type {
   MemberWithEmail,
+  MessengerIdentitySecret,
   MessengerLauncherPositionValue,
   MessengerReplyTimeValue,
   MessengerSettingsData,
@@ -27,6 +28,7 @@ import {
   CardHeader,
   CardTitle,
   Checkbox,
+  ConfirmDialog,
   Input,
   Label,
   Select,
@@ -693,7 +695,145 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
           </div>
         </CardContent>
       </Card>
+
+      <IdentityCard
+        projectId={activeProject.id}
+        publicKey={activeProject.public}
+        enabled={saved?.identityVerification ?? false}
+        canEdit={canEdit}
+        onChange={() => void mutate()}
+      />
     </div>
+  );
+}
+
+interface IdentityCardProps {
+  projectId: string;
+  publicKey: string;
+  enabled: boolean;
+  canEdit: boolean;
+  onChange: () => void;
+}
+
+function IdentityCard({projectId, publicKey, enabled, canEdit, onChange}: IdentityCardProps) {
+  const [secret, setSecret] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const path = `/projects/${projectId}/messenger/identity-secret`;
+  const reveal = async () => {
+    setBusy(true);
+    try {
+      const result = await network.fetch<{success: boolean; data: MessengerIdentitySecret}>('GET', path);
+      setSecret(result.data.secret);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Couldn’t load the secret. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const rotate = async () => {
+    setBusy(true);
+    try {
+      const result = await network.fetch<{success: boolean; data: MessengerIdentitySecret}>('POST', path);
+      setSecret(result.data.secret);
+      onChange();
+      toast.success(enabled ? 'New secret created. Tokens signed with the old one no longer work.' : 'Secret created');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Couldn’t create a secret. Try again.');
+    } finally {
+      setBusy(false);
+      setConfirmRotate(false);
+    }
+  };
+  const copySecret = async () => {
+    if (!secret) return;
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error('Couldn’t copy. Select the secret and copy it by hand.');
+    }
+  };
+
+  const example = [
+    '// On your server, for the signed-in user',
+    "import jwt from 'jsonwebtoken';",
+    '',
+    'const userToken = jwt.sign(',
+    '  {sub: user.id, email: user.email, name: user.name},',
+    '  process.env.MESSENGER_IDENTITY_SECRET,',
+    "  {algorithm: 'HS256', expiresIn: '1h'},",
+    ');',
+    '',
+    '// In the page, instead of the plain boot',
+    `PlunkChat('boot', {key: '${publicKey}', userToken});`,
+  ].join('\n');
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Identity verification</CardTitle>
+        <CardDescription>
+          Sign your users in to the messenger, so they see all their conversations on any device. Your server signs a
+          short-lived token with this secret. Never put the secret in your website’s code.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-neutral-700">{enabled ? 'On. Signed-in users can be verified.' : 'Not set up.'}</p>
+        {canEdit && (
+          <>
+            {secret && (
+              <div className="space-y-1.5">
+                <Label htmlFor="messenger-identity-secret">Secret</Label>
+                <div className="flex gap-2">
+                  <Input id="messenger-identity-secret" value={secret} readOnly className="font-mono" />
+                  <Button variant="outline" onClick={() => void copySecret()} aria-label="Copy the secret">
+                    {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {enabled && !secret && (
+                <Button variant="outline" onClick={() => void reveal()} disabled={busy}>
+                  Show secret
+                </Button>
+              )}
+              <Button
+                variant={enabled ? 'ghost' : 'default'}
+                onClick={() => (enabled ? setConfirmRotate(true) : void rotate())}
+                disabled={busy}
+              >
+                {enabled ? 'Replace secret' : 'Create secret'}
+              </Button>
+            </div>
+          </>
+        )}
+        {enabled && (
+          <>
+            <pre className="overflow-x-auto rounded-md bg-neutral-950 p-4 text-xs leading-relaxed text-neutral-100">
+              {example}
+            </pre>
+            <p className="text-sm text-neutral-500">
+              Tokens must expire within an hour. Call <code>PlunkChat(&apos;shutdown&apos;)</code> when the user signs
+              out, so the next person on that browser starts a fresh chat.
+            </p>
+          </>
+        )}
+      </CardContent>
+      <ConfirmDialog
+        open={confirmRotate}
+        onOpenChange={setConfirmRotate}
+        onConfirm={() => void rotate()}
+        title="Replace the secret?"
+        description="Tokens signed with the current secret stop working right away, so signed-in users can’t open the messenger until your server signs with the new one."
+        confirmText="Replace secret"
+        variant="destructive"
+      />
+    </Card>
   );
 }
 

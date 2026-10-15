@@ -300,6 +300,39 @@ export class Projects {
   }
 
   /**
+   * GET /projects/:id/messenger/identity-secret
+   */
+  @Get(':id/messenger/identity-secret')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  private async getMessengerIdentitySecret(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+
+    await MembershipService.requireAdminAccess(auth.userId!, id);
+    const secret = await MessengerSettingsService.identitySecret(id);
+
+    return res.json({success: true, data: {secret}});
+  }
+
+  /**
+   * POST /projects/:id/messenger/identity-secret
+   * Generates the secret, or replaces it: tokens signed with the old one stop working at once.
+   */
+  @Post(':id/messenger/identity-secret')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  private async rotateMessengerIdentitySecret(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+
+    await MembershipService.requireAdminAccess(auth.userId!, id);
+    const secret = await MessengerSettingsService.rotateIdentitySecret(id);
+
+    return res.json({success: true, data: {secret}});
+  }
+
+  /**
    * PATCH /projects/:id/messenger
    */
   @Patch(':id/messenger')

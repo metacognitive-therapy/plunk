@@ -41,7 +41,12 @@ export class Messenger {
   @CatchAsync
   private async stream(req: Request, res: Response, _next: NextFunction) {
     const session = messengerSession(res);
-    await serveEventStream(req, res, [Keys.Realtime.visitor(session.projectId, session.visitorId)], {
+    /* The same scope the conversation routes read by: a verified session follows its contact. */
+    const channel =
+      session.verified && session.contactId
+        ? Keys.Realtime.contact(session.projectId, session.contactId)
+        : Keys.Realtime.visitor(session.projectId, session.visitorId);
+    await serveEventStream(req, res, [channel], {
       ...this.streamOptions,
       expiresAt: session.expiresAt,
     });
@@ -69,8 +74,11 @@ export class Messenger {
   @CatchAsync
   private async start(req: Request, res: Response, _next: NextFunction) {
     const {body, turnstileToken} = MessengerSchemas.startConversation.parse(req.body);
-    await TurnstileService.assertHuman(turnstileToken, req.ip);
-    const data = await ConversationService.startConversation(messengerSession(res), body);
+    const session = messengerSession(res);
+    if (!session.verified) {
+      await TurnstileService.assertHuman(turnstileToken, req.ip);
+    }
+    const data = await ConversationService.startConversation(session, body);
     return res.status(201).json({success: true, data});
   }
 

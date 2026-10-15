@@ -35,12 +35,13 @@ export class MessengerApi {
     private readonly publicKey: string,
     private readonly visitorId: string,
     private readonly parentOrigin?: string,
+    private readonly userToken?: string,
   ) {}
 
   public async boot(): Promise<MessengerBootResponse> {
     const data = await this.request<MessengerBootResponse>('POST', '/v1/messenger/boot', {
       auth: this.publicKey,
-      body: {visitorId: this.visitorId, parentOrigin: this.parentOrigin},
+      body: {visitorId: this.visitorId, parentOrigin: this.parentOrigin, userToken: this.userToken},
     });
     this.token = data.token;
     return data;

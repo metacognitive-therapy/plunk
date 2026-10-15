@@ -3,11 +3,12 @@ import {CHAT_EVENTS, CONTACT_IDENTITY_TYPES} from '@plunk/shared';
 import type {MessengerEmailResponse} from '@plunk/types';
 
 import {prisma} from '../database/prisma.js';
-import {ConflictError, NotFound} from '../exceptions/index.js';
+import {ConflictError, ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
 import {ContactService} from './ContactService.js';
 import {EventService} from './EventService.js';
 import {Keys} from './keys.js';
 import {type MessengerSession, MessengerSessionService} from './MessengerSessionService.js';
+import {MessengerSettingsService} from './MessengerSettingsService.js';
 import {RealtimeHub} from './RealtimeHub.js';
 
 export const EMAIL_CAPTURED_EVENT = CHAT_EVENTS.EMAIL_CAPTURED;
@@ -19,14 +20,68 @@ const isUniqueViolation = (error: unknown) =>
  * Ties a messenger visitor to a contact. Visitors start as leads keyed by their anonymous id and
  * may later give an email, which never makes the session trusted: a visitor who types someone
  * else's address only moves their own lead onto that contact and still sees only the
- * conversations their own device started.
+ * conversations their own device started. Only a user token signed by the customer's backend
+ * makes a session verified, and only a verified session sees all of its contact's conversations.
  */
 export class MessengerContactService {
+  /**
+   * The conversations a session may see. Keyed on `verified`, never on `contactId` being set: an
+   * anonymous lead merged by email has a contact too, and must not see other devices' chats.
+   */
+  public static conversationScope(session: MessengerSession): Prisma.ConversationWhereInput {
+    if (session.verified && session.contactId) {
+      return {projectId: session.projectId, contactId: session.contactId};
+    }
+    return {projectId: session.projectId, originVisitorId: session.visitorId};
+  }
+
+  /**
+   * Signs a visitor in with a user token: the contact is resolved by the identify rules (external
+   * id first, then email, refusing a conflict), and the visitor's bare anonymous lead, if any, is
+   * folded into it so the chats they started before signing in come along.
+   */
+  public static async identifyVisitor(projectId: string, visitorId: string, userToken: string): Promise<Contact> {
+    const secret = await MessengerSettingsService.identitySecret(projectId);
+    if (!secret) {
+      throw new HttpException(401, 'Identity verification is not set up for this messenger', ErrorCode.UNAUTHORIZED);
+    }
+    const claims = MessengerSessionService.verifyUserToken(userToken, secret);
+
+    const contact = await ContactService.identify(
+      projectId,
+      claims.sub,
+      claims.name ? {name: claims.name} : undefined,
+      undefined,
+      claims.email,
+      undefined,
+      false,
+    );
+
+    const identity = await prisma.contactIdentity.findUnique({
+      where: {projectId_type_value: {projectId, type: CONTACT_IDENTITY_TYPES.ANONYMOUS_ID, value: visitorId}},
+      select: {contact: true},
+    });
+    const lead = identity?.contact;
+    if (lead && lead.id !== contact.id && lead.deletedAt === null) {
+      /* A lead with an email, external id or tags is someone's contact, perhaps another person who
+      used this browser: it is left alone, and the verified session doesn't see its chats. */
+      await this.repointLead(lead, contact.id).catch(error => {
+        if (!(error instanceof ConflictError)) {
+          throw error;
+        }
+      });
+    }
+    return contact;
+  }
+
   /**
    * The visitor's contact is whatever their anonymous id currently points at. A first message
    * creates a lead: unsubscribed, because chatting is not consent to marketing.
    */
   public static async resolveVisitorContact(session: MessengerSession): Promise<string> {
+    if (session.verified && session.contactId) {
+      return (await this.currentContact(session)).id;
+    }
     const identityKey = this.identityKey(session);
     const existing = await prisma.contactIdentity.findUnique({
       where: {projectId_type_value: identityKey},
@@ -86,7 +141,7 @@ export class MessengerContactService {
     input: {email: string; subscribe: boolean; conversationId: string},
   ): Promise<MessengerEmailResponse> {
     const conversation = await prisma.conversation.findFirst({
-      where: {id: input.conversationId, projectId: session.projectId, originVisitorId: session.visitorId},
+      where: {id: input.conversationId, ...this.conversationScope(session)},
       select: {id: true},
     });
     if (!conversation) {
@@ -118,10 +173,13 @@ export class MessengerContactService {
   }
 
   private static async currentContact(session: MessengerSession): Promise<Contact> {
-    const identity = await prisma.contactIdentity.findUnique({
-      where: {projectId_type_value: this.identityKey(session)},
-      select: {contact: true},
-    });
+    const identity =
+      session.verified && session.contactId
+        ? null
+        : await prisma.contactIdentity.findUnique({
+            where: {projectId_type_value: this.identityKey(session)},
+            select: {contact: true},
+          });
     /* Anonymizing a contact drops its identities, so a session whose identity is gone was erased. */
     const contact =
       identity?.contact ??
@@ -183,7 +241,7 @@ export class MessengerContactService {
   }
 
   private static reissue(session: MessengerSession, contactId: string): MessengerEmailResponse {
-    const {token, expiresAt} = MessengerSessionService.sign({...session, contactId, verified: false});
+    const {token, expiresAt} = MessengerSessionService.sign({...session, contactId});
     return {token, expiresAt: expiresAt.toISOString()};
   }
 

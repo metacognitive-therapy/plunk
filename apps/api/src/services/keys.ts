@@ -138,6 +138,10 @@ export const Keys = {
     visitor(projectId: string, visitorId: string): string {
       return `realtime:visitor:${projectId}:${visitorId}`;
     },
+    /* Read only by verified messenger sessions, which see every conversation of their contact. */
+    contact(projectId: string, contactId: string): string {
+      return `realtime:contact:${projectId}:${contactId}`;
+    },
     user(userId: string): string {
       return `realtime:user:${userId}`;
     },

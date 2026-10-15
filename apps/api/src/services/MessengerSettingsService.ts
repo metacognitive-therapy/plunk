@@ -1,3 +1,5 @@
+import {randomBytes} from 'node:crypto';
+
 import type {MessengerSettings, Prisma} from '@plunk/db';
 import {
   MESSENGER_DEFAULT_ACCENT,
@@ -31,9 +33,10 @@ const DEFAULT_SETTINGS: MessengerSettingsData = {
   officeHours: [],
   timezone: MESSENGER_DEFAULT_TIMEZONE,
   retentionMonths: MESSENGER_RETENTION_DEFAULT_MONTHS,
+  identityVerification: false,
 };
 
-export type MessengerSettingsPatch = Partial<Omit<MessengerSettingsData, 'slackConnected'>> & {
+export type MessengerSettingsPatch = Partial<Omit<MessengerSettingsData, 'slackConnected' | 'identityVerification'>> & {
   slackWebhookUrl?: string | null;
 };
 
@@ -132,6 +135,24 @@ export class MessengerSettingsService {
     return row?.slackWebhookUrl ?? null;
   }
 
+  /** The secret user tokens are signed with. Read uncached, so a rotation takes effect at once. */
+  public static async identitySecret(projectId: string): Promise<string | null> {
+    const row = await prisma.messengerSettings.findUnique({where: {projectId}, select: {identitySecret: true}});
+    return row?.identitySecret ?? null;
+  }
+
+  /** Replaces the secret, which invalidates every user token signed with the old one. */
+  public static async rotateIdentitySecret(projectId: string): Promise<string> {
+    const identitySecret = randomBytes(32).toString('hex');
+    await prisma.messengerSettings.upsert({
+      where: {projectId},
+      create: {projectId, identitySecret},
+      update: {identitySecret},
+    });
+    await redis.del(Keys.Messenger.settings(projectId));
+    return identitySecret;
+  }
+
   public static isOriginAllowed(settings: MessengerSettingsData, origin: string): boolean {
     return settings.allowedOrigins.includes(origin);
   }
@@ -207,6 +228,7 @@ export class MessengerSettingsService {
         : [],
       timezone: row.timezone,
       retentionMonths: row.retentionMonths,
+      identityVerification: Boolean(row.identitySecret),
     };
   }
 }

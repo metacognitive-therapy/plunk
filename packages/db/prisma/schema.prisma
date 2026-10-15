@@ -271,6 +271,10 @@ model MessengerSettings {
   // Closed conversations are deleted this many months after closedAt by the chat retention sweep.
   retentionMonths Int @default(24)
 
+  // HMAC key the customer's backend signs messenger user tokens with (identified mode). A
+  // credential: only admins can read or rotate it, and the dashboard settings see a boolean.
+  identitySecret String?
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

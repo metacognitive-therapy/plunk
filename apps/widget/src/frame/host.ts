@@ -18,7 +18,10 @@ export interface HostBridge {
  * parent window at the origin named in the frame URL are trusted; boot then checks that origin
  * against the project's allowlist, and frame-ancestors stops any other site from framing us.
  */
-export function connectToHost(parentOrigin: string | null, onInit: (visitorId: string, bridge: HostBridge) => void) {
+export function connectToHost(
+  parentOrigin: string | null,
+  onInit: (visitorId: string, bridge: HostBridge, userToken?: string) => void,
+) {
   if (!parentOrigin || window.parent === window) {
     return;
   }
@@ -46,7 +49,8 @@ export function connectToHost(parentOrigin: string | null, onInit: (visitorId: s
     if (message.type === 'init') {
       if (!initialised && VISITOR_ID_PATTERN.test(message.visitorId)) {
         initialised = true;
-        onInit(message.visitorId, bridge);
+        const userToken = typeof message.userToken === 'string' && message.userToken ? message.userToken : undefined;
+        onInit(message.visitorId, bridge, userToken);
       }
       return;
     }

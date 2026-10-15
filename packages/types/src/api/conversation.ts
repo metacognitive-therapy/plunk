@@ -92,6 +92,8 @@ export interface MessengerBootResponse {
   serverTime: string;
   visitor: {
     hasEmail: boolean;
+    /** Signed in through a user token from the customer's backend: sees all of the contact's conversations. */
+    verified: boolean;
   };
   /** Set when the server checks new conversations with Cloudflare Turnstile. */
   turnstileSiteKey: string | null;
@@ -264,6 +266,13 @@ export interface MessengerSettingsData {
   timezone: string;
   /** Closed conversations are deleted this many months after they were closed. */
   retentionMonths: number;
+  /** Whether an identity secret exists. The secret itself is a credential, shown to admins only. */
+  identityVerification: boolean;
+}
+
+/** The secret user tokens are signed with, as shown to project admins. */
+export interface MessengerIdentitySecret {
+  secret: string | null;
 }
 
 /** Pushed to one visitor's messenger. Never carries internal notes or another visitor's threads. */

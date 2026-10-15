@@ -7,6 +7,8 @@ import type {ChatAttachmentLink} from '@plunk/types';
 import {API_URI, JWT_SECRET} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
+import {MessengerContactService} from './MessengerContactService.js';
+import type {MessengerSession} from './MessengerSessionService.js';
 import * as S3Service from './S3Service.js';
 
 export const ATTACHMENT_LINK_TTL_SECONDS = 5 * 60;
@@ -94,7 +96,7 @@ export class ChatAttachmentService {
   }
 
   public static async linkForSession(
-    scope: {projectId: string; visitorId: string},
+    session: MessengerSession,
     conversationId: string,
     attachmentId: string,
   ): Promise<ChatAttachmentLink> {
@@ -102,8 +104,8 @@ export class ChatAttachmentService {
       where: {
         id: attachmentId,
         conversationId,
-        projectId: scope.projectId,
-        message: {kind: 'COMMENT', conversation: {originVisitorId: scope.visitorId}},
+        projectId: session.projectId,
+        message: {kind: 'COMMENT', conversation: MessengerContactService.conversationScope(session)},
       },
       select: {id: true},
     });

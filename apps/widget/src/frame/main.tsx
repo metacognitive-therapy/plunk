@@ -9,9 +9,9 @@ const params = new URLSearchParams(window.location.search);
 const root = document.getElementById('root');
 const publicKey = params.get('key') ?? '';
 
-function mount(visitorId: string, bridge?: HostBridge) {
+function mount(visitorId: string, bridge?: HostBridge, userToken?: string) {
   if (root) {
-    render(<App publicKey={publicKey} visitorId={visitorId} bridge={bridge} />, root);
+    render(<App publicKey={publicKey} visitorId={visitorId} bridge={bridge} userToken={userToken} />, root);
   }
 }
 
