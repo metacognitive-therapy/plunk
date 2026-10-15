@@ -1,4 +1,6 @@
+import {CHAT_ATTACHMENT_ACCEPT, CHAT_ATTACHMENT_MAX_BYTES, formatFileSize, isInlineImage} from '@plunk/shared/attachments';
 import type {
+  ChatAttachment,
   MessengerBootResponse,
   MessengerConversation,
   MessengerConversationSummary,
@@ -323,7 +325,9 @@ function Thread({
   const [conversation, setConversation] = useState<MessengerConversation | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [typing, setTyping] = useState<{name: string | null} | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const lastMarkedRead = useRef<string | null>(null);
@@ -429,7 +433,7 @@ function Thread({
       return;
     }
     setSending(true);
-    setError(false);
+    setError(null);
     try {
       if (conversationId) {
         const message = await api.sendMessage(conversationId, body);
@@ -442,9 +446,32 @@ function Thread({
       }
       setDraft('');
     } catch {
-      setError(true);
+      setError(strings.failed);
     } finally {
       setSending(false);
+    }
+  };
+
+  /* The draft goes with the file as its caption, so a visitor can say what they are sending. */
+  const attach = async (file: File | undefined) => {
+    if (!file || !conversationId || uploading) {
+      return;
+    }
+    if (file.size > CHAT_ATTACHMENT_MAX_BYTES) {
+      setError(strings.attachmentTooLarge);
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      const message = await api.sendAttachment(conversationId, file, draft.trim());
+      append(message);
+      setConversation(current => (current ? {...current, status: 'OPEN'} : current));
+      setDraft('');
+    } catch (caught) {
+      setError(caught instanceof MessengerApiError && caught.status < 500 ? caught.message : strings.failed);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -456,7 +483,16 @@ function Thread({
             {message.authorType !== 'CONTACT' ? (
               <div class="pm-author">{message.agent?.name ?? strings.team}</div>
             ) : null}
-            <div class="pm-bubble">{message.body}</div>
+            {message.body ? <div class="pm-bubble">{message.body}</div> : null}
+            {message.attachments.map(attachment => (
+              <Attachment
+                key={attachment.id}
+                api={api}
+                strings={strings}
+                conversationId={conversationId!}
+                attachment={attachment}
+              />
+            ))}
             <div class="pm-time">{formatTime(message.createdAt)}</div>
           </div>
         ))}
@@ -490,8 +526,47 @@ function Thread({
         <div ref={bottom} />
       </div>
       <form class="pm-composer" onSubmit={submit}>
-        {error ? <div class="pm-error">{strings.failed}</div> : null}
+        {error ? (
+          <div class="pm-error" role="alert">
+            {error}
+          </div>
+        ) : null}
         <div class="pm-composer-row">
+          {conversationId ? (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                hidden
+                accept={CHAT_ATTACHMENT_ACCEPT}
+                onChange={event => {
+                  const input = event.target as HTMLInputElement;
+                  void attach(input.files?.[0]);
+                  input.value = '';
+                }}
+              />
+              <button
+                class="pm-attach"
+                type="button"
+                disabled={uploading}
+                aria-label={strings.attach}
+                title={strings.attach}
+                onClick={() => fileInput.current?.click()}
+              >
+                {uploading ? (
+                  <span class="pm-spinner" aria-hidden="true" />
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path
+                      d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                )}
+              </button>
+            </>
+          ) : null}
           <textarea
             value={draft}
             rows={1}
@@ -513,6 +588,91 @@ function Thread({
         </div>
       </form>
     </main>
+  );
+}
+
+/* Links are fetched on demand and expire after a few minutes, so a broken image or a later
+download asks for a fresh one instead of reusing a stale URL. */
+function Attachment({
+  api,
+  strings,
+  conversationId,
+  attachment,
+}: {
+  api: MessengerApi;
+  strings: Strings;
+  conversationId: string;
+  attachment: ChatAttachment;
+}) {
+  const image = isInlineImage(attachment.contentType);
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const retried = useRef(false);
+
+  const load = useCallback(
+    () =>
+      api
+        .attachmentLink(conversationId, attachment.id)
+        .then(link => link.url)
+        .catch(() => {
+          setFailed(true);
+          return null;
+        }),
+    [api, conversationId, attachment.id],
+  );
+
+  useEffect(() => {
+    if (image) {
+      void load().then(setSrc);
+    }
+  }, [image, load]);
+
+  const save = async () => {
+    const url = await load();
+    if (!url) {
+      return;
+    }
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = attachment.filename;
+    anchor.rel = 'noopener';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  };
+
+  if (image && !failed) {
+    return (
+      <button type="button" class="pm-image" onClick={() => void save()} title={attachment.filename}>
+        {src ? (
+          <img
+            src={src}
+            alt={attachment.filename}
+            onError={() => {
+              if (retried.current) {
+                setFailed(true);
+                return;
+              }
+              retried.current = true;
+              void load().then(setSrc);
+            }}
+          />
+        ) : (
+          <span class="pm-image-placeholder" aria-busy="true" />
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <button type="button" class="pm-file" onClick={() => void save()} aria-label={`${strings.download} ${attachment.filename}`}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke-linejoin="round" />
+        <path d="M14 2v6h6" stroke-linejoin="round" />
+      </svg>
+      <span class="pm-file-name">{attachment.filename}</span>
+      <span class="pm-file-size">{failed ? strings.attachmentFailed : formatFileSize(attachment.size)}</span>
+    </button>
   );
 }
 

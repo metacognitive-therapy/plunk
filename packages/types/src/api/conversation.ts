@@ -8,12 +8,27 @@ export interface MessengerAgent {
   name: string | null;
 }
 
+/** File details only: the content is fetched through a short-lived link issued on request. */
+export interface ChatAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+}
+
+export interface ChatAttachmentLink {
+  url: string;
+  expiresAt: string;
+}
+
 /** Internal notes are never included in messenger responses. */
 export interface MessengerMessage {
   id: string;
   authorType: MessageAuthorTypeValue;
   agent: MessengerAgent | null;
+  /** Empty when the message is only an attachment. */
   body: string;
+  attachments: ChatAttachment[];
   createdAt: string;
 }
 
@@ -86,6 +101,7 @@ export interface InboxMessage {
   event: InboxSystemEvent | null;
   /** Agents @mentioned in a note. */
   mentions: {id: string; name: string}[];
+  attachments: ChatAttachment[];
   createdAt: string;
 }
 

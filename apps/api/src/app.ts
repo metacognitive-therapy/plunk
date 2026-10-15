@@ -30,6 +30,7 @@ import {Activity} from './controllers/Activity.js';
 import {Analytics} from './controllers/Analytics.js';
 import {Auth} from './controllers/Auth.js';
 import {Campaigns} from './controllers/Campaigns.js';
+import {ChatAttachments} from './controllers/ChatAttachments.js';
 import {Contacts} from './controllers/Contacts.js';
 import {Conversations} from './controllers/Conversations.js';
 import {Domains} from './controllers/Domains.js';
@@ -173,6 +174,7 @@ const server = new (class extends Server {
       new Analytics(),
       new Auth(),
       new Campaigns(),
+      new ChatAttachments(),
       new Oauth(),
       new Users(),
       new Contacts(),
@@ -281,6 +283,7 @@ void prisma.$connect().then(async () => {
   if (S3_ENABLED) {
     try {
       await S3Service.initializeBucket();
+      await S3Service.initializePrivateBucket();
     } catch (error) {
       signale.error('[S3] Failed to initialize bucket:', error);
       signale.warn('[S3] File uploads may not work properly');

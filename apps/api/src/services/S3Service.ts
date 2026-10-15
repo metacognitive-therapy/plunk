@@ -1,5 +1,9 @@
+import type {Readable} from 'node:stream';
+
 import {
   CreateBucketCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
   HeadBucketCommand,
   PutBucketPolicyCommand,
   PutObjectCommand,
@@ -15,6 +19,7 @@ import {
   S3_ENABLED,
   S3_ENDPOINT,
   S3_FORCE_PATH_STYLE,
+  S3_PRIVATE_BUCKET,
   S3_PUBLIC_URL,
 } from '../app/constants.js';
 
@@ -33,6 +38,76 @@ if (S3_ENABLED) {
     },
     forcePathStyle: S3_FORCE_PATH_STYLE, // Required for Minio (uses path-style URLs)
   });
+}
+
+function isNotFound(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      (('name' in error && (error.name === 'NotFound' || error.name === 'NoSuchKey')) ||
+        ('$metadata' in error &&
+          error.$metadata &&
+          typeof error.$metadata === 'object' &&
+          'httpStatusCode' in error.$metadata &&
+          error.$metadata.httpStatusCode === 404)),
+  );
+}
+
+function requireClient(): S3Client {
+  if (!s3Client) {
+    throw new Error('S3 is not enabled');
+  }
+  return s3Client;
+}
+
+/**
+ * Creates the private attachment bucket if it is missing. No policy is ever attached to it, so
+ * its objects are readable only with the API's credentials.
+ */
+export async function initializePrivateBucket(): Promise<void> {
+  const client = requireClient();
+  try {
+    await client.send(new HeadBucketCommand({Bucket: S3_PRIVATE_BUCKET}));
+  } catch (error) {
+    if (!isNotFound(error)) {
+      throw error;
+    }
+    await client.send(new CreateBucketCommand({Bucket: S3_PRIVATE_BUCKET}));
+    signale.info(`[S3] Created private bucket: ${S3_PRIVATE_BUCKET}`);
+  }
+}
+
+export async function putPrivateObject(key: string, body: Buffer, contentType: string): Promise<void> {
+  await requireClient().send(
+    new PutObjectCommand({Bucket: S3_PRIVATE_BUCKET, Key: key, Body: body, ContentType: contentType}),
+  );
+}
+
+/** Null when the object no longer exists. */
+export async function getPrivateObject(key: string): Promise<Readable | null> {
+  try {
+    const object = await requireClient().send(new GetObjectCommand({Bucket: S3_PRIVATE_BUCKET, Key: key}));
+    return (object.Body as Readable | undefined) ?? null;
+  } catch (error) {
+    if (isNotFound(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** Deletes up to 1000 objects per call, the S3 batch limit. */
+export async function deletePrivateObjects(keys: string[]): Promise<void> {
+  const client = requireClient();
+  for (let i = 0; i < keys.length; i += 1000) {
+    const batch = keys.slice(i, i + 1000);
+    await client.send(
+      new DeleteObjectsCommand({
+        Bucket: S3_PRIVATE_BUCKET,
+        Delete: {Objects: batch.map(Key => ({Key})), Quiet: true},
+      }),
+    );
+  }
 }
 
 /**

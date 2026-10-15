@@ -31,7 +31,8 @@ server {
     listen ${NGINX_PORT} default_server;
     server_name ${API_DOMAIN};
 
-    client_max_body_size 10M;
+    # Chat attachments are up to 10 MB of file plus multipart framing.
+    client_max_body_size 12M;
 
     # ACME challenges should be handled by SMTP server, not API
     # This catches ALL ACME challenges, including for SMTP_DOMAIN

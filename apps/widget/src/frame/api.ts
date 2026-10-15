@@ -1,5 +1,6 @@
 import {type EventStream, openEventStream} from '@plunk/shared/event-stream';
 import type {
+  ChatAttachmentLink,
   MessengerBootResponse,
   MessengerConversation,
   MessengerConversationSummary,
@@ -63,6 +64,20 @@ export class MessengerApi {
     return this.withSession('POST', `/v1/messenger/conversations/${encodeURIComponent(id)}/messages`, {body});
   }
 
+  public sendAttachment(id: string, file: File, body: string): Promise<MessengerMessage> {
+    const form = new FormData();
+    form.append('body', body);
+    form.append('file', file);
+    return this.withSession('POST', `/v1/messenger/conversations/${encodeURIComponent(id)}/attachments`, form);
+  }
+
+  public attachmentLink(conversationId: string, attachmentId: string): Promise<ChatAttachmentLink> {
+    return this.withSession(
+      'GET',
+      `/v1/messenger/conversations/${encodeURIComponent(conversationId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    );
+  }
+
   public typing(id: string): Promise<void> {
     return this.withSession('POST', `/v1/messenger/conversations/${encodeURIComponent(id)}/typing`, {});
   }
@@ -112,13 +127,14 @@ export class MessengerApi {
   }
 
   private async request<T>(method: string, path: string, options: {auth: string; body?: unknown}): Promise<T> {
+    const form = options.body instanceof FormData;
     const response = await fetch(path, {
       method,
       headers: {
         Authorization: `Bearer ${options.auth}`,
-        ...(options.body !== undefined ? {'Content-Type': 'application/json'} : {}),
+        ...(options.body !== undefined && !form ? {'Content-Type': 'application/json'} : {}),
       },
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body: form ? (options.body as FormData) : options.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
 
     if (response.status === 204) {

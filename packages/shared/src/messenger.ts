@@ -8,6 +8,11 @@ export const MESSAGE_BODY_MAX_LENGTH = 5000;
 
 const messageBody = z.string().trim().min(1, 'Message cannot be empty').max(MESSAGE_BODY_MAX_LENGTH);
 
+/* The text sent alongside a file, which may be empty. */
+const attachmentCaption = z.object({
+  body: z.string().trim().max(MESSAGE_BODY_MAX_LENGTH).optional().default(''),
+});
+
 export function normalizeOrigin(value: string): string | null {
   try {
     const url = new URL(value.trim());
@@ -45,6 +50,7 @@ export const MessengerSchemas = {
   sendMessage: z.object({
     body: messageBody,
   }),
+  sendAttachment: attachmentCaption,
   captureEmail: z.object({
     email: z.string().trim().toLowerCase().email('Enter a valid email address').max(254),
     /* Marketing consent is opt-in only: absent means no. */
@@ -71,6 +77,7 @@ export const ConversationSchemas = {
   reply: z.object({
     body: messageBody,
   }),
+  replyAttachment: attachmentCaption,
   status: z.discriminatedUnion('status', [
     z.object({status: z.literal('OPEN')}),
     z.object({status: z.literal('CLOSED')}),

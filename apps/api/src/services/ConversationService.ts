@@ -9,6 +9,7 @@ import {
 } from '@plunk/db';
 import {CONTACT_IDENTITY_TYPES, type ConversationView, normalizeOrigin, resolveBrand} from '@plunk/shared';
 import type {
+  ChatAttachment,
   InboxAgent,
   InboxConversation,
   InboxCounts,
@@ -30,6 +31,7 @@ import {API_URI} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {redis} from '../database/redis.js';
 import {ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
+import {ChatAttachmentService, type IncomingFile, type StoredAttachment} from './ChatAttachmentService.js';
 import {ConversationTagService} from './ConversationTagService.js';
 import {Keys} from './keys.js';
 import {MembershipService} from './MembershipService.js';
@@ -61,6 +63,11 @@ const TRANSITION_ATTEMPTS = 3;
 
 const authorSelect = {select: {id: true, name: true, email: true}} as const;
 
+const messageInclude = {
+  authorUser: authorSelect,
+  attachments: {select: {id: true, filename: true, contentType: true, size: true}, orderBy: {createdAt: 'asc'}},
+} as const;
+
 type ConversationState = Pick<Conversation, 'status' | 'snoozedUntil' | 'assigneeId'>;
 
 export type StatusChange =
@@ -68,7 +75,10 @@ export type StatusChange =
   | {status: 'CLOSED'}
   | {status: 'SNOOZED'; snoozedUntil: Date | null};
 
-type MessageWithAuthor = ConversationMessage & {authorUser: {id: string; name: string | null; email: string} | null};
+type MessageWithAuthor = ConversationMessage & {
+  authorUser: {id: string; name: string | null; email: string} | null;
+  attachments: ChatAttachment[];
+};
 
 interface PostMessageInput {
   authorType: MessageAuthorType;
@@ -77,6 +87,7 @@ interface PostMessageInput {
   body: string;
   source: MessageSource;
   mentionedUserIds?: string[];
+  attachment?: StoredAttachment;
 }
 
 type MentionNames = Map<string, string>;
@@ -204,6 +215,17 @@ export class ConversationService {
     return this.toMessengerMessage(message);
   }
 
+  public static async sendAttachmentFromContact(
+    session: MessengerSession,
+    conversationId: string,
+    file: IncomingFile,
+    body: string,
+  ): Promise<MessengerMessage> {
+    const conversation = await this.requireSessionConversation(session, conversationId);
+    const message = await this.postWithAttachment(conversation, file, {authorType: 'CONTACT', body, source: 'WIDGET'});
+    return this.toMessengerMessage(message);
+  }
+
   public static async markReadByContact(session: MessengerSession, conversationId: string): Promise<void> {
     const conversation = await this.requireSessionConversation(session, conversationId);
     if (!this.isUnreadByContact(conversation)) {
@@ -308,6 +330,24 @@ export class ConversationService {
   ): Promise<InboxMessage> {
     const conversation = await this.requireProjectConversation(projectId, conversationId);
     const message = await this.postMessage(conversation, {
+      authorType: 'AGENT',
+      authorUserId: userId,
+      body,
+      source: 'DASHBOARD',
+    });
+    await this.markReadByAgent(projectId, userId, conversationId);
+    return this.toInboxMessage(message);
+  }
+
+  public static async replyWithAttachment(
+    projectId: string,
+    userId: string,
+    conversationId: string,
+    file: IncomingFile,
+    body: string,
+  ): Promise<InboxMessage> {
+    const conversation = await this.requireProjectConversation(projectId, conversationId);
+    const message = await this.postWithAttachment(conversation, file, {
       authorType: 'AGENT',
       authorUserId: userId,
       body,
@@ -559,7 +599,7 @@ export class ConversationService {
         meta: event as unknown as Prisma.InputJsonObject,
         createdAt,
       },
-      include: {authorUser: authorSelect},
+      include: messageInclude,
     });
   }
 
@@ -611,7 +651,7 @@ export class ConversationService {
     const conversationUpdate: Prisma.ConversationUpdateInput = {};
     if (kind === 'COMMENT') {
       conversationUpdate.lastMessageAt = now;
-      conversationUpdate.lastMessagePreview = this.preview(input.body);
+      conversationUpdate.lastMessagePreview = this.preview(input.body || (input.attachment ? `📎 ${input.attachment.filename}` : ''));
       conversationUpdate.lastMessageAuthorType = input.authorType;
     }
     if (input.authorType === 'CONTACT') {
@@ -651,8 +691,11 @@ export class ConversationService {
           source: input.source,
           mentionedUserIds: input.mentionedUserIds ?? [],
           createdAt: now,
+          attachments: input.attachment
+            ? {create: {...input.attachment, conversationId: conversation.id, projectId: conversation.projectId}}
+            : undefined,
         },
-        include: {authorUser: authorSelect},
+        include: messageInclude,
       });
       if (Object.keys(conversationUpdate).length > 0) {
         await tx.conversation.update({where: {id: conversation.id}, data: conversationUpdate});
@@ -680,6 +723,20 @@ export class ConversationService {
     ]);
 
     return message;
+  }
+
+  private static async postWithAttachment(
+    conversation: Conversation,
+    file: IncomingFile,
+    input: Omit<PostMessageInput, 'attachment'>,
+  ): Promise<MessageWithAuthor> {
+    const attachment = await ChatAttachmentService.store(conversation.projectId, conversation.id, file);
+    try {
+      return await this.postMessage(conversation, {...input, attachment});
+    } catch (error) {
+      await ChatAttachmentService.discard(attachment.key);
+      throw error;
+    }
   }
 
   private static publishToInbox(projectId: string, event: InboxStreamEvent): Promise<void> {
@@ -733,7 +790,7 @@ export class ConversationService {
       where: {conversationId, ...filter},
       orderBy: {createdAt: 'desc'},
       take: THREAD_MESSAGE_LIMIT,
-      include: {authorUser: authorSelect},
+      include: messageInclude,
     });
     return latest.reverse();
   }
@@ -802,6 +859,7 @@ export class ConversationService {
           ? {id: message.authorUser.id, name: message.authorUser.name?.trim() || null}
           : null,
       body: message.body,
+      attachments: message.attachments,
       createdAt: message.createdAt.toISOString(),
     };
   }
@@ -830,6 +888,7 @@ export class ConversationService {
         const name = names.get(id);
         return name ? [{id, name}] : [];
       }),
+      attachments: message.attachments,
       createdAt: message.createdAt.toISOString(),
     };
   }

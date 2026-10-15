@@ -22,6 +22,10 @@ const en = {
   emailSaving: 'Saving…',
   emailSaved: "Thanks! We'll email you at",
   emailInvalid: 'Enter a valid email address.',
+  attach: 'Attach a file',
+  attachmentTooLarge: 'Files can be up to 10 MB.',
+  attachmentFailed: 'Could not load this file.',
+  download: 'Download',
 };
 
 export type Strings = typeof en;
