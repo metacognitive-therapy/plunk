@@ -209,6 +209,34 @@ export interface InboxConversation extends InboxConversationSummary {
   messages: InboxMessage[];
 }
 
+/** A conversation as listed on a contact. `lastMessage` is null for members who can't open conversations. */
+export interface ContactConversationSummary {
+  id: string;
+  status: ConversationStatusValue;
+  channel: string;
+  createdAt: string;
+  lastMessageAt: string;
+  lastMessage: {body: string; authorType: MessageAuthorTypeValue} | null;
+}
+
+export interface ContactConversations {
+  /** Whether the signed-in member may open these conversations in the Inbox. */
+  canOpen: boolean;
+  total: number;
+  conversations: ContactConversationSummary[];
+}
+
+/** The contact behind a conversation, as shown beside it in the Inbox. */
+export interface InboxContactProfile extends InboxContact {
+  subscribed: boolean;
+  createdAt: string;
+  tags: {id: string; name: string}[];
+  segments: {id: string; name: string}[];
+  events: {id: string; name: string; createdAt: string}[];
+  /** The contact's other conversations, newest first. */
+  conversations: ContactConversationSummary[];
+}
+
 export interface InboxPage {
   conversations: InboxConversationSummary[];
   nextCursor: string | null;

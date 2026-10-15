@@ -20,6 +20,7 @@ import {useEffect, useState} from 'react';
 import {DashboardLayout} from '../../components/DashboardLayout';
 import {KeyValueEditor} from '../../components/KeyValueEditor';
 import {ActivityFeed} from '../../components/ActivityFeed';
+import {ContactConversations} from '../../components/ContactConversations';
 import {TagPicker} from '../../components/TagPicker';
 import {network} from '../../lib/network';
 import {toast} from 'sonner';
@@ -274,6 +275,8 @@ export default function ContactDetailPage() {
                   />
                 </CardContent>
               </Card>
+
+              <ContactConversations contactId={contact.id} />
 
               <Card>
                 <CardHeader>

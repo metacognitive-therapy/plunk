@@ -12,7 +12,7 @@ A workflow has a single **trigger** that decides how contacts enter:
 
 | Trigger type | When it fires                                                                                          |
 | ------------ | ------------------------------------------------------------------------------------------------------ |
-| `EVENT`      | Any time a matching event is tracked on a contact (custom event via `/v1/track`, system events such as `email.received` or `contact.subscribed`, tag events, or segment entry/exit events). |
+| `EVENT`      | Any time a matching event is tracked on a contact (custom event via `/v1/track`, system events such as `email.received` or `contact.subscribed`, tag events, segment entry/exit events, or live chat events). |
 | `MANUAL`     | Only when you explicitly start an execution via `POST /workflows/:id/executions`.                      |
 | `SCHEDULE`   | On a recurring schedule defined by `triggerConfig` (e.g. cron expression).                             |
 
@@ -21,6 +21,17 @@ When you create a workflow via the API, the trigger defaults to `EVENT` with the
 ### Triggering on a tag
 
 An `EVENT` trigger can additionally be scoped to one specific [tag](/concepts/tags): `triggerConfig: { eventName: "tag.added" | "tag.removed", tagId: "<id>" }`. This fires only when *that* tag is applied or removed, rather than any tag change on the contact. Because it binds by tag ID, renaming the tag later never breaks the trigger.
+
+### Triggering on live chat
+
+When the messenger is on, the trigger picker also offers the live chat events. Each carries `conversationId` in its data, and the `conversation.*` events also carry the `channel`.
+
+| Event                  | When it fires                                                        |
+| ---------------------- | -------------------------------------------------------------------- |
+| `conversation.started` | A visitor sends the first message of a new conversation.             |
+| `conversation.replied` | A visitor writes again in an existing conversation, also by email.   |
+| `conversation.closed`  | A support agent closes a conversation. Closing it again fires nothing. |
+| `chat.email_captured`  | A visitor leaves their email address in the messenger.               |
 
 A workflow's trigger event name **cannot be changed after the first execution** — pick it carefully. Other trigger configuration (delays, conditions inside steps) remains editable.
 
