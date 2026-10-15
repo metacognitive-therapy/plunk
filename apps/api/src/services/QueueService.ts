@@ -21,6 +21,7 @@ import type {
   SegmentCountJobData,
   SendEmailJobData,
   SequenceSweepJobData,
+  SnoozeSweepJobData,
   WorkflowStepJobData,
 } from '@plunk/types';
 
@@ -287,6 +288,21 @@ export const cardVerificationSweepQueue = new Queue<CardVerificationSweepJobData
     backoff: {
       type: 'exponential',
       delay: 30000,
+    },
+    removeOnComplete: 20,
+    removeOnFail: 50,
+  },
+});
+
+// Wakes snoozed conversations. Like the other sweeps, a failed run is simply redone by the next
+// one a minute later.
+export const snoozeSweepQueue = new Queue<SnoozeSweepJobData>('snooze-sweep', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 10000,
     },
     removeOnComplete: 20,
     removeOnFail: 50,

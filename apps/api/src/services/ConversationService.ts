@@ -1,6 +1,7 @@
 import {
   type Conversation,
   type ConversationMessage,
+  type ConversationStatus,
   type MessageAuthorType,
   type MessageKind,
   type MessageSource,
@@ -8,11 +9,14 @@ import {
 } from '@plunk/db';
 import {CONTACT_IDENTITY_TYPES, type ConversationView, normalizeOrigin, resolveBrand} from '@plunk/shared';
 import type {
+  InboxAgent,
   InboxConversation,
+  InboxCounts,
   InboxStreamEvent,
   InboxConversationSummary,
   InboxMessage,
   InboxPage,
+  InboxSystemEvent,
   MessengerBootResponse,
   MessengerConversation,
   MessengerConversationSummary,
@@ -26,6 +30,7 @@ import {prisma} from '../database/prisma.js';
 import {redis} from '../database/redis.js';
 import {ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
 import {Keys} from './keys.js';
+import {MembershipService} from './MembershipService.js';
 import {type MessengerSession, MessengerSessionService} from './MessengerSessionService.js';
 import {MessengerContactService} from './MessengerContactService.js';
 import {MessengerSettingsService} from './MessengerSettingsService.js';
@@ -42,7 +47,23 @@ const API_ORIGIN = normalizeOrigin(API_URI);
 /* Clients send typing at most every few seconds; this caps what a misbehaving one can publish. */
 const TYPING_THROTTLE_MS = 2000;
 
+/* Counting a view stops here, so a project with years of closed conversations never pays for an
+exact count on every inbox refresh. */
+export const INBOX_COUNT_CAP = 1000;
+/* Each sweep run wakes at most this many conversations; the rest wait a minute for the next run. */
+const SNOOZE_SWEEP_BATCH = 200;
+const SNOOZE_SWEEP_MAX_BATCHES = 25;
+/* A transition guarded on stale state re-reads and retries this often before giving up. */
+const TRANSITION_ATTEMPTS = 3;
+
 const authorSelect = {select: {id: true, name: true, email: true}} as const;
+
+type ConversationState = Pick<Conversation, 'status' | 'snoozedUntil' | 'assigneeId'>;
+
+export type StatusChange =
+  | {status: 'OPEN'}
+  | {status: 'CLOSED'}
+  | {status: 'SNOOZED'; snoozedUntil: Date | null};
 
 type MessageWithAuthor = ConversationMessage & {authorUser: {id: string; name: string | null; email: string} | null};
 
@@ -158,7 +179,7 @@ export class ConversationService {
 
   public static async getForSession(session: MessengerSession, conversationId: string): Promise<MessengerConversation> {
     const conversation = await this.requireSessionConversation(session, conversationId);
-    const messages = await this.loadThread(conversation.id, {kind: 'COMMENT'});
+    const messages = await this.loadThread(conversation.id, {kind: 'COMMENT', authorType: {not: 'SYSTEM'}});
 
     return {
       id: conversation.id,
@@ -207,22 +228,32 @@ export class ConversationService {
     userId: string,
     options: {view: ConversationView; cursor?: string; limit: number},
   ): Promise<InboxPage> {
-    const where: Prisma.ConversationWhereInput = {projectId, ...this.viewFilter(options.view, userId)};
+    const cursor = options.cursor ? this.decodeCursor(options.cursor) : null;
+    const after: Prisma.ConversationWhereInput = cursor
+      ? {
+          OR: [
+            {lastMessageAt: {lt: cursor.lastMessageAt}},
+            {lastMessageAt: cursor.lastMessageAt, id: {lt: cursor.id}},
+          ],
+        }
+      : {};
 
-    if (options.cursor) {
-      const cursor = this.decodeCursor(options.cursor);
-      where.OR = [
-        {lastMessageAt: {lt: cursor.lastMessageAt}},
-        {lastMessageAt: cursor.lastMessageAt, id: {lt: cursor.id}},
-      ];
-    }
-
-    const rows = await prisma.conversation.findMany({
-      where,
-      orderBy: [{lastMessageAt: 'desc'}, {id: 'desc'}],
-      take: options.limit + 1,
-      include: {contact: {select: {id: true, email: true, externalId: true, data: true}}},
-    });
+    /* A view spanning several statuses is read as one index-ordered range per status and merged,
+    because a single status IN (...) query cannot be read in lastMessageAt order from the index. */
+    const ranges = await Promise.all(
+      this.viewRanges(options.view, userId).map(range =>
+        prisma.conversation.findMany({
+          where: {projectId, ...range, ...after},
+          orderBy: [{lastMessageAt: 'desc'}, {id: 'desc'}],
+          take: options.limit + 1,
+          include: {contact: {select: {id: true, email: true, externalId: true, data: true}}},
+        }),
+      ),
+    );
+    const rows = ranges
+      .flat()
+      .sort((a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime() || (a.id < b.id ? 1 : -1))
+      .slice(0, options.limit + 1);
 
     const page = rows.slice(0, options.limit);
     const reads = await this.readsFor(
@@ -254,7 +285,6 @@ export class ConversationService {
     return {
       ...this.toInboxSummary(conversation, reads.get(conversation.id)),
       channel: conversation.channel,
-      snoozedUntil: conversation.snoozedUntil?.toISOString() ?? null,
       contactLastReadAt: conversation.contactLastReadAt?.toISOString() ?? null,
       createdAt: conversation.createdAt.toISOString(),
       messages: messages.map(message => this.toInboxMessage(message)),
@@ -307,6 +337,225 @@ export class ConversationService {
   }
 
 
+  public static async setStatus(
+    projectId: string,
+    userId: string,
+    conversationId: string,
+    change: StatusChange,
+  ): Promise<InboxConversation> {
+    if (change.status === 'SNOOZED' && change.snoozedUntil && change.snoozedUntil.getTime() <= Date.now()) {
+      throw new HttpException(400, 'Snooze until a time in the future', ErrorCode.BAD_REQUEST);
+    }
+
+    await this.transition(projectId, userId, conversationId, current => {
+      switch (change.status) {
+        case 'CLOSED':
+          return current.status === 'CLOSED'
+            ? null
+            : {data: {status: 'CLOSED', closedAt: new Date(), snoozedUntil: null}, event: {action: 'closed'}};
+        case 'OPEN':
+          return current.status === 'OPEN'
+            ? null
+            : {
+                data: {status: 'OPEN', closedAt: null, snoozedUntil: null},
+                event: {action: 'reopened', trigger: 'agent'},
+              };
+        case 'SNOOZED':
+          return current.status === 'SNOOZED' &&
+            (current.snoozedUntil?.getTime() ?? null) === (change.snoozedUntil?.getTime() ?? null)
+            ? null
+            : {
+                data: {status: 'SNOOZED', snoozedUntil: change.snoozedUntil, closedAt: null},
+                event: {action: 'snoozed', until: change.snoozedUntil?.toISOString() ?? null},
+              };
+      }
+    });
+    return this.get(projectId, userId, conversationId);
+  }
+
+  public static async assign(
+    projectId: string,
+    userId: string,
+    conversationId: string,
+    assigneeId: string | null,
+  ): Promise<InboxConversation> {
+    let assignee: InboxAgent | null = null;
+    if (assigneeId) {
+      assignee = (await this.agents(projectId)).find(agent => agent.id === assigneeId) ?? null;
+      if (!assignee) {
+        throw new HttpException(400, 'Only support agents of this project can be assigned', ErrorCode.BAD_REQUEST);
+      }
+    }
+
+    await this.transition(projectId, userId, conversationId, current => {
+      if (current.assigneeId === assigneeId) {
+        return null;
+      }
+      return {
+        data: {assigneeId},
+        event: assignee
+          ? {action: 'assigned', assignee: {id: assignee.id, name: assignee.name}}
+          : {action: 'unassigned'},
+      };
+    });
+    return this.get(projectId, userId, conversationId);
+  }
+
+  /** Members who can be assigned: the owner and every member flagged as a support agent. */
+  public static async agents(projectId: string): Promise<InboxAgent[]> {
+    const members = await MembershipService.getMembers(projectId);
+    return members
+      .filter(member => MembershipService.isSupportAgent(member))
+      .map(member => ({id: member.userId, name: this.agentName(member), email: member.email}));
+  }
+
+  public static async counts(projectId: string, userId: string): Promise<InboxCounts> {
+    const count = (where: Prisma.ConversationWhereInput) =>
+      prisma.conversation.count({where: {projectId, ...where}, take: INBOX_COUNT_CAP});
+    const [unassigned, mine, open, snoozed, closed] = await Promise.all([
+      ...this.viewRanges('unassigned', userId).map(count),
+      ...this.viewRanges('mine', userId).map(count),
+      ...this.viewRanges('all', userId).map(count),
+      ...this.viewRanges('closed', userId).map(count),
+    ]);
+    return {
+      unassigned: unassigned ?? 0,
+      mine: mine ?? 0,
+      all: Math.min((open ?? 0) + (snoozed ?? 0), INBOX_COUNT_CAP),
+      closed: closed ?? 0,
+      cap: INBOX_COUNT_CAP,
+    };
+  }
+
+  /**
+   * Reopens snoozed conversations whose date has passed. Run by the snooze sweep every minute;
+   * returns how many it woke.
+   */
+  public static async wakeSnoozed(now: Date = new Date()): Promise<number> {
+    let woken = 0;
+    for (let batch = 0; batch < SNOOZE_SWEEP_MAX_BATCHES; batch++) {
+      const due = await prisma.conversation.findMany({
+        where: {status: 'SNOOZED', snoozedUntil: {lte: now}},
+        orderBy: {snoozedUntil: 'asc'},
+        take: SNOOZE_SWEEP_BATCH,
+      });
+      for (const conversation of due) {
+        const line = await this.applyTransition(
+          conversation,
+          {data: {status: 'OPEN', snoozedUntil: null}, event: {action: 'reopened', trigger: 'snooze_expired'}},
+          null,
+        );
+        if (line) {
+          woken++;
+          await this.publishTransition(conversation, line, 'OPEN');
+        }
+      }
+      if (due.length < SNOOZE_SWEEP_BATCH) {
+        break;
+      }
+    }
+    return woken;
+  }
+
+  /* Applies the change only if the conversation still has the state it was computed from, so two
+  agents acting at once, or an agent racing the sweep, never record the same change twice. */
+  private static async transition(
+    projectId: string,
+    userId: string,
+    conversationId: string,
+    plan: (current: Conversation) => {data: Prisma.ConversationUncheckedUpdateManyInput; event: InboxSystemEvent} | null,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < TRANSITION_ATTEMPTS; attempt++) {
+      const current = await this.requireProjectConversation(projectId, conversationId);
+      const change = plan(current);
+      if (!change) {
+        return;
+      }
+      const line = await this.applyTransition(current, change, userId);
+      if (line) {
+        await this.publishTransition(current, line, (change.data.status as ConversationStatus | undefined) ?? null);
+        return;
+      }
+    }
+    throw new HttpException(409, 'This conversation was changed at the same time; try again', ErrorCode.CONFLICT);
+  }
+
+  private static applyTransition(
+    current: Conversation,
+    change: {data: Prisma.ConversationUncheckedUpdateManyInput; event: InboxSystemEvent},
+    actorUserId: string | null,
+  ): Promise<MessageWithAuthor | null> {
+    const guard: ConversationState = {
+      status: current.status,
+      snoozedUntil: current.snoozedUntil,
+      assigneeId: current.assigneeId,
+    };
+    return prisma.$transaction(async tx => {
+      const {count} = await tx.conversation.updateMany({where: {id: current.id, ...guard}, data: change.data});
+      return count === 1 ? this.createSystemLine(tx, current, change.event, actorUserId, new Date()) : null;
+    });
+  }
+
+  private static createSystemLine(
+    tx: Prisma.TransactionClient,
+    conversation: Pick<Conversation, 'id' | 'projectId'>,
+    event: InboxSystemEvent,
+    actorUserId: string | null,
+    createdAt: Date,
+  ): Promise<MessageWithAuthor> {
+    return tx.conversationMessage.create({
+      data: {
+        conversationId: conversation.id,
+        projectId: conversation.projectId,
+        authorType: 'SYSTEM',
+        authorUserId: actorUserId,
+        kind: 'NOTE',
+        body: this.describeEvent(event),
+        source: 'SYSTEM',
+        meta: event as unknown as Prisma.InputJsonObject,
+        createdAt,
+      },
+      include: {authorUser: authorSelect},
+    });
+  }
+
+  private static async publishTransition(
+    conversation: Pick<Conversation, 'id' | 'projectId' | 'originVisitorId'>,
+    line: MessageWithAuthor,
+    status: ConversationStatus | null,
+  ): Promise<void> {
+    await Promise.all([
+      this.publishToInbox(conversation.projectId, {
+        type: 'message',
+        conversationId: conversation.id,
+        message: this.toInboxMessage(line),
+      }),
+      this.publishToInbox(conversation.projectId, {type: 'conversation', conversationId: conversation.id}),
+      status
+        ? this.publishToVisitor(conversation, {type: 'conversation', conversationId: conversation.id, status})
+        : undefined,
+    ]);
+  }
+
+  private static describeEvent(event: InboxSystemEvent): string {
+    switch (event.action) {
+      case 'closed':
+        return 'Closed the conversation';
+      case 'reopened':
+        return event.trigger === 'contact'
+          ? 'Reopened by a new message from the visitor'
+          : event.trigger === 'snooze_expired'
+            ? 'Reopened when the snooze ended'
+            : 'Reopened the conversation';
+      case 'snoozed':
+        return event.until ? `Snoozed until ${event.until}` : 'Snoozed until the visitor replies';
+      case 'assigned':
+        return `Assigned to ${event.assignee.name}`;
+      case 'unassigned':
+        return 'Unassigned the conversation';
+    }
+  }
+
   /**
    * Every message, whatever its source, is written here so the denormalized list fields and every
    * side effect (realtime, notifications, email, events) stay in one place.
@@ -323,17 +572,31 @@ export class ConversationService {
     }
     if (input.authorType === 'CONTACT') {
       conversationUpdate.lastContactMessageAt = now;
-      if (conversation.status === 'CLOSED') {
-        conversationUpdate.status = 'OPEN';
-        conversationUpdate.closedAt = null;
-      }
     }
     if (input.authorType === 'AGENT' && kind === 'COMMENT' && !conversation.firstResponseAt) {
       conversationUpdate.firstResponseAt = now;
     }
 
-    const [message] = await prisma.$transaction([
-      prisma.conversationMessage.create({
+    const {message, reopened} = await prisma.$transaction(async tx => {
+      /* Guarded on the stored status, not the possibly stale one passed in, so a reply racing an
+      agent's close still reopens exactly once. */
+      let reopened: MessageWithAuthor | null = null;
+      if (input.authorType === 'CONTACT') {
+        const {count} = await tx.conversation.updateMany({
+          where: {id: conversation.id, status: {in: ['CLOSED', 'SNOOZED']}},
+          data: {status: 'OPEN', closedAt: null, snoozedUntil: null},
+        });
+        if (count === 1) {
+          reopened = await this.createSystemLine(
+            tx,
+            conversation,
+            {action: 'reopened', trigger: 'contact'},
+            null,
+            new Date(now.getTime() - 1),
+          );
+        }
+      }
+      const message = await tx.conversationMessage.create({
         data: {
           conversationId: conversation.id,
           projectId: conversation.projectId,
@@ -345,9 +608,14 @@ export class ConversationService {
           createdAt: now,
         },
         include: {authorUser: authorSelect},
-      }),
-      prisma.conversation.update({where: {id: conversation.id}, data: conversationUpdate}),
-    ]);
+      });
+      await tx.conversation.update({where: {id: conversation.id}, data: conversationUpdate});
+      return {message, reopened};
+    });
+
+    if (reopened) {
+      await this.publishTransition(conversation, reopened, 'OPEN');
+    }
 
     await Promise.all([
       this.publishToInbox(conversation.projectId, {
@@ -413,7 +681,7 @@ export class ConversationService {
     return conversation;
   }
 
-  private static async loadThread(conversationId: string, filter: {kind?: MessageKind} = {}) {
+  private static async loadThread(conversationId: string, filter: Prisma.ConversationMessageWhereInput = {}) {
     const latest = await prisma.conversationMessage.findMany({
       where: {conversationId, ...filter},
       orderBy: {createdAt: 'desc'},
@@ -434,16 +702,18 @@ export class ConversationService {
     return new Map(reads.map(read => [read.conversationId, read.lastReadAt]));
   }
 
-  private static viewFilter(view: ConversationView, userId: string): Prisma.ConversationWhereInput {
+  /* Each range matches a prefix of (projectId, status, lastMessageAt) or
+  (projectId, assigneeId, status, lastMessageAt), so every view is an index range scan. */
+  private static viewRanges(view: ConversationView, userId: string): Prisma.ConversationWhereInput[] {
     switch (view) {
       case 'unassigned':
-        return {status: 'OPEN', assigneeId: null};
+        return [{assigneeId: null, status: 'OPEN'}];
       case 'mine':
-        return {status: 'OPEN', assigneeId: userId};
+        return [{assigneeId: userId, status: 'OPEN'}];
       case 'closed':
-        return {status: 'CLOSED'};
+        return [{status: 'CLOSED'}];
       case 'all':
-        return {status: 'OPEN'};
+        return [{status: 'OPEN'}, {status: 'SNOOZED'}];
     }
   }
 
@@ -499,6 +769,7 @@ export class ConversationService {
         : null,
       body: message.body,
       source: message.source,
+      event: message.authorType === 'SYSTEM' && message.meta ? (message.meta as unknown as InboxSystemEvent) : null,
       createdAt: message.createdAt.toISOString(),
     };
   }
@@ -516,6 +787,7 @@ export class ConversationService {
       id: conversation.id,
       status: conversation.status,
       assigneeId: conversation.assigneeId,
+      snoozedUntil: conversation.snoozedUntil?.toISOString() ?? null,
       contact: {
         id: conversation.contact.id,
         email: conversation.contact.email,

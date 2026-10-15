@@ -58,6 +58,7 @@ import {
   idempotencyKeyCleanupQueue,
   segmentCountQueue,
   sequenceSweepQueue,
+  snoozeSweepQueue,
 } from './services/QueueService.js';
 import * as S3Service from './services/S3Service.js';
 import {requestIdMiddleware} from './middleware/requestId.js';
@@ -409,4 +410,19 @@ void prisma.$connect().then(async () => {
   );
 
   signale.info('[BACKGROUND-JOB] Sequence sweep scheduled (BullMQ repeatable job, runs every 5 minutes)');
+
+  // Set up repeatable job for waking snoozed conversations (BullMQ)
+  // Every minute: a snooze is set to a time of day, so a conversation reappears within a minute of it.
+  await snoozeSweepQueue.add(
+    'snooze-sweep',
+    {},
+    {
+      repeat: {
+        pattern: '* * * * *', // Every minute
+      },
+      jobId: 'snooze-sweep-repeatable', // Fixed ID to prevent duplicates
+    },
+  );
+
+  signale.info('[BACKGROUND-JOB] Snooze sweep scheduled (BullMQ repeatable job, runs every minute)');
 });

@@ -314,6 +314,9 @@ model ConversationMessage {
   body   String
   source MessageSource @default(WIDGET)
 
+  // Structured payload of a SYSTEM line (the action and its target); body is its plain-text form.
+  meta Json?
+
   // Timestamps
   createdAt DateTime @default(now())
 
@@ -1133,6 +1136,7 @@ enum MessageSource {
   SDK
   DASHBOARD
   IMPORT
+  SYSTEM
 }
 
 enum ProjectDisabledReason {
