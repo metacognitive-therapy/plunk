@@ -32,6 +32,12 @@ function Document({locale}: {locale: string}) {
 
         {/* Favicon and app name are per project, set in _app's BrandHead */}
         <meta name="theme-color" content="#ffffff" />
+
+        {/* Installable dashboard. Push on iPhone only works once it is added to the home screen. */}
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
       </Head>
       <body className="antialiased cursor-default scroll-smooth text-neutral-800">
         <Main />

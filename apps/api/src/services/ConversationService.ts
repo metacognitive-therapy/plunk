@@ -20,6 +20,7 @@ import type {
   InboxPage,
   InboxSystemEvent,
   InboxTag,
+  InboxUnread,
   MessengerBootResponse,
   MessengerConversation,
   MessengerConversationSummary,
@@ -516,6 +517,38 @@ export class ConversationService {
   }
 
   /**
+   * Unread visitor messages across every project the user supports, counting only conversations
+   * that are theirs: assigned to them or unassigned. The same rule decides who is alerted, so the
+   * badge and the notifications agree.
+   */
+  public static async unreadForAgent(userId: string): Promise<InboxUnread> {
+    const memberships = await prisma.membership.findMany({
+      where: {userId, OR: [{role: 'OWNER'}, {supportAgent: true}]},
+      select: {projectId: true},
+    });
+    const projectIds = memberships.map(membership => membership.projectId);
+    if (projectIds.length === 0) {
+      return {total: 0, cap: INBOX_COUNT_CAP, projects: {}};
+    }
+    const rows = await prisma.$queryRaw<{projectId: string; count: number}[]>`
+      SELECT unread."projectId", count(*)::int AS count
+      FROM (
+        SELECT c."projectId"
+        FROM conversations c
+        LEFT JOIN conversation_reads r ON r."conversationId" = c.id AND r."userId" = ${userId}
+        WHERE c."projectId" = ANY(${projectIds}::text[])
+          AND c.status = 'OPEN'
+          AND (c."assigneeId" IS NULL OR c."assigneeId" = ${userId})
+          AND c."lastContactMessageAt" IS NOT NULL
+          AND (r."lastReadAt" IS NULL OR r."lastReadAt" < c."lastContactMessageAt")
+        LIMIT ${INBOX_COUNT_CAP}
+      ) unread
+      GROUP BY unread."projectId"`;
+    const projects = Object.fromEntries(rows.map(row => [row.projectId, row.count]));
+    return {total: rows.reduce((sum, row) => sum + row.count, 0), cap: INBOX_COUNT_CAP, projects};
+  }
+
+  /**
    * Reopens snoozed conversations whose date has passed. Run by the snooze sweep every minute;
    * returns how many it woke.
    */
@@ -740,8 +773,21 @@ export class ConversationService {
     if (input.authorType === 'AGENT' && kind === 'COMMENT') {
       await this.scheduleReplyEmail(conversation.projectId, message.id);
     }
+    if (fromContact) {
+      await this.notifyAgents(message.id);
+    }
 
     return message;
+  }
+
+  /* Agents are notified by the worker. The message is already saved and live in the Inbox, so a
+  queue failure is logged rather than failing the visitor's send. */
+  private static async notifyAgents(messageId: string): Promise<void> {
+    try {
+      await QueueService.queueChatNotification({type: 'visitor_message', messageId});
+    } catch (error) {
+      signale.warn(`[CHAT] Could not queue agent notifications for message ${messageId}:`, error);
+    }
   }
 
   /* The job re-checks everything when it fires (read, email on file, settings), so scheduling is

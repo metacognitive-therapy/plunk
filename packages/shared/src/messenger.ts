@@ -164,3 +164,24 @@ export const ProfileSchemas = {
       .transform(value => value || null),
   }),
 } as const;
+
+export const NotificationSchemas = {
+  prefs: z
+    .object({
+      inboxBadge: z.boolean(),
+      inboxTitleCount: z.boolean(),
+      inboxSound: z.boolean(),
+      pushPreview: z.boolean(),
+    })
+    .partial(),
+  subscribe: z.object({
+    endpoint: z.string().url().max(2048).startsWith('https://'),
+    keys: z.object({
+      p256dh: z.string().min(1).max(256),
+      auth: z.string().min(1).max(256),
+    }),
+  }),
+  unsubscribe: z.object({
+    endpoint: z.string().max(2048),
+  }),
+} as const;

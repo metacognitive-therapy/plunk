@@ -180,6 +180,18 @@ The messenger always rate limits boots, new conversations, messages, uploads and
 | `TURNSTILE_SITE_KEY`   | No       | Cloudflare Turnstile site key. With the secret key set, new conversations require passing the bot check. Replies in an existing conversation never need it.                                                | —       |
 | `TURNSTILE_SECRET_KEY` | No       | Cloudflare Turnstile secret key, used by the API to verify tokens. When either key is unset, conversations start without a bot check and a warning is logged on startup.                                   | —       |
 
+### Push notifications
+
+Agents can turn on desktop and phone notifications for new live chat messages in **Settings → Messenger → Your notifications**. On iPhone and iPad the dashboard must first be added to the Home Screen. Push needs all three variables; without them agents still get the in-app badge, tab title count and sound.
+
+Generate the key pair once with `npx web-push generate-vapid-keys` and keep it. Changing the keys invalidates every device's subscription, so each agent has to turn notifications on again.
+
+| Variable            | Required | Description                                                                                       | Default |
+| ------------------- | -------- | ------------------------------------------------------------------------------------------------- | ------- |
+| `VAPID_PUBLIC_KEY`  | No       | Public key of the Web Push (VAPID) key pair. Sent to browsers when an agent subscribes.            | —       |
+| `VAPID_PRIVATE_KEY` | No       | Private key of the pair, used by the worker to sign push messages. Keep it secret.                | —       |
+| `VAPID_SUBJECT`     | No       | A `mailto:` or `https:` contact the push services can use to reach you, e.g. `mailto:support@example.com`. | —       |
+
 ## Advanced
 
 Variables for unusual deployments. The defaults work for the standard Docker Compose setup — only change these if you know you need to.

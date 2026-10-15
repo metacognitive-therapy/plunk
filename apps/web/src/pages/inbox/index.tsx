@@ -25,7 +25,7 @@ import {NextSeo} from 'next-seo';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
 import {useCallback, useEffect, useRef, useState} from 'react';
-import useSWR from 'swr';
+import useSWR, {useSWRConfig} from 'swr';
 import useSWRInfinite from 'swr/infinite';
 
 import {DashboardLayout} from '../../components/DashboardLayout';
@@ -35,6 +35,7 @@ import {ConversationTags, TagChip, useConversationTags} from '../../components/i
 import {MessageAttachments} from '../../components/inbox/MessageAttachments';
 import {formatRelativeTime} from '../../lib/dateUtils';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
+import {INBOX_UNREAD_KEY} from '../../lib/hooks/useAgentNotifications';
 import {useInboxStream} from '../../lib/hooks/useInboxStream';
 import {useSupportAccess} from '../../lib/hooks/useSupportAccess';
 import {useUser} from '../../lib/hooks/useUser';
@@ -96,9 +97,10 @@ function contactLabel(contact: InboxConversationSummary['contact']): string {
 
 export default function InboxPageView() {
   const router = useRouter();
-  const {activeProject} = useActiveProject();
+  const {activeProject, availableProjects, setActiveProject} = useActiveProject();
   const {data: user} = useUser();
   const hasAccess = useSupportAccess();
+  const linkedProjectId = typeof router.query.project === 'string' ? router.query.project : null;
   const view = (CONVERSATION_VIEWS as readonly string[]).includes(router.query.view as string)
     ? (router.query.view as ConversationView)
     : 'all';
@@ -115,6 +117,17 @@ export default function InboxPageView() {
     if (tag) query.tag = tag;
     void router.replace({pathname: '/inbox', query}, undefined, {shallow: true});
   };
+
+  /* Notifications link to a conversation in any project, so the link names the project to switch to. */
+  useEffect(() => {
+    if (!linkedProjectId || availableProjects.length === 0) return;
+    const linked = availableProjects.find(project => project.id === linkedProjectId);
+    if (linked && linked.id !== activeProject?.id) {
+      setActiveProject(linked);
+    }
+    setQuery({});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per linked project
+  }, [linkedProjectId, availableProjects.length]);
 
   const staleTag = Boolean(tagId && tags && !activeTag);
   useEffect(() => {
@@ -371,6 +384,7 @@ function Thread({
   const {data, mutate, error} = useSWR<{success: boolean; data: InboxConversation}>(`/conversations/${conversationId}`, {
     refreshInterval: connected ? 0 : THREAD_REFRESH_MS,
   });
+  const {mutate: mutateGlobal} = useSWRConfig();
   const [typing, setTyping] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const conversation = data?.data;
@@ -424,7 +438,10 @@ function Thread({
       if (document.visibilityState !== 'visible') return;
       void network
         .fetch('POST', `/conversations/${conversationId}/read`)
-        .then(onChanged)
+        .then(() => {
+          onChanged();
+          void mutateGlobal(INBOX_UNREAD_KEY);
+        })
         .catch(() => undefined);
     };
     markRead();

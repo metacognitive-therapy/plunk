@@ -20,6 +20,7 @@ import {
   TRACKING_TOGGLE_ENABLED,
   WIKI_URI,
 } from '../app/constants.js';
+import {WebPushService} from '../services/WebPushService.js';
 
 @Controller('config')
 export class Config {
@@ -53,6 +54,9 @@ export class Config {
         },
         email: {
           trackingToggleEnabled: TRACKING_TOGGLE_ENABLED,
+        },
+        webPush: {
+          publicKey: WebPushService.publicKey(),
         },
         smtp: {
           enabled: SMTP_ENABLED,

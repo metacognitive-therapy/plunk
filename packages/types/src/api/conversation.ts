@@ -118,6 +118,29 @@ export interface InboxAgent {
   email: string;
 }
 
+/** Conversations with unread visitor messages that are the agent's: assigned to them or unassigned. */
+export interface InboxUnread {
+  total: number;
+  /** A total equal to the cap means "cap or more". */
+  cap: number;
+  projects: Record<string, number>;
+}
+
+export interface AgentNotificationPrefs {
+  inboxBadge: boolean;
+  inboxTitleCount: boolean;
+  inboxSound: boolean;
+  pushPreview: boolean;
+}
+
+/** What the dashboard's service worker shows for one push. */
+export interface ChatPushPayload {
+  title: string;
+  body: string;
+  url: string;
+  tag: string;
+}
+
 /** Per-view totals, each capped at `cap`; a value equal to the cap means "cap or more". */
 export interface InboxCounts {
   unassigned: number;
@@ -201,6 +224,9 @@ export type InboxReader = {type: 'CONTACT'; readAt: string} | {type: 'AGENT'; us
 /** Pushed to one signed-in user, whichever project they are looking at. */
 export type AgentStreamEvent =
   | {type: 'ready'}
+  /* A visitor wrote in a project the agent supports. `alert` is true when the agent is one the
+  message notifies: the assignee, or every agent while unassigned. */
+  | {type: 'visitor_message'; projectId: string; conversationId: string; alert: boolean}
   | {
       type: 'mention';
       projectId: string;

@@ -1,7 +1,7 @@
 import {randomBytes} from 'node:crypto';
 
 import {Controller, Delete, Get, Middleware, Patch, Post, Put} from '@overnightjs/core';
-import {BillingLimitSchemas, ProfileSchemas, ProjectSchemas, UtilitySchemas} from '@plunk/shared';
+import {BillingLimitSchemas, NotificationSchemas, ProfileSchemas, ProjectSchemas, UtilitySchemas} from '@plunk/shared';
 import type {NextFunction, Request, Response} from 'express';
 
 import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
@@ -11,11 +11,13 @@ import {prisma} from '../database/prisma.js';
 import {ErrorCode, HttpException, NotAuthenticated, NotFound} from '../exceptions/index.js';
 import {isAuthenticated, requireEmailVerified} from '../middleware/auth.js';
 import {BillingLimitService} from '../services/BillingLimitService.js';
+import {ConversationService} from '../services/ConversationService.js';
 import {Keys} from '../services/keys.js';
 import {MembershipService} from '../services/MembershipService.js';
 import {NtfyService} from '../services/NtfyService.js';
 import {SecurityService} from '../services/SecurityService.js';
 import {UserService} from '../services/UserService.js';
+import {WebPushService} from '../services/WebPushService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 import signale from 'signale';
 
@@ -67,6 +69,84 @@ export class Users {
     const me = await UserService.updateName(auth.userId, name);
 
     return res.status(200).json({id: me.id, email: me.email, name: me.name});
+  }
+
+  /* Unread live chat conversations across every project the user supports, for the badge. */
+  @Get('@me/inbox-unread')
+  @Middleware([isAuthenticated, requireEmailVerified])
+  @CatchAsync
+  public async inboxUnread(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    if (!auth.userId) {
+      throw new NotAuthenticated();
+    }
+    return res.status(200).json({success: true, data: await ConversationService.unreadForAgent(auth.userId)});
+  }
+
+  @Get('@me/notifications')
+  @Middleware([isAuthenticated, requireEmailVerified])
+  @CatchAsync
+  public async notifications(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    if (!auth.userId) {
+      throw new NotAuthenticated();
+    }
+    return res.status(200).json({success: true, data: await UserService.notificationPrefs(auth.userId)});
+  }
+
+  @Patch('@me/notifications')
+  @Middleware([isAuthenticated, requireEmailVerified])
+  @CatchAsync
+  public async updateNotifications(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    if (!auth.userId) {
+      throw new NotAuthenticated();
+    }
+    const prefs = NotificationSchemas.prefs.parse(req.body);
+    return res.status(200).json({success: true, data: await UserService.updateNotificationPrefs(auth.userId, prefs)});
+  }
+
+  @Post('@me/push-subscriptions')
+  @Middleware([isAuthenticated, requireEmailVerified])
+  @CatchAsync
+  public async subscribePush(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    if (!auth.userId) {
+      throw new NotAuthenticated();
+    }
+    const subscription = NotificationSchemas.subscribe.parse(req.body);
+    await WebPushService.subscribe(auth.userId, subscription, req.get('user-agent'));
+    return res.status(204).end();
+  }
+
+  @Delete('@me/push-subscriptions')
+  @Middleware([isAuthenticated, requireEmailVerified])
+  @CatchAsync
+  public async unsubscribePush(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    if (!auth.userId) {
+      throw new NotAuthenticated();
+    }
+    const {endpoint} = NotificationSchemas.unsubscribe.parse(req.body);
+    await WebPushService.unsubscribe(auth.userId, endpoint);
+    return res.status(204).end();
+  }
+
+  @Post('@me/push-subscriptions/test')
+  @Middleware([isAuthenticated, requireEmailVerified])
+  @CatchAsync
+  public async testPush(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    if (!auth.userId) {
+      throw new NotAuthenticated();
+    }
+    const result = await WebPushService.send([auth.userId], () => ({
+      title: 'Notifications are on',
+      body: 'New live chat messages will show up here.',
+      url: '/inbox',
+      tag: 'test',
+    }));
+    return res.status(200).json({success: true, data: result});
   }
 
   @Get('@me/projects')
