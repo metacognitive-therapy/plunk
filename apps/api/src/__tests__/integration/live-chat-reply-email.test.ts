@@ -296,6 +296,10 @@ describe('Receiving email replies', () => {
 
     const thread = await messengerThread(chat.token, chat.conversationId);
     expect(thread.body.data.messages.at(-1).body).toBe('Great, please book me for next week.');
+    const replied = await prisma.event.findMany({
+      where: {projectId: chat.project.id, name: 'conversation.replied'},
+    });
+    expect(replied.map(event => event.data)).toEqual([{conversationId: chat.conversationId, channel: 'WIDGET'}]);
   });
 
   it('turns a reply from anyone else into a flagged note the visitor never sees', async () => {

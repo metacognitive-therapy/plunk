@@ -8,7 +8,7 @@ import {
   Prisma,
 } from '@plunk/db';
 import {isPlatformEmailEnabled} from '@plunk/email';
-import {CONTACT_IDENTITY_TYPES, type ConversationView, normalizeOrigin, resolveBrand} from '@plunk/shared';
+import {CHAT_EVENTS, CONTACT_IDENTITY_TYPES, type ConversationView, normalizeOrigin, resolveBrand} from '@plunk/shared';
 import signale from 'signale';
 import type {
   ChatAttachment,
@@ -36,6 +36,7 @@ import {redis} from '../database/redis.js';
 import {ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
 import {ChatAttachmentService, type IncomingFile, type StoredAttachment} from './ChatAttachmentService.js';
 import {ConversationTagService} from './ConversationTagService.js';
+import {EventService} from './EventService.js';
 import {Keys} from './keys.js';
 import {MembershipService} from './MembershipService.js';
 import {type MessengerSession, MessengerSessionService} from './MessengerSessionService.js';
@@ -443,7 +444,7 @@ export class ConversationService {
       throw new HttpException(400, 'Snooze until a time in the future', ErrorCode.BAD_REQUEST);
     }
 
-    await this.transition(projectId, userId, conversationId, current => {
+    const changed = await this.transition(projectId, userId, conversationId, current => {
       switch (change.status) {
         case 'CLOSED':
           return current.status === 'CLOSED'
@@ -466,6 +467,9 @@ export class ConversationService {
               };
       }
     });
+    if (changed && change.status === 'CLOSED') {
+      await this.emitEvent(changed, CHAT_EVENTS.CLOSED);
+    }
     return this.get(projectId, userId, conversationId);
   }
 
@@ -592,17 +596,17 @@ export class ConversationService {
     userId: string,
     conversationId: string,
     plan: (current: Conversation) => {data: Prisma.ConversationUncheckedUpdateManyInput; event: InboxSystemEvent} | null,
-  ): Promise<void> {
+  ): Promise<Conversation | null> {
     for (let attempt = 0; attempt < TRANSITION_ATTEMPTS; attempt++) {
       const current = await this.requireProjectConversation(projectId, conversationId);
       const change = plan(current);
       if (!change) {
-        return;
+        return null;
       }
       const line = await this.applyTransition(current, change, userId);
       if (line) {
         await this.publishTransition(current, line, (change.data.status as ConversationStatus | undefined) ?? null);
-        return;
+        return current;
       }
     }
     throw new HttpException(409, 'This conversation was changed at the same time; try again', ErrorCode.CONFLICT);
@@ -785,9 +789,26 @@ export class ConversationService {
     }
     if (fromContact) {
       await this.notifyAgents(conversation.projectId, message.id);
+      await this.emitEvent(conversation, conversation.lastContactMessageAt ? CHAT_EVENTS.REPLIED : CHAT_EVENTS.STARTED);
     }
 
     return message;
+  }
+
+  /* Workflows hang off these events, but the message or status change is already saved, so a
+  failure to record one is logged rather than surfaced to whoever wrote. */
+  private static async emitEvent(
+    conversation: Pick<Conversation, 'id' | 'projectId' | 'contactId' | 'channel'>,
+    name: string,
+  ): Promise<void> {
+    try {
+      await EventService.trackEvent(conversation.projectId, name, conversation.contactId, undefined, {
+        conversationId: conversation.id,
+        channel: conversation.channel,
+      });
+    } catch (error) {
+      signale.error(`[CHAT] Could not record ${name} for conversation ${conversation.id}:`, error);
+    }
   }
 
   /* Agents are notified by the worker. The message is already saved and live in the Inbox, so a

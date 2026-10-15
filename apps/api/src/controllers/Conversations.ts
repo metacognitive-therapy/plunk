@@ -6,6 +6,7 @@ import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
 import {chatAttachmentUpload} from '../middleware/attachmentUpload.js';
 import {requireAuth, requireEmailVerified, requireSupportAgent} from '../middleware/auth.js';
 import {ChatAttachmentService} from '../services/ChatAttachmentService.js';
+import {ContactConversationService} from '../services/ContactConversationService.js';
 import {ConversationService} from '../services/ConversationService.js';
 import {ConversationTagService} from '../services/ConversationTagService.js';
 import {Keys} from '../services/keys.js';
@@ -129,6 +130,16 @@ export class Conversations {
     const auth = res.locals.auth;
     const {id} = UtilitySchemas.id.parse(req.params);
     const data = await ConversationService.get(auth.projectId!, auth.userId!, id);
+    return res.json({success: true, data});
+  }
+
+  @Get(':id/contact')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async contact(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const data = await ContactConversationService.profile(auth.projectId!, id);
     return res.json({success: true, data});
   }
 

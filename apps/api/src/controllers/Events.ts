@@ -1,4 +1,5 @@
 import {Controller, Delete, Get, Middleware, Post} from '@overnightjs/core';
+import {CHAT_EVENT_NAMES} from '@plunk/shared';
 import type {NextFunction, Request, Response} from 'express';
 import signale from 'signale';
 import {prisma} from '../database/prisma.js';
@@ -6,6 +7,7 @@ import {NotFound} from '../exceptions/index.js';
 import {requireAuth, requireEmailVerified} from '../middleware/auth.js';
 import {ContactService} from '../services/ContactService.js';
 import {EventService} from '../services/EventService.js';
+import {MessengerSettingsService} from '../services/MessengerSettingsService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
 @Controller('events')
@@ -114,6 +116,10 @@ export class Events {
     const auth = res.locals.auth;
 
     const eventNames = await EventService.getUniqueEventNames(auth.projectId!);
+    const messenger = await MessengerSettingsService.get(auth.projectId!);
+    if (messenger.enabled) {
+      eventNames.push(...CHAT_EVENT_NAMES.filter(name => !eventNames.includes(name)));
+    }
 
     return res.status(200).json({eventNames});
   }

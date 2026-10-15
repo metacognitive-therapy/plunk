@@ -1,5 +1,5 @@
 import {type Contact, Prisma} from '@plunk/db';
-import {CONTACT_IDENTITY_TYPES} from '@plunk/shared';
+import {CHAT_EVENTS, CONTACT_IDENTITY_TYPES} from '@plunk/shared';
 import type {MessengerEmailResponse} from '@plunk/types';
 
 import {prisma} from '../database/prisma.js';
@@ -10,7 +10,7 @@ import {Keys} from './keys.js';
 import {type MessengerSession, MessengerSessionService} from './MessengerSessionService.js';
 import {RealtimeHub} from './RealtimeHub.js';
 
-export const EMAIL_CAPTURED_EVENT = 'chat.email_captured';
+export const EMAIL_CAPTURED_EVENT = CHAT_EVENTS.EMAIL_CAPTURED;
 
 const isUniqueViolation = (error: unknown) =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';

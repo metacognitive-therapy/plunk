@@ -1,11 +1,12 @@
 import {Controller, Delete, Get, Middleware, Patch, Post} from '@overnightjs/core';
 import type {NextFunction, Request, Response} from 'express';
 import multer from 'multer';
-import {ContactSchemas} from '@plunk/shared';
+import {ContactSchemas, UtilitySchemas} from '@plunk/shared';
 import type {BulkContactActionSelector} from '@plunk/types';
 import signale from 'signale';
 import {requireAuth, requireEmailVerified} from '../middleware/auth.js';
 import {contactWriteRateLimit} from '../middleware/rateLimit.js';
+import {ContactConversationService} from '../services/ContactConversationService.js';
 import {ContactService} from '../services/ContactService.js';
 import {QueueService} from '../services/QueueService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
@@ -165,6 +166,20 @@ export class Contacts {
     const contact = await ContactService.get(auth.projectId!, contactId);
 
     return res.status(200).json(contact);
+  }
+
+  @Get(':id/conversations')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  public async conversations(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const data = await ContactConversationService.forContact(
+      auth.projectId!,
+      id,
+      auth.type === 'jwt' ? auth.userId : undefined,
+    );
+    return res.status(200).json({success: true, data});
   }
 
   /**

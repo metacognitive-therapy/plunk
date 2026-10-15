@@ -128,6 +128,15 @@ export const ConversationSchemas = {
   }),
 } as const;
 
+/* Reserved: emitted by the server only, offered in the workflow trigger picker of projects with the messenger on. */
+export const CHAT_EVENTS = {
+  STARTED: 'conversation.started',
+  REPLIED: 'conversation.replied',
+  CLOSED: 'conversation.closed',
+  EMAIL_CAPTURED: 'chat.email_captured',
+} as const;
+export const CHAT_EVENT_NAMES: readonly string[] = Object.values(CHAT_EVENTS);
+
 export const MESSENGER_DEFAULT_ACCENT = '#111827';
 export const MESSENGER_GREETING_MAX_LENGTH = 80;
 export const MESSENGER_TEAM_MAX = 5;

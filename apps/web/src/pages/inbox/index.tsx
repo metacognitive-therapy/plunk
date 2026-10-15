@@ -22,7 +22,6 @@ import type {
 } from '@plunk/types';
 import {AlarmClock, ArrowLeft, ChevronDown, Inbox as InboxIcon, MessageSquare, ShieldAlert, StickyNote, Tag as TagIcon} from 'lucide-react';
 import {NextSeo} from 'next-seo';
-import Link from 'next/link';
 import {useRouter} from 'next/router';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import useSWR, {useSWRConfig} from 'swr';
@@ -30,6 +29,7 @@ import useSWRInfinite from 'swr/infinite';
 
 import {DashboardLayout} from '../../components/DashboardLayout';
 import {Composer} from '../../components/inbox/Composer';
+import {ContactPanel} from '../../components/inbox/ContactPanel';
 import {ConversationActions, formatSnoozeDate} from '../../components/inbox/ConversationActions';
 import {ConversationTags, TagChip, useConversationTags} from '../../components/inbox/ConversationTags';
 import {MessageAttachments} from '../../components/inbox/MessageAttachments';
@@ -540,26 +540,11 @@ function Thread({
           }}
         />
       </div>
-      <aside className="hidden w-64 shrink-0 border-l border-neutral-200 p-4 xl:block">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Contact</h2>
-        <dl className="mt-3 space-y-2 text-sm">
-          <div>
-            <dt className="text-neutral-500">Email</dt>
-            <dd className="truncate text-neutral-900">{conversation.contact.email ?? 'Not shared yet'}</dd>
-          </div>
-          {conversation.contact.externalId && (
-            <div>
-              <dt className="text-neutral-500">External id</dt>
-              <dd className="truncate text-neutral-900">{conversation.contact.externalId}</dd>
-            </div>
-          )}
-        </dl>
-        <Link
-          href={`/contacts/${conversation.contact.id}`}
-          className="mt-4 inline-block text-sm font-medium text-neutral-900 underline underline-offset-4"
-        >
-          Open contact
-        </Link>
+      <aside className="hidden w-72 shrink-0 overflow-y-auto border-l border-neutral-200 p-4 xl:block">
+        <ContactPanel
+          conversationId={conversation.id}
+          version={`${conversation.status}:${conversation.lastMessageAt}`}
+        />
       </aside>
     </div>
   );

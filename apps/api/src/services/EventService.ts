@@ -1,5 +1,6 @@
 import type {Event, Workflow, WorkflowStep} from '@plunk/db';
 import {Prisma} from '@plunk/db';
+import {CHAT_EVENT_NAMES} from '@plunk/shared';
 import type {FilterCondition, FilterGroup} from '@plunk/types';
 import {toPrismaJson} from '@plunk/types';
 import signale from 'signale';
@@ -376,7 +377,7 @@ export class EventService {
    * - email.* (email.sent, email.delivery, email.open, email.click, email.bounce, email.complaint)
    * - contact.subscribed, contact.unsubscribed, contact.identified
    * - segment.*.entry, segment.*.exit
-   * - chat.email_captured
+   * - conversation.started, conversation.replied, conversation.closed, chat.email_captured
    *
    * @param eventName - The event name to check
    * @returns true if the event is reserved, false otherwise
@@ -402,7 +403,7 @@ export class EventService {
       return true;
     }
 
-    if (eventName === 'chat.email_captured') {
+    if (CHAT_EVENT_NAMES.includes(eventName)) {
       return true;
     }
 
