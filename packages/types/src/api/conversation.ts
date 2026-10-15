@@ -268,6 +268,8 @@ export interface MessengerSettingsData {
   retentionMonths: number;
   /** Whether an identity secret exists. The secret itself is a credential, shown to admins only. */
   identityVerification: boolean;
+  /** Contact attributes the SDK may set on signed-in users; any other is refused. */
+  userAttributes: string[];
 }
 
 /** The secret user tokens are signed with, as shown to project admins. */

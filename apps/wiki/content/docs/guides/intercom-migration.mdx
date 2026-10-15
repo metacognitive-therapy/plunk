@@ -1,0 +1,89 @@
+---
+title: Moving from Intercom
+description: Replace Intercom's user attributes and events in a React Native app with the messenger SDK
+icon: ArrowRightLeft
+---
+
+The React Native messenger SDK (`@plunk/react-native`) covers what an app usually calls on Intercom: the messenger itself, signed-in users, push notifications, and the user data that drives segments and workflows. This page covers the user data. The SDK's README covers the messenger calls.
+
+## How it works
+
+| Intercom                                   | Messenger SDK                                        |
+| ------------------------------------------ | ---------------------------------------------------- |
+| `Intercom.updateUser({customAttributes})`  | `Plunk.updateUser(attributes)`                       |
+| `Intercom.logEvent(name, metaData)`        | `Plunk.logEvent(name, data, {occurredAt})`           |
+| `userId`, `email`, `name` on login         | The `sub`, `email` and `name` claims of the user token |
+
+Both calls are authenticated by the signed-in user's messenger session, so the app never holds a secret key. They only work once `Plunk.loginUser` has signed someone in: for an anonymous user, or when the login failed, they resolve `false` and record nothing. A call made while the login is still in progress waits for it. Nothing is queued for later, so what one person did on a shared device is never recorded against whoever signs in next.
+
+Like Intercom's, neither call ever throws. Each resolves `true` when the data was recorded, or `false` with a `[Plunk]` warning in the console saying why.
+
+```ts
+import {Plunk} from '@plunk/react-native';
+
+await Plunk.loginUser({getUserToken: () => api.messengerToken()});
+
+await Plunk.updateUser({is_premium: true, completed_modules_count: 4});
+await Plunk.logEvent('finished_journey_module', {moduleId: 'm-4'});
+await Plunk.logEvent('purchase_completed', {plan: 'yearly'}, {occurredAt: purchase.date});
+```
+
+### Attributes must be declared
+
+`updateUser` only sets attributes declared in **Settings > Messenger > App user attributes**, one name per line, up to 50. An update with any undeclared name is refused whole, with the undeclared names in the error, and nothing is written. Until something is declared, every update is refused.
+
+This keeps the contact attribute space finite: segments filter on attributes, and an app bug that sent a new attribute name with every release would otherwise grow it without end.
+
+- Values are strings (up to 1000 characters), numbers or booleans. `null` removes the attribute.
+- Store dates as ISO 8601 strings, such as `2026-05-06T12:00:00Z`, so segments offer date filters on them.
+- `locale` is read to pick the language of emails, so only declare it for a language code.
+- `email`, `id` and the other [reserved keys](/guides/custom-fields#reserved-keys) can't be declared.
+
+### Events
+
+Events need no declaration. A logged event is recorded on the signed-in user's contact and can start a workflow, resume one waiting for it, or match a segment's event filter.
+
+- Names are up to 100 letters, digits, `_`, `.`, `:` or `-`. Names used by the platform, such as `email.*`, `contact.*` and `conversation.*`, are refused.
+- `data` holds up to 25 flat values. It is kept on the event for workflows and is never copied onto the contact.
+- `occurredAt` (a `Date`, ISO string or epoch milliseconds) records when it happened, if not now. It can't be in the future.
+
+## noworries mapping
+
+What the noworries app sends to Intercom today, and what to send instead.
+
+### User attributes
+
+Declare the names in the right-hand column in Settings > Messenger.
+
+| Intercom                                   | Messenger                                        | Notes                                                                                                   |
+| ------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `userId`                                   | Token claim `sub`                                | Signed by your backend. Becomes the contact's external id.                                              |
+| `email`                                    | Token claim `email`                              |                                                                                                         |
+| `name`                                     | Token claim `name`                               | No need to send it with `updateUser`.                                                                   |
+| `signedUpAt`                               | `signed_up_at`                                   | An ISO string, not Intercom's Unix seconds.                                                             |
+| `customAttributes.Locale`                  | `brand`                                          | Holds "Metacognitive Therapy (MCT)" or "MKT-Oslo". Not `locale`, which is reserved for email language. |
+| `customAttributes.completed_modules_count` | `completed_modules_count`                        |                                                                                                         |
+| `customAttributes.completed_module_ids`    | `completed_module_ids`                           | The same comma-separated string.                                                                        |
+| `customAttributes.is_premium`              | `is_premium`                                     |                                                                                                         |
+| `customAttributes.is_on_trial`             | `is_on_trial`                                    |                                                                                                         |
+| `customAttributes.is_lifetime`             | `is_lifetime`                                    |                                                                                                         |
+| `customAttributes.has_full_app_access`     | `has_full_app_access`                            |                                                                                                         |
+| `customAttributes.push_notifications_enabled`  | `push_notifications_enabled`                 |                                                                                                         |
+| `customAttributes.email_notifications_enabled` | `email_notifications_enabled`                |                                                                                                         |
+
+### Events
+
+The names carry over unchanged, and so does each event's metadata, which is already flat.
+
+| Intercom event                   | Messenger event                  | Data                                  |
+| -------------------------------- | -------------------------------- | ------------------------------------- |
+| `signed_up`                      | `signed_up`                      |                                       |
+| `trial_started`                  | `trial_started`                  |                                       |
+| `purchase_completed`             | `purchase_completed`             |                                       |
+| `accessed_journey_module`        | `accessed_journey_module`        | `moduleId`                            |
+| `accessed_journey_content`       | `accessed_journey_content`       | `moduleId`, `contentId`               |
+| `finished_journey_module`        | `finished_journey_module`        | `moduleId`                            |
+| `journey_media_content_progress` | `journey_media_content_progress` | `moduleId`, `contentId`, `progress`   |
+| `pwm_wizard_completed`           | `pwm_wizard_completed`           |                                       |
+
+`journey_media_content_progress` fires often during playback. Each user may log about one event a second, with short bursts of up to 60, so log progress at milestones (25, 50, 75, 100) rather than on every tick.

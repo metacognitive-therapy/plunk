@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS: MessengerSettingsData = {
   timezone: MESSENGER_DEFAULT_TIMEZONE,
   retentionMonths: MESSENGER_RETENTION_DEFAULT_MONTHS,
   identityVerification: false,
+  userAttributes: [],
 };
 
 export type MessengerSettingsPatch = Partial<Omit<MessengerSettingsData, 'slackConnected' | 'identityVerification'>> & {
@@ -229,6 +230,7 @@ export class MessengerSettingsService {
       timezone: row.timezone,
       retentionMonths: row.retentionMonths,
       identityVerification: Boolean(row.identitySecret),
+      userAttributes: row.userAttributes,
     };
   }
 }

@@ -275,6 +275,10 @@ model MessengerSettings {
   // credential: only admins can read or rotate it, and the dashboard settings see a boolean.
   identitySecret String?
 
+  // Contact attributes signed-in users' apps may set through the SDK. Anything else is refused, so
+  // the attribute space segments filter on stays finite.
+  userAttributes String[] @default([])
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

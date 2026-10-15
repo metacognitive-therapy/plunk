@@ -67,6 +67,10 @@ function fakeApi() {
     if (path.startsWith('/v1/messenger/push-token')) {
       return json(200, undefined);
     }
+    if (path === '/v1/messenger/user' || path === '/v1/messenger/events') {
+      const attributes = (body?.attributes ?? {}) as Record<string, unknown>;
+      return 'favourite_colour' in attributes ? json(422, 'Not a declared user attribute: favourite_colour') : json(200, undefined);
+    }
     if (path.endsWith('/read')) {
       return new Response(null, {status: 204});
     }
@@ -156,6 +160,7 @@ describe('MessengerController', () => {
   afterEach(async () => {
     await controller.logout();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('boots a signed-in user with a token from the callback and lists their conversations', async () => {
@@ -286,6 +291,56 @@ describe('MessengerController', () => {
 
     expect(stream.connections).toBe(1);
     expect(controller.getUnreadConversationCount()).toBe(1);
+  });
+
+  describe('user attributes and events', () => {
+    const writes = () => api.calls.filter(call => call.path === '/v1/messenger/user' || call.path === '/v1/messenger/events');
+
+    it('sends them for the signed-in user', async () => {
+      await controller.loginUser({getUserToken: async () => 'alice.token'});
+
+      expect(await controller.updateUser({is_premium: true, completed_modules_count: 3})).toBe(true);
+      expect(await controller.logEvent('finished_journey_module', {module_id: 'm-4'}, {occurredAt: Date.UTC(2026, 9, 15, 9)})).toBe(true);
+
+      expect(writes()).toMatchObject([
+        {path: '/v1/messenger/user', body: {attributes: {is_premium: true, completed_modules_count: 3}}},
+        {
+          path: '/v1/messenger/events',
+          body: {name: 'finished_journey_module', data: {module_id: 'm-4'}, occurredAt: '2026-10-15T09:00:00.000Z'},
+        },
+      ]);
+    });
+
+    it('resolves false without sending anything for an anonymous or signed-out user, so nothing waits for whoever signs in next', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      expect(await controller.logEvent('signed_up')).toBe(false);
+      await controller.loginUnidentifiedUser();
+      expect(await controller.updateUser({is_premium: true})).toBe(false);
+
+      await controller.loginUser({getUserToken: async () => 'alice.token'});
+      await flush();
+      expect(writes()).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('needs a signed-in user'));
+    });
+
+    it('waits for a sign-in that is still booting', async () => {
+      const login = controller.loginUser({getUserToken: async () => 'alice.token'});
+      const logged = controller.logEvent('signed_up');
+
+      await login;
+      expect(await logged).toBe(true);
+      expect(writes()).toMatchObject([{path: '/v1/messenger/events', body: {name: 'signed_up'}}]);
+    });
+
+    it('resolves false with the reason when the API refuses, instead of rejecting', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      await controller.loginUser({getUserToken: async () => 'alice.token'});
+
+      expect(await controller.updateUser({favourite_colour: 'teal'})).toBe(false);
+      expect(await controller.logEvent('signed_up', undefined, {occurredAt: 'yesterday'})).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('favourite_colour'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('not a date'));
+    });
   });
 
   describe('push notifications', () => {

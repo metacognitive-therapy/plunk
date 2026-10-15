@@ -11,6 +11,7 @@ import {ChatAttachmentService} from '../services/ChatAttachmentService.js';
 import {ContactPushService} from '../services/ContactPushService.js';
 import {ConversationService} from '../services/ConversationService.js';
 import {MessengerContactService} from '../services/MessengerContactService.js';
+import {MessengerUserService} from '../services/MessengerUserService.js';
 import {Keys} from '../services/keys.js';
 import {TurnstileService} from '../services/TurnstileService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
@@ -77,6 +78,24 @@ export class Messenger {
   private async removePushToken(req: Request, res: Response, _next: NextFunction) {
     const {token} = MessengerSchemas.pushToken.parse(req.body);
     await ContactPushService.unregister(messengerSession(res), token);
+    return res.json({success: true});
+  }
+
+  @Post('user')
+  @Middleware([requireMessengerSession, messengerRateLimit('user')])
+  @CatchAsync
+  private async updateUser(req: Request, res: Response, _next: NextFunction) {
+    const {attributes} = MessengerSchemas.updateUser.parse(req.body);
+    await MessengerUserService.updateUser(messengerSession(res), attributes);
+    return res.json({success: true});
+  }
+
+  @Post('events')
+  @Middleware([requireMessengerSession, messengerRateLimit('event')])
+  @CatchAsync
+  private async logEvent(req: Request, res: Response, _next: NextFunction) {
+    const input = MessengerSchemas.logEvent.parse(req.body);
+    await MessengerUserService.logEvent(messengerSession(res), input);
     return res.json({success: true});
   }
 

@@ -7,7 +7,10 @@ import {
   MESSENGER_RETENTION_MAX_MONTHS,
   MESSENGER_DEFAULT_TIMEZONE,
   MESSENGER_TEAM_MAX,
+  MESSENGER_USER_ATTRIBUTES_MAX,
   type MessengerSettingsSchemas,
+  RESERVED_ATTRIBUTE_KEYS,
+  USER_ATTRIBUTE_KEY_PATTERN,
   type ProfileSchemas,
   isSlackWebhookUrl,
   normalizeOrigin,
@@ -138,6 +141,7 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
   const [officeHoursEnabled, setOfficeHoursEnabled] = useState(false);
   const [timezone, setTimezone] = useState(MESSENGER_DEFAULT_TIMEZONE);
   const [hours, setHours] = useState<HoursRow[]>(() => toRows([]));
+  const [attributesText, setAttributesText] = useState('');
   const {domains} = useDomains(activeProject?.id ?? '');
   const {data: config} = useConfig();
   const [saving, setSaving] = useState(false);
@@ -159,6 +163,7 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       setTimezone(data.data.timezone);
       setHours(toRows(data.data.officeHours));
       setRetention(String(data.data.retentionMonths));
+      setAttributesText(data.data.userAttributes.join('\n'));
     }
   }, [data]);
 
@@ -188,6 +193,16 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
   const retentionValid =
     Number.isInteger(retentionMonths) && retentionMonths >= 1 && retentionMonths <= MESSENGER_RETENTION_MAX_MONTHS;
 
+  const userAttributes = attributesText
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+  const invalidAttributes = userAttributes.filter(
+    (key, index) =>
+      !USER_ATTRIBUTE_KEY_PATTERN.test(key) || RESERVED_ATTRIBUTE_KEYS.includes(key) || userAttributes.indexOf(key) !== index,
+  );
+  const attributesValid = invalidAttributes.length === 0 && userAttributes.length <= MESSENGER_USER_ATTRIBUTES_MAX;
+
   const officeHours = toDays(hours);
   const hoursValid = officeHours !== null && (!officeHoursEnabled || officeHours.length > 0);
 
@@ -207,6 +222,7 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       officeHoursEnabled !== saved.officeHoursEnabled ||
       timezone !== saved.timezone ||
       retentionMonths !== saved.retentionMonths ||
+      userAttributes.join('\n') !== saved.userAttributes.join('\n') ||
       hoursKey(officeHours) !== hoursKey(saved.officeHours));
 
   const updateRow = (index: number, patch: Partial<HoursRow>) => {
@@ -254,6 +270,14 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       toast.error(`Keep closed conversations for 1 to ${MESSENGER_RETENTION_MAX_MONTHS} months`);
       return;
     }
+    if (!attributesValid) {
+      toast.error(
+        invalidAttributes.length > 0
+          ? `Not a valid attribute name: ${invalidAttributes[0]}`
+          : `Declare at most ${MESSENGER_USER_ATTRIBUTES_MAX} attributes`,
+      );
+      return;
+    }
     if (!officeHours) {
       toast.error('Each open day needs a closing time after its opening time');
       return;
@@ -279,6 +303,7 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
         officeHours,
         timezone,
         retentionMonths,
+        userAttributes,
       });
       await mutate();
       toast.success('Messenger settings saved');
@@ -640,6 +665,38 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
             Visitors who never left an email address are deleted, with their conversations, after 90 days without a
             message. Deleting a contact deletes their conversations right away.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>App user attributes</CardTitle>
+          <CardDescription>
+            The contact attributes your app may set on signed-in users with the React Native SDK&apos;s{' '}
+            <code>updateUser</code>. Anything else is refused, so a bug in the app can&apos;t fill your contacts with
+            unexpected fields. Events logged with <code>logEvent</code> need no declaration.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-1.5">
+          <Label htmlFor="messenger-user-attributes">Attribute names</Label>
+          <Textarea
+            id="messenger-user-attributes"
+            value={attributesText}
+            disabled={!canEdit}
+            onChange={event => setAttributesText(event.target.value)}
+            placeholder={'plan\nis_premium\ncompleted_modules_count'}
+            rows={5}
+            className="font-mono text-sm"
+          />
+          <p className="text-sm text-neutral-500">
+            One per line, up to {MESSENGER_USER_ATTRIBUTES_MAX}. Letters, digits and underscores, starting with a letter.
+          </p>
+          {invalidAttributes.length > 0 && (
+            <p className="text-sm text-red-600">Not a valid or unique attribute name: {invalidAttributes.join(', ')}</p>
+          )}
+          {userAttributes.length > MESSENGER_USER_ATTRIBUTES_MAX && (
+            <p className="text-sm text-red-600">Declare at most {MESSENGER_USER_ATTRIBUTES_MAX} attributes.</p>
+          )}
         </CardContent>
       </Card>
 

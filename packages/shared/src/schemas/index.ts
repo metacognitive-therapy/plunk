@@ -615,7 +615,7 @@ export const CampaignSchemas = {
 // decades in the future) than a genuine event, and letting it through would silently corrupt
 // segment recency windows - the exact failure mode this field exists to prevent.
 const MAX_OCCURRED_AT_CLOCK_SKEW_MS = 5 * 60 * 1000;
-const occurredAt = z.preprocess(
+export const occurredAtSchema = z.preprocess(
   // A client that omits the field by serializing it as `null` (common for optional fields in
   // some JSON serializers) would otherwise reach z.coerce.date() as `null`, which JS Date
   // happily coerces to the epoch (1970-01-01) instead of failing validation - silently
@@ -649,7 +649,7 @@ export const ActionSchemas = {
     // When the event actually happened, as opposed to when Plunk received it. Defaults to
     // now when omitted. Only segment/campaign-audience recency filters read this value -
     // the event feeds and stats keep reading ingestion time.
-    occurredAt,
+    occurredAt: occurredAtSchema,
   })
     .refine(data => !!data.email || !!data.externalId, {
       message: 'Provide either email or externalId',
