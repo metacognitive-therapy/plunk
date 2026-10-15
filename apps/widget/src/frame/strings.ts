@@ -10,6 +10,7 @@ const en = {
   you: 'You',
   team: 'The team',
   sending: 'Sending…',
+  typing: 'Typing…',
   failed: 'Could not send. Try again.',
   unavailable: 'The messenger is not available right now.',
   closed: 'This conversation is closed. Write again to reopen it.',

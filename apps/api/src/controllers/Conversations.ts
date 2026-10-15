@@ -2,12 +2,23 @@ import {Controller, Get, Middleware, Post} from '@overnightjs/core';
 import type {NextFunction, Request, Response} from 'express';
 import {ConversationSchemas, UtilitySchemas} from '@plunk/shared';
 
+import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
 import {requireAuth, requireEmailVerified, requireSupportAgent} from '../middleware/auth.js';
 import {ConversationService} from '../services/ConversationService.js';
+import {Keys} from '../services/keys.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
 @Controller('conversations')
 export class Conversations {
+  public constructor(private readonly streamOptions: EventStreamOptions = {}) {}
+
+  @Get('stream')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async stream(req: Request, res: Response, _next: NextFunction) {
+    await serveEventStream(req, res, [Keys.Realtime.project(res.locals.auth.projectId!)], this.streamOptions);
+  }
+
   @Get('')
   @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
   @CatchAsync
@@ -37,6 +48,16 @@ export class Conversations {
     const {body} = ConversationSchemas.reply.parse(req.body);
     const data = await ConversationService.replyAsAgent(auth.projectId!, auth.userId!, id, body);
     return res.status(201).json({success: true, data});
+  }
+
+  @Post(':id/typing')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async typing(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    await ConversationService.typingByAgent(auth.projectId!, auth.userId!, id);
+    return res.status(204).end();
   }
 
   @Post(':id/read')

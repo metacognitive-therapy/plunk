@@ -2,9 +2,11 @@ import {Controller, Get, Middleware, Post} from '@overnightjs/core';
 import type {NextFunction, Request, Response} from 'express';
 import {MessengerSchemas, UtilitySchemas} from '@plunk/shared';
 
+import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
 import {ErrorCode, HttpException} from '../exceptions/index.js';
 import {messengerSession, requireMessengerSession} from '../middleware/messenger.js';
 import {ConversationService} from '../services/ConversationService.js';
+import {Keys} from '../services/keys.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
 /**
@@ -13,6 +15,8 @@ import {CatchAsync} from '../utils/asyncHandler.js';
  */
 @Controller('v1/messenger')
 export class Messenger {
+  public constructor(private readonly streamOptions: EventStreamOptions = {}) {}
+
   @Post('boot')
   @CatchAsync
   private async boot(req: Request, res: Response, _next: NextFunction) {
@@ -24,6 +28,17 @@ export class Messenger {
     const input = MessengerSchemas.boot.parse(req.body);
     const data = await ConversationService.boot(publicKey, input, req.get('origin'));
     return res.json({success: true, data});
+  }
+
+  @Get('stream')
+  @Middleware([requireMessengerSession])
+  @CatchAsync
+  private async stream(req: Request, res: Response, _next: NextFunction) {
+    const session = messengerSession(res);
+    await serveEventStream(req, res, [Keys.Realtime.visitor(session.projectId, session.visitorId)], {
+      ...this.streamOptions,
+      expiresAt: session.expiresAt,
+    });
   }
 
   @Get('conversations')
@@ -60,6 +75,15 @@ export class Messenger {
     const {body} = MessengerSchemas.sendMessage.parse(req.body);
     const data = await ConversationService.sendFromContact(messengerSession(res), id, body);
     return res.status(201).json({success: true, data});
+  }
+
+  @Post('conversations/:id/typing')
+  @Middleware([requireMessengerSession])
+  @CatchAsync
+  private async typing(req: Request, res: Response, _next: NextFunction) {
+    const {id} = UtilitySchemas.id.parse(req.params);
+    await ConversationService.typingByContact(messengerSession(res), id);
+    return res.status(204).end();
   }
 
   @Post('conversations/:id/read')

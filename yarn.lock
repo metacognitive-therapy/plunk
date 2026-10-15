@@ -18799,6 +18799,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "widget@workspace:apps/widget"
   dependencies:
+    "@plunk/shared": "npm:*"
     "@plunk/types": "npm:*"
     concurrently: "npm:^9.2.1"
     preact: "npm:^10.29.8"

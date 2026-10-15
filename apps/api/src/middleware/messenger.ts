@@ -1,12 +1,12 @@
 import type {NextFunction, Request, Response} from 'express';
 
 import {ErrorCode, HttpException} from '../exceptions/index.js';
-import {type MessengerSession, MessengerSessionService} from '../services/MessengerSessionService.js';
+import {MessengerSessionService, type VerifiedMessengerSession} from '../services/MessengerSessionService.js';
 import {MessengerSettingsService} from '../services/MessengerSettingsService.js';
 import {ProjectService} from '../services/ProjectService.js';
 
-export function messengerSession(res: Response): MessengerSession {
-  return res.locals.messenger as MessengerSession;
+export function messengerSession(res: Response): VerifiedMessengerSession {
+  return res.locals.messenger as VerifiedMessengerSession;
 }
 
 /**

@@ -107,3 +107,22 @@ export interface MessengerSettingsData {
   greeting: string | null;
   teamUserIds: string[];
 }
+
+/** Pushed to one visitor's messenger. Never carries internal notes or another visitor's threads. */
+export type MessengerStreamEvent =
+  | {type: 'ready'}
+  | {type: 'message'; conversationId: string; message: MessengerMessage}
+  | {type: 'conversation'; conversationId: string; status: ConversationStatusValue}
+  | {type: 'typing'; conversationId: string; agentName: string | null};
+
+export type InboxTypingAuthor = {type: 'CONTACT'} | {type: 'AGENT'; userId: string; name: string};
+
+export type InboxReader = {type: 'CONTACT'; readAt: string} | {type: 'AGENT'; userId: string};
+
+/** Pushed to every support agent of a project. Per-agent state such as unread is refetched, not pushed. */
+export type InboxStreamEvent =
+  | {type: 'ready'}
+  | {type: 'message'; conversationId: string; message: InboxMessage}
+  | {type: 'conversation'; conversationId: string}
+  | {type: 'typing'; conversationId: string; author: InboxTypingAuthor}
+  | {type: 'read'; conversationId: string; reader: InboxReader};

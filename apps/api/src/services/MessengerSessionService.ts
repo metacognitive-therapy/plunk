@@ -19,6 +19,10 @@ export interface MessengerSession {
   verified: boolean;
 }
 
+export interface VerifiedMessengerSession extends MessengerSession {
+  expiresAt: Date;
+}
+
 interface SessionClaims {
   pid: string;
   vid: string;
@@ -42,12 +46,12 @@ export class MessengerSessionService {
     return {token, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000)};
   }
 
-  public static verify(token: string): MessengerSession {
+  public static verify(token: string): VerifiedMessengerSession {
     try {
       const claims = jsonwebtoken.verify(token, SIGNING_KEY, {
         audience: AUDIENCE,
         algorithms: ['HS256'],
-      }) as SessionClaims;
+      }) as SessionClaims & {exp: number};
       if (typeof claims.pid !== 'string' || typeof claims.vid !== 'string') {
         throw new Error('Malformed messenger session');
       }
@@ -56,6 +60,7 @@ export class MessengerSessionService {
         visitorId: claims.vid,
         contactId: typeof claims.cid === 'string' ? claims.cid : null,
         verified: claims.ver === true,
+        expiresAt: new Date(claims.exp * 1000),
       };
     } catch {
       throw new HttpException(401, 'Messenger session is invalid or has expired', ErrorCode.MISSING_AUTH);

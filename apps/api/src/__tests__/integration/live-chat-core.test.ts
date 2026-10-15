@@ -192,15 +192,22 @@ describe('Live chat core', () => {
       expect(res.status).toBe(403);
     });
 
-    it('marks the conversation read by the contact', async () => {
-      const {project} = await messengerProject();
+    it('marks the conversation read by the contact once a reply is waiting', async () => {
+      const {owner, project} = await messengerProject();
       const {token} = await session(project.public);
       const {conversation} = await startConversation(token);
+      const markRead = () =>
+        request(app).post(`/v1/messenger/conversations/${conversation.id}/read`).set('Authorization', `Bearer ${token}`);
 
-      const res = await request(app)
-        .post(`/v1/messenger/conversations/${conversation.id}/read`)
-        .set('Authorization', `Bearer ${token}`);
-      expect(res.status).toBe(200);
+      expect((await markRead()).status).toBe(200);
+      const untouched = await prisma.conversation.findUniqueOrThrow({where: {id: conversation.id}});
+      expect(untouched.contactLastReadAt).toBeNull();
+
+      await request(app)
+        .post(`/conversations/${conversation.id}/messages`)
+        .set(asAgent(owner.id, project.id))
+        .send({body: 'Hello there'});
+      expect((await markRead()).status).toBe(200);
 
       const stored = await prisma.conversation.findUniqueOrThrow({where: {id: conversation.id}});
       expect(stored.contactLastReadAt).not.toBeNull();

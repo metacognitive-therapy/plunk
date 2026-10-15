@@ -16,6 +16,7 @@ export type FrameMessage =
 export type HostMessage =
   | {source: typeof PROTOCOL; type: 'init'; visitorId: string}
   | {source: typeof PROTOCOL; type: 'opened'}
+  | {source: typeof PROTOCOL; type: 'closed'}
   | {source: typeof PROTOCOL; type: 'update'};
 
 export function isProtocolMessage(data: unknown): data is {source: typeof PROTOCOL; type: string} {

@@ -1,3 +1,4 @@
+import {type EventStream, openEventStream} from '@plunk/shared/event-stream';
 import type {
   MessengerBootResponse,
   MessengerConversation,
@@ -61,6 +62,26 @@ export class MessengerApi {
     return this.withSession('POST', `/v1/messenger/conversations/${encodeURIComponent(id)}/messages`, {body});
   }
 
+  public typing(id: string): Promise<void> {
+    return this.withSession('POST', `/v1/messenger/conversations/${encodeURIComponent(id)}/typing`, {});
+  }
+
+  public openStream(handlers: {onEvent: (data: string) => void; onOpen: () => void; onDisconnect: () => void}): EventStream {
+    return openEventStream({
+      url: '/v1/messenger/stream',
+      headers: async () => {
+        if (!this.token) {
+          await this.boot();
+        }
+        return {Authorization: `Bearer ${this.token}`};
+      },
+      onUnauthorized: async () => {
+        await this.boot().catch(() => undefined);
+      },
+      ...handlers,
+    });
+  }
+
   public markRead(id: string): Promise<void> {
     return this.withSession('POST', `/v1/messenger/conversations/${encodeURIComponent(id)}/read`, {});
   }
@@ -90,6 +111,9 @@ export class MessengerApi {
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
 
+    if (response.status === 204) {
+      return undefined as T;
+    }
     const payload = (await response.json().catch(() => ({}))) as Envelope<T>;
     if (!response.ok || !payload.success) {
       throw new MessengerApiError(response.status, payload.error?.message ?? 'Something went wrong');
