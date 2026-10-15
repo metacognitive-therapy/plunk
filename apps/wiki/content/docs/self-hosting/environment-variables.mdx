@@ -170,6 +170,16 @@ Plunk bundles a self-hosted [ntfy](https://ntfy.sh) server for internal system n
 | `EMAIL_WORKER_CONCURRENCY`    | No       | Number of emails the worker processes in parallel. When unset, derived from the effective rate limit so a higher SES quota scales throughput automatically. | —       |
 | `EMAIL_WORKER_MAX_CONCURRENCY`| No       | Upper bound applied to the auto-derived worker concurrency. Raise this only after sizing the Prisma connection pool accordingly.                            | `50`    |
 
+## Messenger (Live Chat)
+
+The messenger always rate limits boots, new conversations, messages, uploads and email capture per visitor and per IP, independent of `RATE_LIMIT_ENABLED`. A visitor who hits a limit sees a "too quickly" message and can continue once the window passes.
+
+| Variable               | Required | Description                                                                                                                                                                                               | Default |
+| ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `TRUST_PROXY`          | No       | Number of reverse proxies in front of the API, used to read the visitor's IP from `X-Forwarded-For`. The bundled Nginx is one hop; add one per proxy in front of it. Use `0` when the API is exposed directly. | `1`     |
+| `TURNSTILE_SITE_KEY`   | No       | Cloudflare Turnstile site key. With the secret key set, new conversations require passing the bot check. Replies in an existing conversation never need it.                                                | —       |
+| `TURNSTILE_SECRET_KEY` | No       | Cloudflare Turnstile secret key, used by the API to verify tokens. When either key is unset, conversations start without a bot check and a warning is logged on startup.                                   | —       |
+
 ## Advanced
 
 Variables for unusual deployments. The defaults work for the standard Docker Compose setup — only change these if you know you need to.

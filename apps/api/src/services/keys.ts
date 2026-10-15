@@ -24,6 +24,10 @@ export const Keys = {
     bucket(name: string, projectId: string): string {
       return `ratelimit:${name}:${projectId}`;
     },
+    /** Messenger budgets, keyed by the caller rather than the project. */
+    messenger(action: string, scope: 'ip' | 'visitor', id: string): string {
+      return `ratelimit:messenger:${action}:${scope}:${id}`;
+    },
   },
   Domain: {
     id(id: string): string {

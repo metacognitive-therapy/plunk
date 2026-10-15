@@ -22,6 +22,8 @@ import {
   SMTP_ENABLED,
   STRIPE_ENABLED,
   TRACKING_TOGGLE_ENABLED,
+  TRUST_PROXY,
+  TURNSTILE_ENABLED,
   WIKI_URI,
 } from './app/constants.js';
 import {widgetRouter} from './app/widget.js';
@@ -70,6 +72,8 @@ import {requestLogger} from './utils/logger.js';
 const server = new (class extends Server {
   public constructor() {
     super();
+
+    this.app.set('trust proxy', TRUST_PROXY);
 
     // Specify that we need raw json for the webhook
     this.app.use('/webhooks/incoming/stripe', raw({type: 'application/json'}));
@@ -241,6 +245,11 @@ void prisma.$connect().then(async () => {
       enabled: S3_ENABLED,
       details: S3_ENABLED ? 'S3 storage enabled' : 'S3 credentials missing',
     },
+    {
+      name: 'Messenger bot check (Turnstile)',
+      enabled: TURNSTILE_ENABLED,
+      details: TURNSTILE_ENABLED ? 'Turnstile verifies new conversations' : 'Turnstile keys missing',
+    },
     {name: 'SMTP relay', enabled: SMTP_ENABLED, details: SMTP_ENABLED ? 'SMTP server enabled' : 'SMTP disabled'},
     {
       name: 'OAuth - GitHub',
@@ -279,6 +288,12 @@ void prisma.$connect().then(async () => {
   }));
 
   console.table(rows);
+
+  if (!TURNSTILE_ENABLED) {
+    signale.warn(
+      '[MESSENGER] Turnstile is not configured, so new conversations are not checked for bots. Set TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY to enable it.',
+    );
+  }
 
   if (S3_ENABLED) {
     try {

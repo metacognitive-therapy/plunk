@@ -13,6 +13,7 @@ import {contrastColor} from '../shared/protocol';
 import {MessengerApi, MessengerApiError} from './api';
 import type {HostBridge} from './host';
 import {type Strings, stringsFor} from './strings';
+import {HumanCheck} from './turnstile';
 
 /* Polling is only the fallback while the event stream is down. */
 const FALLBACK_POLL_MS = 15_000;
@@ -193,6 +194,7 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
           api={api}
           strings={strings}
           conversationId={view.conversationId}
+          turnstileSiteKey={boot.turnstileSiteKey}
           subscribe={subscribe}
           streamConnected={streamConnected}
           canMarkRead={panelOpen && pageVisible}
@@ -303,6 +305,7 @@ function Thread({
   api,
   strings,
   conversationId,
+  turnstileSiteKey,
   subscribe,
   streamConnected,
   canMarkRead,
@@ -314,6 +317,7 @@ function Thread({
   api: MessengerApi;
   strings: Strings;
   conversationId: string | null;
+  turnstileSiteKey: string | null;
   subscribe: Subscribe;
   streamConnected: boolean;
   canMarkRead: boolean;
@@ -334,6 +338,23 @@ function Thread({
   const lastTypingSent = useRef(0);
   const [capturedEmail, setCapturedEmail] = useState<string | null>(null);
   const messageCount = conversation?.messages.length ?? 0;
+  const humanCheckContainer = useRef<HTMLDivElement>(null);
+  const humanCheck = useRef<HumanCheck | null>(null);
+
+  /* Only a new conversation needs the bot check; replies in an existing one ride on its session. */
+  const needsHumanCheck = Boolean(turnstileSiteKey) && !conversationId;
+  useEffect(() => {
+    if (!needsHumanCheck || !humanCheckContainer.current) {
+      return;
+    }
+    const check = new HumanCheck(turnstileSiteKey!);
+    humanCheck.current = check;
+    void check.mount(humanCheckContainer.current).catch(() => undefined);
+    return () => {
+      check.unmount();
+      humanCheck.current = null;
+    };
+  }, [needsHumanCheck, turnstileSiteKey]);
 
   const refresh = useCallback(() => {
     if (!conversationId) {
@@ -440,13 +461,21 @@ function Thread({
         append(message);
         setConversation(current => (current ? {...current, status: 'OPEN'} : current));
       } else {
-        const started = await api.startConversation(body);
+        let token: string | undefined;
+        if (humanCheck.current) {
+          token = (await humanCheck.current.take()) ?? undefined;
+          if (!token) {
+            setError(strings.humanCheckFailed);
+            return;
+          }
+        }
+        const started = await api.startConversation(body, token);
         setConversation(started);
         onStarted(started.id);
       }
       setDraft('');
-    } catch {
-      setError(strings.failed);
+    } catch (caught) {
+      setError(sendError(caught, strings));
     } finally {
       setSending(false);
     }
@@ -469,7 +498,11 @@ function Thread({
       setConversation(current => (current ? {...current, status: 'OPEN'} : current));
       setDraft('');
     } catch (caught) {
-      setError(caught instanceof MessengerApiError && caught.status < 500 ? caught.message : strings.failed);
+      setError(
+        caught instanceof MessengerApiError && caught.status < 500 && caught.status !== 429
+          ? caught.message
+          : sendError(caught, strings),
+      );
     } finally {
       setUploading(false);
     }
@@ -526,6 +559,7 @@ function Thread({
         <div ref={bottom} />
       </div>
       <form class="pm-composer" onSubmit={submit}>
+        {needsHumanCheck ? <div ref={humanCheckContainer} class="pm-human-check" /> : null}
         {error ? (
           <div class="pm-error" role="alert">
             {error}
@@ -589,6 +623,18 @@ function Thread({
       </form>
     </main>
   );
+}
+
+function sendError(caught: unknown, strings: Strings): string {
+  if (caught instanceof MessengerApiError) {
+    if (caught.status === 429) {
+      return strings.tooFast;
+    }
+    if (caught.status === 403) {
+      return strings.humanCheckFailed;
+    }
+  }
+  return strings.failed;
 }
 
 /* Links are fetched on demand and expire after a few minutes, so a broken image or a later

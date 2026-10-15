@@ -50,8 +50,11 @@ export class MessengerApi {
     return this.withSession('GET', '/v1/messenger/conversations');
   }
 
-  public async startConversation(body: string): Promise<MessengerConversation> {
-    const data = await this.withSession<MessengerStartResponse>('POST', '/v1/messenger/conversations', {body});
+  public async startConversation(body: string, turnstileToken?: string): Promise<MessengerConversation> {
+    const data = await this.withSession<MessengerStartResponse>('POST', '/v1/messenger/conversations', {
+      body,
+      turnstileToken,
+    });
     this.token = data.token;
     return data.conversation;
   }

@@ -75,6 +75,8 @@ export interface MessengerBootResponse {
   visitor: {
     hasEmail: boolean;
   };
+  /** Set when the server checks new conversations with Cloudflare Turnstile. */
+  turnstileSiteKey: string | null;
 }
 
 export interface MessengerEmailResponse {

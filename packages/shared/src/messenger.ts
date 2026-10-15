@@ -46,6 +46,7 @@ export const MessengerSchemas = {
   }),
   startConversation: z.object({
     body: messageBody,
+    turnstileToken: z.string().max(4096).optional(),
   }),
   sendMessage: z.object({
     body: messageBody,

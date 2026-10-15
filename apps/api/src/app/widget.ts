@@ -4,10 +4,11 @@ import {fileURLToPath} from 'node:url';
 
 import express, {type Request, type Response, Router} from 'express';
 
-import {NODE_ENV} from './constants.js';
+import {NODE_ENV, TURNSTILE_ENABLED} from './constants.js';
 import {MessengerSettingsService} from '../services/MessengerSettingsService.js';
 import {ProjectService} from '../services/ProjectService.js';
 
+const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 /* src/app and dist/app sit at the same depth under apps/api, so one relative path serves tsx, the
 compiled build and the Docker runner alike. */
 const DEFAULT_WIDGET_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../widget/dist');
@@ -51,12 +52,14 @@ export function widgetRouter({distDir = DEFAULT_WIDGET_DIST}: {distDir?: string}
     }
 
     const ancestors = await frameAncestors(req.query.key);
+    const challenges = TURNSTILE_ENABLED ? ` ${TURNSTILE_ORIGIN}` : '';
     res.removeHeader('X-Frame-Options');
     res.setHeader(
       'Content-Security-Policy',
       [
         "default-src 'self'",
-        "script-src 'self'",
+        `script-src 'self'${challenges}`,
+        `frame-src${challenges || " 'none'"}`,
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: https:",
         "connect-src 'self'",

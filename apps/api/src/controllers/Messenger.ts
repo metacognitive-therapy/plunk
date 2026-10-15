@@ -6,10 +6,12 @@ import {type EventStreamOptions, serveEventStream} from '../app/eventStream.js';
 import {ErrorCode, HttpException} from '../exceptions/index.js';
 import {chatAttachmentUpload} from '../middleware/attachmentUpload.js';
 import {messengerSession, requireMessengerSession} from '../middleware/messenger.js';
+import {messengerRateLimit} from '../middleware/messengerRateLimit.js';
 import {ChatAttachmentService} from '../services/ChatAttachmentService.js';
 import {ConversationService} from '../services/ConversationService.js';
 import {MessengerContactService} from '../services/MessengerContactService.js';
 import {Keys} from '../services/keys.js';
+import {TurnstileService} from '../services/TurnstileService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
 /**
@@ -21,6 +23,7 @@ export class Messenger {
   public constructor(private readonly streamOptions: EventStreamOptions = {}) {}
 
   @Post('boot')
+  @Middleware([messengerRateLimit('boot')])
   @CatchAsync
   private async boot(req: Request, res: Response, _next: NextFunction) {
     const [scheme, publicKey] = (req.headers.authorization ?? '').split(' ');
@@ -45,7 +48,7 @@ export class Messenger {
   }
 
   @Post('email')
-  @Middleware([requireMessengerSession])
+  @Middleware([requireMessengerSession, messengerRateLimit('email')])
   @CatchAsync
   private async email(req: Request, res: Response, _next: NextFunction) {
     const input = MessengerSchemas.captureEmail.parse(req.body);
@@ -62,10 +65,11 @@ export class Messenger {
   }
 
   @Post('conversations')
-  @Middleware([requireMessengerSession])
+  @Middleware([requireMessengerSession, messengerRateLimit('start')])
   @CatchAsync
   private async start(req: Request, res: Response, _next: NextFunction) {
-    const {body} = MessengerSchemas.startConversation.parse(req.body);
+    const {body, turnstileToken} = MessengerSchemas.startConversation.parse(req.body);
+    await TurnstileService.assertHuman(turnstileToken, req.ip);
     const data = await ConversationService.startConversation(messengerSession(res), body);
     return res.status(201).json({success: true, data});
   }
@@ -80,7 +84,7 @@ export class Messenger {
   }
 
   @Post('conversations/:id/messages')
-  @Middleware([requireMessengerSession])
+  @Middleware([requireMessengerSession, messengerRateLimit('message')])
   @CatchAsync
   private async send(req: Request, res: Response, _next: NextFunction) {
     const {id} = UtilitySchemas.id.parse(req.params);
@@ -90,7 +94,7 @@ export class Messenger {
   }
 
   @Post('conversations/:id/attachments')
-  @Middleware([requireMessengerSession, chatAttachmentUpload])
+  @Middleware([requireMessengerSession, messengerRateLimit('upload'), chatAttachmentUpload])
   @CatchAsync
   private async sendAttachment(req: Request, res: Response, _next: NextFunction) {
     const {id} = UtilitySchemas.id.parse(req.params);
