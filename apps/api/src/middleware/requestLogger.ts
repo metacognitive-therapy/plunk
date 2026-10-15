@@ -60,6 +60,7 @@ const SKIP_LOGGING_PATTERNS = [
   /^\/assets\//i, // Static assets
   /^\/v1\/messenger\//i, // Visitor chat traffic, high volume and already persisted as messages
   /^\/widget\//i, // Messenger bundle
+  /^\/conversations\/stream$/i, // Long-lived inbox event stream
   /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/i, // Static files
 ];
 

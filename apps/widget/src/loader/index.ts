@@ -129,9 +129,7 @@ function setOpen(next: boolean): void {
   mounted.launcher.appendChild(mounted.badge);
   mounted.launcher.setAttribute('aria-label', next ? 'Close chat' : 'Open chat');
   mounted.launcher.setAttribute('aria-expanded', String(next));
-  if (next) {
-    post({type: 'opened'});
-  }
+  post({type: next ? 'opened' : 'closed'});
 }
 
 function applyAppearance(appearance: MessengerAppearance): void {

@@ -1,11 +1,17 @@
 import {Badge, Button, EmptyState, IconSpinner, Textarea} from '@plunk/ui';
 import {CONVERSATION_VIEWS, type ConversationSchemas, type ConversationView} from '@plunk/shared';
-import type {InboxConversation, InboxConversationSummary, InboxMessage, InboxPage} from '@plunk/types';
+import type {
+  InboxConversation,
+  InboxConversationSummary,
+  InboxMessage,
+  InboxPage,
+  InboxStreamEvent,
+} from '@plunk/types';
 import {ArrowLeft, Inbox as InboxIcon, MessageSquare, Send} from 'lucide-react';
 import {NextSeo} from 'next-seo';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
-import {useEffect, useRef, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import {toast} from 'sonner';
 import useSWR from 'swr';
 import useSWRInfinite from 'swr/infinite';
@@ -13,12 +19,21 @@ import useSWRInfinite from 'swr/infinite';
 import {DashboardLayout} from '../../components/DashboardLayout';
 import {formatRelativeTime} from '../../lib/dateUtils';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
+import {useInboxStream} from '../../lib/hooks/useInboxStream';
 import {useSupportAccess} from '../../lib/hooks/useSupportAccess';
+import {useUser} from '../../lib/hooks/useUser';
 import {network} from '../../lib/network';
 
+/* Polling is only the fallback while the event stream is down. */
 const LIST_REFRESH_MS = 10_000;
 const THREAD_REFRESH_MS = 5_000;
+const LIST_REFRESH_DEBOUNCE_MS = 250;
+const TYPING_SEND_INTERVAL_MS = 2500;
+const TYPING_VISIBLE_MS = 4000;
 const PAGE_SIZE = 30;
+
+type StreamListener = (event: InboxStreamEvent) => void;
+type Subscribe = (listener: StreamListener) => () => void;
 
 const VIEW_LABELS: Record<ConversationView, string> = {
   unassigned: 'Unassigned',
@@ -36,6 +51,7 @@ function contactLabel(contact: InboxConversationSummary['contact']): string {
 export default function InboxPageView() {
   const router = useRouter();
   const {activeProject} = useActiveProject();
+  const {data: user} = useUser();
   const hasAccess = useSupportAccess();
   const view = (CONVERSATION_VIEWS as readonly string[]).includes(router.query.view as string)
     ? (router.query.view as ConversationView)
@@ -49,6 +65,16 @@ export default function InboxPageView() {
     void router.replace({pathname: '/inbox', query}, undefined, {shallow: true});
   };
 
+  const listeners = useRef(new Set<StreamListener>());
+  const subscribe = useCallback<Subscribe>(listener => {
+    listeners.current.add(listener);
+    return () => listeners.current.delete(listener);
+  }, []);
+
+  const connected = useInboxStream(activeProject?.id, hasAccess, event => {
+    listeners.current.forEach(listener => listener(event));
+  });
+
   const {data, size, setSize, mutate, isLoading, error} = useSWRInfinite<{success: boolean; data: InboxPage}>(
     (index, previous) => {
       if (!activeProject?.id || !hasAccess) return null;
@@ -56,8 +82,23 @@ export default function InboxPageView() {
       const cursor = previous?.data.nextCursor ? `&cursor=${encodeURIComponent(previous.data.nextCursor)}` : '';
       return `/conversations?view=${view}&limit=${PAGE_SIZE}${cursor}`;
     },
-    {refreshInterval: LIST_REFRESH_MS, revalidateFirstPage: true},
+    {refreshInterval: connected ? 0 : LIST_REFRESH_MS, revalidateFirstPage: true},
   );
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = subscribe(event => {
+      const ownRead = event.type === 'read' && event.reader.type === 'AGENT' && event.reader.userId === user?.id;
+      if (event.type === 'ready' || event.type === 'message' || event.type === 'conversation' || ownRead) {
+        clearTimeout(timer);
+        timer = setTimeout(() => void mutate(), LIST_REFRESH_DEBOUNCE_MS);
+      }
+    });
+    return () => {
+      off();
+      clearTimeout(timer);
+    };
+  }, [subscribe, mutate, user?.id]);
 
   const conversations = data?.flatMap(page => page.data.conversations) ?? [];
   const hasMore = Boolean(data?.[data.length - 1]?.data.nextCursor);
@@ -152,6 +193,9 @@ export default function InboxPageView() {
                 <Thread
                   key={selectedId}
                   conversationId={selectedId}
+                  currentUserId={user?.id}
+                  connected={connected}
+                  subscribe={subscribe}
                   onBack={() => setQuery({c: null})}
                   onChanged={() => void mutate()}
                 />
@@ -170,33 +214,106 @@ export default function InboxPageView() {
 
 function Thread({
   conversationId,
+  currentUserId,
+  connected,
+  subscribe,
   onBack,
   onChanged,
 }: {
   conversationId: string;
+  currentUserId: string | undefined;
+  connected: boolean;
+  subscribe: Subscribe;
   onBack: () => void;
   onChanged: () => void;
 }) {
   const {data, mutate, error} = useSWR<{success: boolean; data: InboxConversation}>(`/conversations/${conversationId}`, {
-    refreshInterval: THREAD_REFRESH_MS,
+    refreshInterval: connected ? 0 : THREAD_REFRESH_MS,
   });
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [typing, setTyping] = useState<string | null>(null);
+  const lastTypingSent = useRef(0);
   const bottom = useRef<HTMLDivElement>(null);
   const conversation = data?.data;
   const messageCount = conversation?.messages.length ?? 0;
 
   useEffect(() => {
-    void network
-      .fetch('POST', `/conversations/${conversationId}/read`)
-      .then(onChanged)
-      .catch(() => undefined);
+    let typingTimer: ReturnType<typeof setTimeout> | undefined;
+    const off = subscribe(event => {
+      if (event.type === 'ready') {
+        void mutate();
+        return;
+      }
+      if (event.conversationId !== conversationId) {
+        return;
+      }
+      if (event.type === 'message') {
+        setTyping(null);
+        void mutate(
+          current =>
+            current && !current.data.messages.some(message => message.id === event.message.id)
+              ? {...current, data: {...current.data, messages: [...current.data.messages, event.message]}}
+              : current,
+          {revalidate: event.message.authorType === 'CONTACT'},
+        );
+      } else if (event.type === 'conversation') {
+        void mutate();
+      } else if (event.type === 'read' && event.reader.type === 'CONTACT') {
+        const readAt = event.reader.readAt;
+        void mutate(current => (current ? {...current, data: {...current.data, contactLastReadAt: readAt}} : current), {
+          revalidate: false,
+        });
+      } else if (event.type === 'typing') {
+        const author = event.author;
+        if (author.type === 'AGENT' && author.userId === currentUserId) {
+          return;
+        }
+        setTyping(author.type === 'CONTACT' ? 'The visitor is typing…' : `${author.name} is typing…`);
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => setTyping(null), TYPING_VISIBLE_MS);
+      }
+    });
+    return () => {
+      off();
+      clearTimeout(typingTimer);
+    };
+  }, [conversationId, currentUserId, subscribe, mutate]);
+
+  useEffect(() => {
+    const markRead = () => {
+      if (document.visibilityState !== 'visible') return;
+      void network
+        .fetch('POST', `/conversations/${conversationId}/read`)
+        .then(onChanged)
+        .catch(() => undefined);
+    };
+    markRead();
+    document.addEventListener('visibilitychange', markRead);
+    return () => document.removeEventListener('visibilitychange', markRead);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-marks read whenever a message arrives in the open thread
   }, [conversationId, messageCount]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({block: 'end'});
-  }, [messageCount]);
+  }, [messageCount, typing]);
+
+  const onDraft = (value: string) => {
+    setDraft(value);
+    const now = Date.now();
+    if (value.trim() && now - lastTypingSent.current > TYPING_SEND_INTERVAL_MS) {
+      lastTypingSent.current = now;
+      void network.fetch('POST', `/conversations/${conversationId}/typing`).catch(() => undefined);
+    }
+  };
+
+  const seenMessageId = (() => {
+    if (!conversation?.contactLastReadAt) return null;
+    const lastReply = [...conversation.messages]
+      .reverse()
+      .find(message => message.authorType === 'AGENT' && message.kind === 'COMMENT');
+    return lastReply && new Date(conversation.contactLastReadAt) >= new Date(lastReply.createdAt) ? lastReply.id : null;
+  })();
 
   const send = async () => {
     const body = draft.trim();
@@ -247,8 +364,13 @@ function Thread({
         </header>
         <div className="flex-1 space-y-3 overflow-y-auto bg-neutral-50 px-4 py-4">
           {conversation.messages.map(message => (
-            <MessageRow key={message.id} message={message} />
+            <MessageRow key={message.id} message={message} seen={message.id === seenMessageId} />
           ))}
+          {typing && (
+            <div className="px-1 text-xs text-neutral-500" role="status">
+              {typing}
+            </div>
+          )}
           <div ref={bottom} />
         </div>
         <form
@@ -260,7 +382,7 @@ function Thread({
         >
           <Textarea
             value={draft}
-            onChange={event => setDraft(event.target.value)}
+            onChange={event => onDraft(event.target.value)}
             onKeyDown={event => {
               if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
@@ -306,7 +428,7 @@ function Thread({
   );
 }
 
-function MessageRow({message}: {message: InboxMessage}) {
+function MessageRow({message, seen}: {message: InboxMessage; seen: boolean}) {
   const fromContact = message.authorType === 'CONTACT';
   return (
     <div className={`flex flex-col ${fromContact ? 'items-start' : 'items-end'}`}>
@@ -320,6 +442,7 @@ function MessageRow({message}: {message: InboxMessage}) {
       <div className="mt-1 px-1 text-[11px] text-neutral-400">
         {fromContact ? '' : `${message.author?.name ?? 'Team'} · `}
         {formatRelativeTime(message.createdAt)}
+        {seen && ' · Seen'}
       </div>
     </div>
   );

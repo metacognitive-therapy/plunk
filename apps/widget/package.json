@@ -13,6 +13,7 @@
     "preact": "^10.29.8"
   },
   "devDependencies": {
+    "@plunk/shared": "*",
     "@plunk/types": "*",
     "concurrently": "^9.2.1",
     "typescript": "^5.7.2",

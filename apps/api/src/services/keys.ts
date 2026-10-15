@@ -127,6 +127,17 @@ export const Keys = {
       return `messenger:appearance:${projectId}`;
     },
   },
+  Realtime: {
+    project(projectId: string): string {
+      return `realtime:project:${projectId}`;
+    },
+    visitor(projectId: string, visitorId: string): string {
+      return `realtime:visitor:${projectId}:${visitorId}`;
+    },
+    typing(conversationId: string, actor: string): string {
+      return `realtime:typing:${conversationId}:${actor}`;
+    },
+  },
   Project: {
     id(id: string): string {
       return `project:id:${id}`;

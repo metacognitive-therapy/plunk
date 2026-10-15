@@ -10,7 +10,7 @@ import {
 export interface HostBridge {
   parentOrigin: string;
   post(message: DistributiveOmit<FrameMessage, 'source'>): void;
-  on(type: 'opened' | 'update', listener: () => void): () => void;
+  on(type: 'opened' | 'closed' | 'update', listener: () => void): () => void;
 }
 
 /**

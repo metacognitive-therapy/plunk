@@ -335,3 +335,46 @@ button {
   color: #b91c1c;
   font-size: 12px;
 }
+
+.pm-typing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 12px 14px;
+}
+
+.pm-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: pm-typing 1.2s infinite ease-in-out;
+}
+
+.pm-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.pm-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes pm-typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 0.9;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pm-typing span {
+    animation: none;
+  }
+}

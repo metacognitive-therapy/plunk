@@ -9,6 +9,7 @@ import {
 import {CONTACT_IDENTITY_TYPES, type ConversationView, normalizeOrigin, resolveBrand} from '@plunk/shared';
 import type {
   InboxConversation,
+  InboxStreamEvent,
   InboxConversationSummary,
   InboxMessage,
   InboxPage,
@@ -17,14 +18,18 @@ import type {
   MessengerConversationSummary,
   MessengerMessage,
   MessengerStartResponse,
+  MessengerStreamEvent,
 } from '@plunk/types';
 
 import {API_URI} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
+import {redis} from '../database/redis.js';
 import {ErrorCode, HttpException, NotFound} from '../exceptions/index.js';
+import {Keys} from './keys.js';
 import {type MessengerSession, MessengerSessionService} from './MessengerSessionService.js';
 import {MessengerSettingsService} from './MessengerSettingsService.js';
 import {ProjectService} from './ProjectService.js';
+import {RealtimeHub} from './RealtimeHub.js';
 
 const PREVIEW_LENGTH = 140;
 const MESSENGER_HISTORY_LIMIT = 20;
@@ -33,6 +38,8 @@ than paginated, which is fine for support threads and keeps the read a single in
 const THREAD_MESSAGE_LIMIT = 200;
 
 const API_ORIGIN = normalizeOrigin(API_URI);
+/* Clients send typing at most every few seconds; this caps what a misbehaving one can publish. */
+const TYPING_THROTTLE_MS = 2000;
 
 const authorSelect = {select: {id: true, name: true, email: true}} as const;
 
@@ -170,9 +177,28 @@ export class ConversationService {
 
   public static async markReadByContact(session: MessengerSession, conversationId: string): Promise<void> {
     const conversation = await this.requireSessionConversation(session, conversationId);
-    await prisma.conversation.update({where: {id: conversation.id}, data: {contactLastReadAt: new Date()}});
+    if (!this.isUnreadByContact(conversation)) {
+      return;
+    }
+    const readAt = new Date();
+    await prisma.conversation.update({where: {id: conversation.id}, data: {contactLastReadAt: readAt}});
+    await this.publishToInbox(conversation.projectId, {
+      type: 'read',
+      conversationId: conversation.id,
+      reader: {type: 'CONTACT', readAt: readAt.toISOString()},
+    });
   }
 
+  public static async typingByContact(session: MessengerSession, conversationId: string): Promise<void> {
+    const conversation = await this.requireSessionConversation(session, conversationId);
+    if (await this.claimTypingSlot(conversation.id, 'contact')) {
+      await this.publishToInbox(conversation.projectId, {
+        type: 'typing',
+        conversationId: conversation.id,
+        author: {type: 'CONTACT'},
+      });
+    }
+  }
 
   public static async list(
     projectId: string,
@@ -258,6 +284,24 @@ export class ConversationService {
       create: {userId, conversationId, lastReadAt: now},
       update: {lastReadAt: now},
     });
+    await this.publishToInbox(projectId, {type: 'read', conversationId, reader: {type: 'AGENT', userId}});
+  }
+
+  public static async typingByAgent(projectId: string, userId: string, conversationId: string): Promise<void> {
+    const conversation = await this.requireProjectConversation(projectId, conversationId);
+    if (!(await this.claimTypingSlot(conversation.id, userId))) {
+      return;
+    }
+    const user = await prisma.user.findUnique({where: {id: userId}, select: {name: true, email: true}});
+    const visibleName = user?.name?.trim() || null;
+    await Promise.all([
+      this.publishToInbox(projectId, {
+        type: 'typing',
+        conversationId,
+        author: {type: 'AGENT', userId, name: user ? this.agentName(user) : 'Support'},
+      }),
+      this.publishToVisitor(conversation, {type: 'typing', conversationId, agentName: visibleName}),
+    ]);
   }
 
 
@@ -303,7 +347,45 @@ export class ConversationService {
       prisma.conversation.update({where: {id: conversation.id}, data: conversationUpdate}),
     ]);
 
+    await Promise.all([
+      this.publishToInbox(conversation.projectId, {
+        type: 'message',
+        conversationId: conversation.id,
+        message: this.toInboxMessage(message),
+      }),
+      kind === 'COMMENT'
+        ? this.publishToVisitor(conversation, {
+            type: 'message',
+            conversationId: conversation.id,
+            message: this.toMessengerMessage(message),
+          })
+        : undefined,
+    ]);
+
     return message;
+  }
+
+  private static publishToInbox(projectId: string, event: InboxStreamEvent): Promise<void> {
+    return RealtimeHub.publish(Keys.Realtime.project(projectId), event);
+  }
+
+  /* Keyed by the visitor id that started the conversation, the same scope the messenger API reads
+  by, so a stream never carries another visitor's conversation. */
+  private static async publishToVisitor(
+    conversation: Pick<Conversation, 'projectId' | 'originVisitorId'>,
+    event: MessengerStreamEvent,
+  ): Promise<void> {
+    if (conversation.originVisitorId) {
+      await RealtimeHub.publish(Keys.Realtime.visitor(conversation.projectId, conversation.originVisitorId), event);
+    }
+  }
+
+  private static async claimTypingSlot(conversationId: string, actor: string): Promise<boolean> {
+    try {
+      return (await redis.set(Keys.Realtime.typing(conversationId, actor), '1', 'PX', TYPING_THROTTLE_MS, 'NX')) === 'OK';
+    } catch {
+      return false;
+    }
   }
 
 

@@ -1,4 +1,9 @@
-import type {MessengerBootResponse, MessengerConversation, MessengerConversationSummary} from '@plunk/types';
+import type {
+  MessengerBootResponse,
+  MessengerConversation,
+  MessengerConversationSummary,
+  MessengerStreamEvent,
+} from '@plunk/types';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'preact/hooks';
 
 import {contrastColor} from '../shared/protocol';
@@ -7,7 +12,13 @@ import {MessengerApi} from './api';
 import type {HostBridge} from './host';
 import {type Strings, stringsFor} from './strings';
 
-const POLL_INTERVAL_MS = 4000;
+/* Polling is only the fallback while the event stream is down. */
+const FALLBACK_POLL_MS = 15_000;
+const TYPING_SEND_INTERVAL_MS = 2500;
+const TYPING_VISIBLE_MS = 4000;
+
+type StreamListener = (event: MessengerStreamEvent) => void;
+type Subscribe = (listener: StreamListener) => () => void;
 
 type View = {name: 'home'} | {name: 'thread'; conversationId: string | null};
 
@@ -47,6 +58,16 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
       });
   }, [api, publicKey, bridge]);
 
+  const [panelOpen, setPanelOpen] = useState(!bridge);
+  const [pageVisible, setPageVisible] = useState(document.visibilityState === 'visible');
+  const [streamConnected, setStreamConnected] = useState(false);
+  const listeners = useRef(new Set<StreamListener>());
+
+  const subscribe = useCallback<Subscribe>(listener => {
+    listeners.current.add(listener);
+    return () => listeners.current.delete(listener);
+  }, []);
+
   const refreshList = useCallback(() => {
     api
       .listConversations()
@@ -54,21 +75,68 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
       .catch(() => undefined);
   }, [api]);
 
-  /* Polled in every view because the launcher's unread badge on the host page depends on it. */
   useEffect(() => {
     if (!boot) {
       return;
     }
     refreshList();
-    const timer = setInterval(refreshList, POLL_INTERVAL_MS);
-    const offOpened = bridge?.on('opened', refreshList);
-    const offUpdate = bridge?.on('update', refreshList);
+    const offs = [
+      bridge?.on('opened', () => {
+        setPanelOpen(true);
+        refreshList();
+      }),
+      bridge?.on('closed', () => setPanelOpen(false)),
+      bridge?.on('update', refreshList),
+    ];
+    const onVisibility = () => setPageVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      clearInterval(timer);
-      offOpened?.();
-      offUpdate?.();
+      offs.forEach(off => off?.());
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [boot, refreshList, bridge]);
+
+  /* A visitor who never chatted needs no stream until they open the messenger, which keeps idle
+  page views from each holding a connection. The launcher badge needs one once a thread exists. */
+  const wantsStream = Boolean(boot) && pageVisible && (panelOpen || conversations.length > 0);
+
+  useEffect(() => {
+    if (!wantsStream) {
+      return;
+    }
+    const stream = api.openStream({
+      onEvent: data => {
+        const event = JSON.parse(data) as MessengerStreamEvent;
+        if (event.type !== 'typing') {
+          refreshList();
+        }
+        listeners.current.forEach(listener => listener(event));
+      },
+      onOpen: () => setStreamConnected(true),
+      onDisconnect: () => setStreamConnected(false),
+    });
+    const onOnline = () => stream.reconnect();
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      stream.close();
+      setStreamConnected(false);
+    };
+  }, [api, wantsStream, refreshList]);
+
+  useEffect(() => {
+    if (!wantsStream || streamConnected) {
+      return;
+    }
+    const timer = setInterval(refreshList, FALLBACK_POLL_MS);
+    return () => clearInterval(timer);
+  }, [wantsStream, streamConnected, refreshList]);
+
+  const onRead = useCallback((conversationId: string) => {
+    setConversations(current =>
+      current.map(conversation => (conversation.id === conversationId ? {...conversation, unread: false} : conversation)),
+    );
+  }, []);
 
   const unread = conversations.filter(conversation => conversation.unread).length;
   useEffect(() => {
@@ -120,6 +188,10 @@ export function App({publicKey, visitorId, bridge}: AppProps) {
           api={api}
           strings={strings}
           conversationId={view.conversationId}
+          subscribe={subscribe}
+          streamConnected={streamConnected}
+          canMarkRead={panelOpen && pageVisible}
+          onRead={onRead}
           onStarted={conversationId => setView({name: 'thread', conversationId})}
         />
       )}
@@ -224,18 +296,29 @@ function Thread({
   api,
   strings,
   conversationId,
+  subscribe,
+  streamConnected,
+  canMarkRead,
+  onRead,
   onStarted,
 }: {
   api: MessengerApi;
   strings: Strings;
   conversationId: string | null;
+  subscribe: Subscribe;
+  streamConnected: boolean;
+  canMarkRead: boolean;
+  onRead: (conversationId: string) => void;
   onStarted: (conversationId: string) => void;
 }) {
   const [conversation, setConversation] = useState<MessengerConversation | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(false);
+  const [typing, setTyping] = useState<{name: string | null} | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  const lastMarkedRead = useRef<string | null>(null);
+  const lastTypingSent = useRef(0);
   const messageCount = conversation?.messages.length ?? 0;
 
   const refresh = useCallback(() => {
@@ -244,25 +327,90 @@ function Thread({
     }
     api
       .getConversation(conversationId)
-      .then(next => {
-        setConversation(next);
-        void api.markRead(conversationId).catch(() => undefined);
-      })
+      .then(setConversation)
       .catch(() => undefined);
   }, [api, conversationId]);
 
+  const append = useCallback((message: MessengerConversation['messages'][number]) => {
+    setConversation(current =>
+      current && !current.messages.some(existing => existing.id === message.id)
+        ? {...current, messages: [...current.messages, message]}
+        : current,
+    );
+  }, []);
+
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  useEffect(() => {
     if (!conversationId) {
       return;
     }
-    const timer = setInterval(refresh, POLL_INTERVAL_MS);
+    let typingTimer: ReturnType<typeof setTimeout> | undefined;
+    const off = subscribe(event => {
+      if (event.type === 'ready') {
+        refresh();
+        return;
+      }
+      if (event.conversationId !== conversationId) {
+        return;
+      }
+      if (event.type === 'message') {
+        append(event.message);
+        if (event.message.authorType !== 'CONTACT') {
+          setTyping(null);
+        }
+      } else if (event.type === 'conversation') {
+        setConversation(current => (current ? {...current, status: event.status} : current));
+      } else if (event.type === 'typing') {
+        setTyping({name: event.agentName});
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => setTyping(null), TYPING_VISIBLE_MS);
+      }
+    });
+    return () => {
+      off();
+      clearTimeout(typingTimer);
+    };
+  }, [conversationId, subscribe, refresh, append]);
+
+  useEffect(() => {
+    if (!conversationId || streamConnected) {
+      return;
+    }
+    const timer = setInterval(refresh, FALLBACK_POLL_MS);
     return () => clearInterval(timer);
-  }, [conversationId, refresh]);
+  }, [conversationId, streamConnected, refresh]);
+
+  /* Read only while the visitor can actually see the thread: the frame stays mounted while the
+  panel is closed, and agents are told the visitor has seen their reply. */
+  useEffect(() => {
+    const last = conversation?.messages[conversation.messages.length - 1];
+    if (!conversationId || !canMarkRead || !last || last.authorType === 'CONTACT' || lastMarkedRead.current === last.id) {
+      return;
+    }
+    lastMarkedRead.current = last.id;
+    api
+      .markRead(conversationId)
+      .then(() => onRead(conversationId))
+      .catch(() => {
+        lastMarkedRead.current = null;
+      });
+  }, [api, conversation, conversationId, canMarkRead, onRead]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({block: 'end'});
-  }, [messageCount]);
+  }, [messageCount, typing]);
+
+  const onDraft = (value: string) => {
+    setDraft(value);
+    const now = Date.now();
+    if (conversationId && value.trim() && now - lastTypingSent.current > TYPING_SEND_INTERVAL_MS) {
+      lastTypingSent.current = now;
+      void api.typing(conversationId).catch(() => undefined);
+    }
+  };
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -275,7 +423,8 @@ function Thread({
     try {
       if (conversationId) {
         const message = await api.sendMessage(conversationId, body);
-        setConversation(current => (current ? {...current, status: 'OPEN', messages: [...current.messages, message]} : current));
+        append(message);
+        setConversation(current => (current ? {...current, status: 'OPEN'} : current));
       } else {
         const started = await api.startConversation(body);
         setConversation(started);
@@ -301,6 +450,16 @@ function Thread({
             <div class="pm-time">{formatTime(message.createdAt)}</div>
           </div>
         ))}
+        {typing ? (
+          <div class="pm-message pm-theirs">
+            <div class="pm-author">{typing.name ?? strings.team}</div>
+            <div class="pm-bubble pm-typing" role="status" aria-label={strings.typing}>
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
+        ) : null}
         {conversation?.status === 'CLOSED' ? <div class="pm-notice">{strings.closed}</div> : null}
         <div ref={bottom} />
       </div>
@@ -313,7 +472,7 @@ function Thread({
             maxLength={5000}
             placeholder={strings.placeholder}
             aria-label={strings.placeholder}
-            onInput={event => setDraft((event.target as HTMLTextAreaElement).value)}
+            onInput={event => onDraft((event.target as HTMLTextAreaElement).value)}
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 void submit(event);
