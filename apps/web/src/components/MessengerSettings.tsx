@@ -3,13 +3,20 @@ import {
   MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES,
   MESSENGER_EMAIL_DELAY_MAX_MINUTES,
   MESSENGER_GREETING_MAX_LENGTH,
+  MESSENGER_DEFAULT_TIMEZONE,
   MESSENGER_TEAM_MAX,
   type MessengerSettingsSchemas,
   type ProfileSchemas,
   isSlackWebhookUrl,
   normalizeOrigin,
 } from '@plunk/shared';
-import type {MemberWithEmail, MessengerLauncherPositionValue, MessengerSettingsData} from '@plunk/types';
+import type {
+  MemberWithEmail,
+  MessengerLauncherPositionValue,
+  MessengerReplyTimeValue,
+  MessengerSettingsData,
+  OfficeHoursDay,
+} from '@plunk/types';
 import {
   Button,
   Card,
@@ -42,6 +49,62 @@ import {useUser} from '../lib/hooks/useUser';
 import {network} from '../lib/network';
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const REPLY_TIMES: {value: MessengerReplyTimeValue; label: string}[] = [
+  {value: 'FEW_MINUTES', label: 'In a few minutes'},
+  {value: 'FEW_HOURS', label: 'In a few hours'},
+  {value: 'ONE_DAY', label: 'Within a day'},
+];
+
+interface HoursRow {
+  open: boolean;
+  start: string;
+  end: string;
+}
+
+function toClock(minutes: number): string {
+  const value = minutes % 1440;
+  return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+}
+
+/* A closing time of 00:00 means midnight at the end of the day. */
+function fromClock(value: string, closing: boolean): number | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  return closing && minutes === 0 ? 1440 : minutes;
+}
+
+function toRows(days: OfficeHoursDay[]): HoursRow[] {
+  return WEEKDAYS.map((_, index) => {
+    const day = days.find(candidate => candidate.day === index + 1);
+    return day
+      ? {open: true, start: toClock(day.start), end: toClock(day.end)}
+      : {open: false, start: '09:00', end: '17:00'};
+  });
+}
+
+function toDays(rows: HoursRow[]): OfficeHoursDay[] | null {
+  const days: OfficeHoursDay[] = [];
+  for (const [index, row] of rows.entries()) {
+    if (!row.open) continue;
+    const start = fromClock(row.start, false);
+    const end = fromClock(row.end, true);
+    if (start === null || end === null || end <= start) return null;
+    days.push({day: index + 1, start, end});
+  }
+  return days;
+}
+
+function hoursKey(days: OfficeHoursDay[] | null): string {
+  return days ? days.map(day => `${day.day}:${day.start}-${day.end}`).join(',') : 'invalid';
+}
+
+function timeZones(current: string): string[] {
+  const supported =
+    (Intl as unknown as {supportedValuesOf?: (key: string) => string[]}).supportedValuesOf?.('timeZone') ?? [];
+  return [...new Set([MESSENGER_DEFAULT_TIMEZONE, current, ...supported])].sort();
+}
 
 interface MessengerSettingsProps {
   canEdit: boolean;
@@ -66,6 +129,10 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
   const [replyDomain, setReplyDomain] = useState('');
   const [replyFromEmail, setReplyFromEmail] = useState('');
   const [emailDelay, setEmailDelay] = useState(String(MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES));
+  const [replyTime, setReplyTime] = useState<MessengerReplyTimeValue>('FEW_HOURS');
+  const [officeHoursEnabled, setOfficeHoursEnabled] = useState(false);
+  const [timezone, setTimezone] = useState(MESSENGER_DEFAULT_TIMEZONE);
+  const [hours, setHours] = useState<HoursRow[]>(() => toRows([]));
   const {domains} = useDomains(activeProject?.id ?? '');
   const {data: config} = useConfig();
   const [saving, setSaving] = useState(false);
@@ -82,6 +149,10 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       setReplyDomain(data.data.replyDomain ?? '');
       setReplyFromEmail(data.data.replyFromEmail ?? '');
       setEmailDelay(String(data.data.emailDelayMinutes));
+      setReplyTime(data.data.replyTime);
+      setOfficeHoursEnabled(data.data.officeHoursEnabled);
+      setTimezone(data.data.timezone);
+      setHours(toRows(data.data.officeHours));
     }
   }, [data]);
 
@@ -108,6 +179,9 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
   const delayValid = Number.isInteger(delayMinutes) && delayMinutes >= 1 && delayMinutes <= MESSENGER_EMAIL_DELAY_MAX_MINUTES;
   const sesRegion = config?.aws?.sesRegion;
 
+  const officeHours = toDays(hours);
+  const hoursValid = officeHours !== null && (!officeHoursEnabled || officeHours.length > 0);
+
   const saved = data?.data;
   const dirty =
     !!saved &&
@@ -119,7 +193,23 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       teamUserIds.join(',') !== saved.teamUserIds.join(',') ||
       (replyDomain.trim().toLowerCase() || null) !== saved.replyDomain ||
       (replyFromEmail.trim().toLowerCase() || null) !== saved.replyFromEmail ||
-      delayMinutes !== saved.emailDelayMinutes);
+      delayMinutes !== saved.emailDelayMinutes ||
+      replyTime !== saved.replyTime ||
+      officeHoursEnabled !== saved.officeHoursEnabled ||
+      timezone !== saved.timezone ||
+      hoursKey(officeHours) !== hoursKey(saved.officeHours));
+
+  const updateRow = (index: number, patch: Partial<HoursRow>) => {
+    setHours(current => current.map((row, position) => (position === index ? {...row, ...patch} : row)));
+  };
+
+  const toggleOfficeHours = (value: boolean) => {
+    setOfficeHoursEnabled(value);
+    if (value && timezone === MESSENGER_DEFAULT_TIMEZONE && saved?.officeHours.length === 0) {
+      setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || MESSENGER_DEFAULT_TIMEZONE);
+      setHours(current => current.map((row, index) => (index < 5 ? {...row, open: true} : row)));
+    }
+  };
 
   const toggleTeamMember = (userId: string, checked: boolean) => {
     setTeamUserIds(current =>
@@ -150,6 +240,14 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
       toast.error(`The email delay must be between 1 and ${MESSENGER_EMAIL_DELAY_MAX_MINUTES} minutes`);
       return;
     }
+    if (!officeHours) {
+      toast.error('Each open day needs a closing time after its opening time');
+      return;
+    }
+    if (!hoursValid) {
+      toast.error('Open at least one day, or turn office hours off');
+      return;
+    }
     setSaving(true);
     try {
       await network.fetch<void, typeof MessengerSettingsSchemas.update>('PATCH', `/projects/${activeProject.id}/messenger`, {
@@ -162,6 +260,10 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
         replyDomain: replyDomain.trim() || null,
         replyFromEmail: replyFromEmail.trim() || null,
         emailDelayMinutes: delayMinutes,
+        replyTime,
+        officeHoursEnabled,
+        officeHours,
+        timezone,
       });
       await mutate();
       toast.success('Messenger settings saved');
@@ -303,6 +405,125 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
               </ul>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Office hours</CardTitle>
+          <CardDescription>
+            The messenger tells visitors when to expect a reply. Outside office hours it says when the team is back and
+            asks for an email address before the visitor writes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-1.5 sm:max-w-xs">
+            <Label htmlFor="messenger-reply-time">Usual reply time</Label>
+            <Select
+              value={replyTime}
+              disabled={!canEdit}
+              onValueChange={value => setReplyTime(value as MessengerReplyTimeValue)}
+            >
+              <SelectTrigger id="messenger-reply-time">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {REPLY_TIMES.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label htmlFor="messenger-office-hours">Set office hours</Label>
+              <p className="text-sm text-neutral-500">When off, the team is never shown as away.</p>
+            </div>
+            <Switch
+              id="messenger-office-hours"
+              checked={officeHoursEnabled}
+              disabled={!canEdit}
+              onCheckedChange={toggleOfficeHours}
+            />
+          </div>
+
+          {officeHoursEnabled && (
+            <>
+              <div className="space-y-1.5 sm:max-w-xs">
+                <Label htmlFor="messenger-timezone">Time zone</Label>
+                <Select value={timezone} disabled={!canEdit} onValueChange={setTimezone}>
+                  <SelectTrigger id="messenger-timezone">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {timeZones(timezone).map(zone => (
+                      <SelectItem key={zone} value={zone}>
+                        {zone.replace(/_/g, ' ')}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <ul className="divide-y divide-neutral-100 rounded-md border border-neutral-200">
+                  {hours.map((row, index) => {
+                    const day = WEEKDAYS[index]!;
+                    const start = fromClock(row.start, false);
+                    const end = fromClock(row.end, true);
+                    const rowInvalid = row.open && (start === null || end === null || end <= start);
+                    return (
+                      <li key={day} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
+                        <div className="flex w-32 items-center gap-3">
+                          <Checkbox
+                            id={`hours-${index}`}
+                            checked={row.open}
+                            disabled={!canEdit}
+                            onCheckedChange={value => updateRow(index, {open: value === true})}
+                          />
+                          <Label htmlFor={`hours-${index}`} className="font-normal">
+                            {day}
+                          </Label>
+                        </div>
+                        {row.open ? (
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="time"
+                              aria-label={`${day} opens`}
+                              value={row.start}
+                              disabled={!canEdit}
+                              onChange={event => updateRow(index, {start: event.target.value})}
+                              className="w-28"
+                            />
+                            <span className="text-sm text-neutral-500">to</span>
+                            <Input
+                              type="time"
+                              aria-label={`${day} closes`}
+                              aria-invalid={rowInvalid || undefined}
+                              value={row.end}
+                              disabled={!canEdit}
+                              onChange={event => updateRow(index, {end: event.target.value})}
+                              className="w-28"
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-sm text-neutral-500">Closed</span>
+                        )}
+                        {rowInvalid && <p className="w-full text-sm text-red-600">Close after it opens.</p>}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="text-sm text-neutral-500">
+                  One stretch per day, in the time zone above. Use 00:00 as the closing time for midnight.
+                </p>
+                {officeHours?.length === 0 && <p className="text-sm text-red-600">Open at least one day.</p>}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 

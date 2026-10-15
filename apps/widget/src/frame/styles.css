@@ -134,6 +134,38 @@ button {
   opacity: 0.85;
 }
 
+.pm-availability {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: -6px 0 18px;
+  font-size: 13px;
+}
+
+.pm-presence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.pm-presence-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
+}
+
+.pm-presence[data-online='true'] .pm-presence-dot {
+  background: #22c55e;
+}
+
+.pm-reply-time {
+  opacity: 0.85;
+}
+
 .pm-primary {
   width: 100%;
   padding: 12px 16px;

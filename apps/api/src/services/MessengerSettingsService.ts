@@ -1,6 +1,6 @@
-import type {MessengerSettings} from '@plunk/db';
-import {MESSENGER_DEFAULT_ACCENT, MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES} from '@plunk/shared';
-import type {MessengerAppearance, MessengerSettingsData} from '@plunk/types';
+import type {MessengerSettings, Prisma} from '@plunk/db';
+import {MESSENGER_DEFAULT_ACCENT, MESSENGER_DEFAULT_TIMEZONE, MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES} from '@plunk/shared';
+import type {MessengerAppearance, MessengerAvailability, MessengerSettingsData, OfficeHoursDay} from '@plunk/types';
 
 import {prisma} from '../database/prisma.js';
 import {redis, wrapRedis} from '../database/redis.js';
@@ -21,6 +21,10 @@ const DEFAULT_SETTINGS: MessengerSettingsData = {
   replyFromEmail: null,
   emailDelayMinutes: MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES,
   slackConnected: false,
+  replyTime: 'FEW_HOURS',
+  officeHoursEnabled: false,
+  officeHours: [],
+  timezone: MESSENGER_DEFAULT_TIMEZONE,
 };
 
 export type MessengerSettingsPatch = Partial<Omit<MessengerSettingsData, 'slackConnected'>> & {
@@ -54,11 +58,19 @@ export class MessengerSettingsService {
     if (patch.replyDomain || patch.replyFromEmail) {
       await this.assertEmailAddresses(projectId, patch);
     }
+    if (patch.officeHoursEnabled || patch.officeHours) {
+      await this.assertOfficeHours(projectId, patch);
+    }
 
+    const {officeHours, ...rest} = patch;
+    const data = {
+      ...rest,
+      ...(officeHours ? {officeHours: officeHours as unknown as Prisma.InputJsonValue} : {}),
+    };
     const row = await prisma.messengerSettings.upsert({
       where: {projectId},
-      create: {projectId, ...patch},
-      update: patch,
+      create: {projectId, ...data},
+      update: data,
     });
     await redis.del(Keys.Messenger.settings(projectId), Keys.Messenger.appearance(projectId));
     return this.toData(row);
@@ -97,6 +109,14 @@ export class MessengerSettingsService {
       launcherPosition: settings.launcherPosition,
       greeting: settings.greeting,
       team,
+    };
+  }
+
+  /** What the messenger needs to say whether the team is around. Judged on the visitor's side, so it stays current. */
+  public static availability(settings: MessengerSettingsData): MessengerAvailability {
+    return {
+      replyTime: settings.replyTime,
+      officeHours: settings.officeHoursEnabled ? {timezone: settings.timezone, days: settings.officeHours} : null,
     };
   }
 
@@ -141,6 +161,19 @@ export class MessengerSettingsService {
     }
   }
 
+  /* With office hours on and no day open, the messenger would say the team is away forever. */
+  private static async assertOfficeHours(
+    projectId: string,
+    patch: Pick<Partial<MessengerSettingsData>, 'officeHoursEnabled' | 'officeHours'>,
+  ): Promise<void> {
+    const current = patch.officeHoursEnabled === undefined || patch.officeHours === undefined ? await this.get(projectId) : null;
+    const enabled = patch.officeHoursEnabled ?? current!.officeHoursEnabled;
+    const days = patch.officeHours ?? current!.officeHours;
+    if (enabled && days.length === 0) {
+      throw new HttpException(400, 'Open at least one day, or turn office hours off', ErrorCode.VALIDATION_ERROR);
+    }
+  }
+
   private static async supportAgentIds(projectId: string, userIds: string[]): Promise<Set<string>> {
     const memberships = await prisma.membership.findMany({
       where: {projectId, userId: {in: userIds}, OR: [{role: 'OWNER'}, {supportAgent: true}]},
@@ -161,6 +194,12 @@ export class MessengerSettingsService {
       replyFromEmail: row.replyFromEmail,
       emailDelayMinutes: row.emailDelayMinutes,
       slackConnected: Boolean(row.slackWebhookUrl),
+      replyTime: row.replyTime,
+      officeHoursEnabled: row.officeHoursEnabled,
+      officeHours: Array.isArray(row.officeHours)
+        ? (row.officeHours as unknown as OfficeHoursDay[]).map(({day, start, end}) => ({day, start, end}))
+        : [],
+      timezone: row.timezone,
     };
   }
 }

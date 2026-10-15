@@ -21,6 +21,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./event-stream": "./dist/event-stream.js",
-    "./attachments": "./dist/attachments.js"
+    "./attachments": "./dist/attachments.js",
+    "./office-hours": "./dist/office-hours.js"
   }
 }
