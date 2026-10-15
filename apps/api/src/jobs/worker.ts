@@ -26,6 +26,7 @@ import {createMeterWorker} from './meter-processor.js';
 import {createScheduledCampaignWorker} from './scheduled-processor.js';
 import {createSegmentCountWorker} from './segment-count-processor.js';
 import {createSequenceSweepWorker} from './sequence-sweep-processor.js';
+import {createSnoozeSweepWorker} from './snooze-sweep-processor.js';
 import {createWorkflowWorker} from './workflow-processor-queue.js';
 
 const workers: {name: string; worker: Worker}[] = [];
@@ -83,6 +84,11 @@ async function startWorkers() {
     const sequenceSweepWorker = createSequenceSweepWorker();
     workers.push({name: 'sequence-sweep', worker: sequenceSweepWorker});
     signale.success('[WORKER] Sequence sweep worker started');
+
+    // Start snoozed conversation wake-up sweep worker
+    const snoozeSweepWorker = createSnoozeSweepWorker();
+    workers.push({name: 'snooze-sweep', worker: snoozeSweepWorker});
+    signale.success('[WORKER] Snooze sweep worker started');
 
     // Start segment count worker
     const segmentCountWorker = createSegmentCountWorker();

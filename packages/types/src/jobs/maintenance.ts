@@ -45,3 +45,12 @@ export interface IdempotencyKeyCleanupJobData {
 export interface EmailBodyCleanupJobData {
   // Empty - clears bodies for every email past the retention window
 }
+
+/**
+ * Job data for waking snoozed conversations whose snooze date has passed
+ * Used by: snoozeSweepQueue worker
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface SnoozeSweepJobData {
+  // Empty - wakes every due conversation
+}

@@ -19,6 +19,23 @@ export class Conversations {
     await serveEventStream(req, res, [Keys.Realtime.project(res.locals.auth.projectId!)], this.streamOptions);
   }
 
+  @Get('counts')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async counts(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const data = await ConversationService.counts(auth.projectId!, auth.userId!);
+    return res.json({success: true, data});
+  }
+
+  @Get('agents')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async agents(req: Request, res: Response, _next: NextFunction) {
+    const data = await ConversationService.agents(res.locals.auth.projectId!);
+    return res.json({success: true, data});
+  }
+
   @Get('')
   @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
   @CatchAsync
@@ -48,6 +65,28 @@ export class Conversations {
     const {body} = ConversationSchemas.reply.parse(req.body);
     const data = await ConversationService.replyAsAgent(auth.projectId!, auth.userId!, id, body);
     return res.status(201).json({success: true, data});
+  }
+
+  @Post(':id/status')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async status(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const change = ConversationSchemas.status.parse(req.body);
+    const data = await ConversationService.setStatus(auth.projectId!, auth.userId!, id, change);
+    return res.json({success: true, data});
+  }
+
+  @Post(':id/assignee')
+  @Middleware([requireAuth, requireEmailVerified, requireSupportAgent])
+  @CatchAsync
+  private async assign(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {assigneeId} = ConversationSchemas.assign.parse(req.body);
+    const data = await ConversationService.assign(auth.projectId!, auth.userId!, id, assigneeId);
+    return res.json({success: true, data});
   }
 
   @Post(':id/typing')

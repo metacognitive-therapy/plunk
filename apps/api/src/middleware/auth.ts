@@ -390,7 +390,7 @@ export const requireSupportAgent = async (req: Request, res: Response, next: Nex
     }
 
     const membership = await MembershipService.getMembership(auth.userId, auth.projectId);
-    if (!membership || (membership.role !== 'OWNER' && !membership.supportAgent)) {
+    if (!membership || !MembershipService.isSupportAgent(membership)) {
       throw new HttpException(403, 'You are not a support agent on this project', ErrorCode.FORBIDDEN);
     }
 

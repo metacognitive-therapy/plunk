@@ -67,6 +67,14 @@ export interface MessengerEmailResponse {
   expiresAt: string;
 }
 
+/** What a SYSTEM line records. The author of the line is the agent who acted, if any. */
+export type InboxSystemEvent =
+  | {action: 'closed'}
+  | {action: 'reopened'; trigger: 'agent' | 'contact' | 'snooze_expired'}
+  | {action: 'snoozed'; until: string | null}
+  | {action: 'assigned'; assignee: {id: string; name: string}}
+  | {action: 'unassigned'};
+
 export interface InboxMessage {
   id: string;
   authorType: MessageAuthorTypeValue;
@@ -74,7 +82,25 @@ export interface InboxMessage {
   author: {id: string; name: string; email: string} | null;
   body: string;
   source: string;
+  /** Set on SYSTEM lines only. */
+  event: InboxSystemEvent | null;
   createdAt: string;
+}
+
+/** Assignable members of a project: owners and members flagged as support agents. */
+export interface InboxAgent {
+  id: string;
+  name: string;
+  email: string;
+}
+
+/** Per-view totals, each capped at `cap`; a value equal to the cap means "cap or more". */
+export interface InboxCounts {
+  unassigned: number;
+  mine: number;
+  all: number;
+  closed: number;
+  cap: number;
 }
 
 export interface InboxContact {
@@ -88,6 +114,8 @@ export interface InboxConversationSummary {
   id: string;
   status: ConversationStatusValue;
   assigneeId: string | null;
+  /** Null while SNOOZED means "until the visitor replies". */
+  snoozedUntil: string | null;
   contact: InboxContact;
   lastMessageAt: string;
   lastMessage: {body: string; authorType: MessageAuthorTypeValue} | null;
@@ -96,7 +124,6 @@ export interface InboxConversationSummary {
 
 export interface InboxConversation extends InboxConversationSummary {
   channel: string;
-  snoozedUntil: string | null;
   contactLastReadAt: string | null;
   createdAt: string;
   messages: InboxMessage[];

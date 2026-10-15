@@ -1,13 +1,15 @@
-import {Badge, Button, EmptyState, IconSpinner, Textarea} from '@plunk/ui';
+import {Button, EmptyState, IconSpinner, Textarea} from '@plunk/ui';
 import {CONVERSATION_VIEWS, type ConversationSchemas, type ConversationView} from '@plunk/shared';
 import type {
   InboxConversation,
   InboxConversationSummary,
+  InboxCounts,
   InboxMessage,
   InboxPage,
   InboxStreamEvent,
+  InboxSystemEvent,
 } from '@plunk/types';
-import {ArrowLeft, Inbox as InboxIcon, MessageSquare, Send} from 'lucide-react';
+import {AlarmClock, ArrowLeft, Inbox as InboxIcon, MessageSquare, Send} from 'lucide-react';
 import {NextSeo} from 'next-seo';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
@@ -17,6 +19,7 @@ import useSWR from 'swr';
 import useSWRInfinite from 'swr/infinite';
 
 import {DashboardLayout} from '../../components/DashboardLayout';
+import {ConversationActions, formatSnoozeDate} from '../../components/inbox/ConversationActions';
 import {formatRelativeTime} from '../../lib/dateUtils';
 import {useActiveProject} from '../../lib/contexts/ActiveProjectProvider';
 import {useInboxStream} from '../../lib/hooks/useInboxStream';
@@ -38,9 +41,38 @@ type Subscribe = (listener: StreamListener) => () => void;
 const VIEW_LABELS: Record<ConversationView, string> = {
   unassigned: 'Unassigned',
   mine: 'Mine',
-  all: 'All open',
+  all: 'All',
   closed: 'Closed',
 };
+
+function countLabel(counts: InboxCounts | undefined, view: ConversationView): string | null {
+  if (!counts) return null;
+  const value = counts[view];
+  return value >= counts.cap ? `${counts.cap}+` : String(value);
+}
+
+function describeSystemEvent(event: InboxSystemEvent, actor: {id: string; name: string} | null, me: string | undefined): string {
+  const who = actor ? (actor.id === me ? 'You' : actor.name) : 'Someone';
+  switch (event.action) {
+    case 'closed':
+      return `${who} closed the conversation`;
+    case 'reopened':
+      if (event.trigger === 'contact') return 'Reopened by a new message from the visitor';
+      if (event.trigger === 'snooze_expired') return 'Snooze ended, back in Open';
+      return `${who} reopened the conversation`;
+    case 'snoozed':
+      return event.until
+        ? `${who} snoozed this until ${formatSnoozeDate(event.until)}`
+        : `${who} snoozed this until the visitor replies`;
+    case 'assigned':
+      if (actor && event.assignee.id === actor.id) {
+        return actor.id === me ? 'You assigned this to yourself' : `${who} assigned this to themselves`;
+      }
+      return `${who} assigned this to ${event.assignee.id === me ? 'you' : event.assignee.name}`;
+    case 'unassigned':
+      return `${who} unassigned this conversation`;
+  }
+}
 
 function contactLabel(contact: InboxConversationSummary['contact']): string {
   const data = contact.data ?? {};
@@ -84,6 +116,14 @@ export default function InboxPageView() {
     },
     {refreshInterval: connected ? 0 : LIST_REFRESH_MS, revalidateFirstPage: true},
   );
+  const {data: counts, mutate: mutateCounts} = useSWR<{success: boolean; data: InboxCounts}>(
+    activeProject?.id && hasAccess ? '/conversations/counts' : null,
+    {refreshInterval: connected ? 0 : LIST_REFRESH_MS},
+  );
+  const refreshList = useCallback(() => {
+    void mutate();
+    void mutateCounts();
+  }, [mutate, mutateCounts]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -91,14 +131,14 @@ export default function InboxPageView() {
       const ownRead = event.type === 'read' && event.reader.type === 'AGENT' && event.reader.userId === user?.id;
       if (event.type === 'ready' || event.type === 'message' || event.type === 'conversation' || ownRead) {
         clearTimeout(timer);
-        timer = setTimeout(() => void mutate(), LIST_REFRESH_DEBOUNCE_MS);
+        timer = setTimeout(refreshList, LIST_REFRESH_DEBOUNCE_MS);
       }
     });
     return () => {
       off();
       clearTimeout(timer);
     };
-  }, [subscribe, mutate, user?.id]);
+  }, [subscribe, refreshList, user?.id]);
 
   const conversations = data?.flatMap(page => page.data.conversations) ?? [];
   const hasMore = Boolean(data?.[data.length - 1]?.data.nextCursor);
@@ -120,18 +160,23 @@ export default function InboxPageView() {
             >
               <div className="border-b border-neutral-200 px-4 py-3">
                 <h1 className="text-lg font-semibold text-neutral-900">Inbox</h1>
-                <div className="mt-3 flex flex-wrap gap-1" role="tablist">
+                <div className="mt-3 flex flex-wrap gap-0.5" role="tablist">
                   {CONVERSATION_VIEWS.map(option => (
                     <button
                       key={option}
                       role="tab"
                       aria-selected={view === option}
                       onClick={() => setQuery({view: option, c: null})}
-                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
                         view === option ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'
                       }`}
                     >
                       {VIEW_LABELS[option]}
+                      {countLabel(counts?.data, option) !== null && (
+                        <span className={`ml-1.5 tabular-nums ${view === option ? 'text-neutral-300' : 'text-neutral-400'}`}>
+                          {countLabel(counts?.data, option)}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -170,8 +215,24 @@ export default function InboxPageView() {
                               {conversation.lastMessage?.authorType === 'AGENT' ? 'You: ' : ''}
                               {conversation.lastMessage?.body}
                             </span>
+                            {conversation.status === 'SNOOZED' && (
+                              <span
+                                className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-amber-700"
+                                title={
+                                  conversation.snoozedUntil
+                                    ? `Snoozed until ${formatSnoozeDate(conversation.snoozedUntil)}`
+                                    : 'Snoozed until the visitor replies'
+                                }
+                              >
+                                <AlarmClock className="h-3 w-3" />
+                                Snoozed
+                              </span>
+                            )}
                             {conversation.unread && (
-                              <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-blue-500" aria-label="Unread" />
+                              <span
+                                className={`${conversation.status === 'SNOOZED' ? '' : 'ml-auto '}h-2 w-2 shrink-0 rounded-full bg-blue-500`}
+                                aria-label="Unread"
+                              />
                             )}
                           </div>
                         </button>
@@ -197,7 +258,7 @@ export default function InboxPageView() {
                   connected={connected}
                   subscribe={subscribe}
                   onBack={() => setQuery({c: null})}
-                  onChanged={() => void mutate()}
+                  onChanged={refreshList}
                 />
               ) : (
                 <div className="m-auto">
@@ -350,21 +411,41 @@ function Thread({
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-neutral-200 px-4 py-3">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-neutral-200 px-4 py-3">
           <button className="rounded-md p-1 hover:bg-neutral-100 md:hidden" onClick={onBack} aria-label="Back">
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="min-w-0">
             <div className="truncate font-semibold text-neutral-900">{contactLabel(conversation.contact)}</div>
-            <div className="text-xs text-neutral-500">Started {formatRelativeTime(conversation.createdAt)}</div>
+            <div className="text-xs text-neutral-500">
+              {conversation.status === 'SNOOZED'
+                ? conversation.snoozedUntil
+                  ? `Snoozed until ${formatSnoozeDate(conversation.snoozedUntil)}`
+                  : 'Snoozed until the visitor replies'
+                : conversation.status === 'CLOSED'
+                  ? 'Closed'
+                  : `Started ${formatRelativeTime(conversation.createdAt)}`}
+            </div>
           </div>
-          <Badge variant="outline" className="ml-auto capitalize">
-            {conversation.status.toLowerCase()}
-          </Badge>
+          <div className="w-full sm:ml-auto sm:w-auto">
+            <ConversationActions
+              conversation={conversation}
+              currentUserId={currentUserId}
+              onChanged={next => {
+                void mutate({success: true, data: next}, {revalidate: false});
+                onChanged();
+              }}
+            />
+          </div>
         </header>
         <div className="flex-1 space-y-3 overflow-y-auto bg-neutral-50 px-4 py-4">
           {conversation.messages.map(message => (
-            <MessageRow key={message.id} message={message} seen={message.id === seenMessageId} />
+            <MessageRow
+              key={message.id}
+              message={message}
+              seen={message.id === seenMessageId}
+              currentUserId={currentUserId}
+            />
           ))}
           {typing && (
             <div className="px-1 text-xs text-neutral-500" role="status">
@@ -428,7 +509,27 @@ function Thread({
   );
 }
 
-function MessageRow({message, seen}: {message: InboxMessage; seen: boolean}) {
+function MessageRow({
+  message,
+  seen,
+  currentUserId,
+}: {
+  message: InboxMessage;
+  seen: boolean;
+  currentUserId: string | undefined;
+}) {
+  if (message.authorType === 'SYSTEM') {
+    return (
+      <div className="flex items-center gap-3 py-1 text-[11px] text-neutral-500" role="note">
+        <span className="h-px flex-1 bg-neutral-200" />
+        <span className="text-center">
+          {message.event ? describeSystemEvent(message.event, message.author, currentUserId) : message.body}
+          <span className="text-neutral-400"> · {formatRelativeTime(message.createdAt)}</span>
+        </span>
+        <span className="h-px flex-1 bg-neutral-200" />
+      </div>
+    );
+  }
   const fromContact = message.authorType === 'CONTACT';
   return (
     <div className={`flex flex-col ${fromContact ? 'items-start' : 'items-end'}`}>

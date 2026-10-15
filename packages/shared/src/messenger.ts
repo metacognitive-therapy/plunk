@@ -70,6 +70,15 @@ export const ConversationSchemas = {
   reply: z.object({
     body: messageBody,
   }),
+  status: z.discriminatedUnion('status', [
+    z.object({status: z.literal('OPEN')}),
+    z.object({status: z.literal('CLOSED')}),
+    /* A null date snoozes until the visitor replies. */
+    z.object({status: z.literal('SNOOZED'), snoozedUntil: z.coerce.date().nullable()}),
+  ]),
+  assign: z.object({
+    assigneeId: z.string().uuid().nullable(),
+  }),
 } as const;
 
 export const MESSENGER_DEFAULT_ACCENT = '#111827';

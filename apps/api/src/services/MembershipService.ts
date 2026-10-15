@@ -13,6 +13,11 @@ const FIVE_MINUTES_IN_SECONDS = 5 * 60;
  * Centralizes all membership-related database queries with caching
  */
 export class MembershipService {
+  /** Owners always qualify, so a project can never lock itself out of its own conversations. */
+  public static isSupportAgent(membership: Pick<Membership, 'role' | 'supportAgent'>): boolean {
+    return membership.role === 'OWNER' || membership.supportAgent;
+  }
+
   // ============================================
   // AUTHORIZATION METHODS (Cached)
   // ============================================
@@ -283,6 +288,9 @@ export class MembershipService {
       where: {userId_projectId: {userId, projectId}},
       data: {supportAgent},
     });
+    if (!this.isSupportAgent(updatedMembership)) {
+      await this.releaseAssignments(projectId, userId);
+    }
 
     await this.invalidateCache(projectId, userId);
 
@@ -323,9 +331,16 @@ export class MembershipService {
         },
       },
     });
+    await this.releaseAssignments(projectId, userId);
 
     // Invalidate cache
     await this.invalidateCache(projectId, userId);
+  }
+
+  /* Only support agents can be assignees, so someone who stops being one hands their
+  conversations back to the Unassigned view. */
+  private static async releaseAssignments(projectId: string, userId: string): Promise<void> {
+    await prisma.conversation.updateMany({where: {projectId, assigneeId: userId}, data: {assigneeId: null}});
   }
 
   // ============================================
