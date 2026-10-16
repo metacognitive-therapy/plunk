@@ -27,15 +27,27 @@ const app = buildHttpApp({controllers: [new Messenger()]});
 app.set('trust proxy', 1);
 const {session} = messengerClient(app);
 
+const CLOUDFLARE_EDGE = '172.69.138.90';
+
+function randomIp() {
+  const octet = () => Math.floor(Math.random() * 254) + 1;
+  return `10.${octet()}.${octet()}.${octet()}`;
+}
+
 /* Each test gets its own address so the IP budgets of one never spill into the next. */
 let ip: string;
+let cfConnectingIp: string | undefined;
 beforeEach(() => {
-  const octet = () => Math.floor(Math.random() * 254) + 1;
-  ip = `10.${octet()}.${octet()}.${octet()}`;
+  ip = randomIp();
+  cfConnectingIp = undefined;
 });
 
 function from<T extends request.Test>(req: T): T {
-  return req.set('X-Forwarded-For', ip) as T;
+  req.set('X-Forwarded-For', ip);
+  if (cfConnectingIp) {
+    req.set('CF-Connecting-IP', cfConnectingIp);
+  }
+  return req;
 }
 
 /* The token bucket reads the clock from Redis, so moving its last-seen time back is how a test
@@ -168,6 +180,36 @@ describe('Messenger rate limits', () => {
     const {token} = await visitorSession(project.public);
     expect((await start(token)).status).toBe(429);
   });
+
+  it('tells visitors behind one Cloudflare edge apart by CF-Connecting-IP', async () => {
+    const {project} = await messengerProject();
+    ip = CLOUDFLARE_EDGE;
+    for (let v = 0; v < 5; v++) {
+      cfConnectingIp = randomIp();
+      let {token} = await visitorSession(project.public);
+      for (let i = 0; i < 5; i++) {
+        const res = await start(token);
+        expect(res.status).toBe(201);
+        token = res.body.data.token;
+      }
+    }
+  });
+
+  it('ignores CF-Connecting-IP from a client that is not Cloudflare', async () => {
+    const {project} = await messengerProject();
+    for (let v = 0; v < 4; v++) {
+      cfConnectingIp = randomIp();
+      let {token} = await visitorSession(project.public);
+      for (let i = 0; i < 5; i++) {
+        const res = await start(token);
+        expect(res.status).toBe(201);
+        token = res.body.data.token;
+      }
+    }
+    cfConnectingIp = randomIp();
+    const {token} = await visitorSession(project.public);
+    expect((await start(token)).status).toBe(429);
+  });
 });
 
 describe('Turnstile bot check', () => {
@@ -210,6 +252,16 @@ describe('Turnstile bot check', () => {
     expect((await start(token, {body: 'Hello', turnstileToken: 'bot'})).status).toBe(403);
     expect(verifications.at(-1)?.get('secret')).toBe('1x0000000000000000000000000000000AA');
     expect(verifications.at(-1)?.get('remoteip')).toBe(ip);
+  });
+
+  it("sends Cloudflare's visitor IP, not the edge's, for the check", async () => {
+    const {project} = await messengerProject();
+    ip = CLOUDFLARE_EDGE;
+    cfConnectingIp = randomIp();
+    const {token} = await session(project.public);
+
+    expect((await start(token, {body: 'Hello', turnstileToken: 'bot'})).status).toBe(403);
+    expect(verifications.at(-1)?.get('remoteip')).toBe(cfConnectingIp);
   });
 
   it('starts a conversation with a valid token and needs none for later messages', async () => {

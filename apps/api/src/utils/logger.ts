@@ -1,6 +1,8 @@
 import type {NextFunction, Request, Response} from 'express';
 import signale from 'signale';
 
+import {clientIp} from './clientIp.js';
+
 /**
  * Extract request ID from Express response locals
  */
@@ -139,7 +141,7 @@ export const logger = {
       prefix: requestId ? `[${requestId}]` : '',
       message: `${req.method} ${logger.path(req)}`,
       ...context,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.get('user-agent'),
     });
   },

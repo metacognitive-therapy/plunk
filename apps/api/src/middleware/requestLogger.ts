@@ -1,5 +1,6 @@
 import type {NextFunction, Request, Response} from 'express';
 import {prisma} from '../database/prisma.js';
+import {clientIp} from '../utils/clientIp.js';
 import {logger} from '../utils/logger.js';
 
 /**
@@ -174,7 +175,7 @@ async function logRequestToDatabase(
         projectId: auth?.projectId || null,
         userId: auth?.userId || null,
         authType: auth?.type || null,
-        ip: req.ip || req.socket.remoteAddress || null,
+        ip: clientIp(req) || req.socket.remoteAddress || null,
         userAgent: req.get('user-agent') || null,
         errorCode: errorCode || null,
         errorMessage: errorMessage || null,

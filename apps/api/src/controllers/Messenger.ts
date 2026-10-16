@@ -15,6 +15,7 @@ import {MessengerUserService} from '../services/MessengerUserService.js';
 import {Keys} from '../services/keys.js';
 import {TurnstileService} from '../services/TurnstileService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
+import {clientIp} from '../utils/clientIp.js';
 
 /**
  * The visitor-facing API used by the embedded messenger. Boot exchanges the project's public key
@@ -114,7 +115,7 @@ export class Messenger {
     const {body, turnstileToken} = MessengerSchemas.startConversation.parse(req.body);
     const session = messengerSession(res);
     if (!session.verified) {
-      await TurnstileService.assertHuman(turnstileToken, req.ip);
+      await TurnstileService.assertHuman(turnstileToken, clientIp(req));
     }
     const data = await ConversationService.startConversation(session, body);
     return res.status(201).json({success: true, data});

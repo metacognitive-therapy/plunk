@@ -4,6 +4,7 @@ import signale from 'signale';
 
 import {RateLimitError} from '../exceptions/index.js';
 import {Keys} from '../services/keys.js';
+import {clientIp} from '../utils/clientIp.js';
 import {takeToken} from './rateLimit.js';
 
 interface Budget {
@@ -52,7 +53,7 @@ export function messengerRateLimit(action: MessengerAction) {
     if (!messengerRateLimits.enabled) {
       return next();
     }
-    const checks: [string, Budget][] = [[Keys.RateLimit.messenger(action, 'ip', req.ip ?? 'unknown'), budget.ip]];
+    const checks: [string, Budget][] = [[Keys.RateLimit.messenger(action, 'ip', clientIp(req) ?? 'unknown'), budget.ip]];
     const visitor = visitorOf(req, res);
     if (visitor) {
       checks.push([Keys.RateLimit.messenger(action, 'visitor', visitor), budget.visitor]);
