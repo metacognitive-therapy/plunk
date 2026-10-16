@@ -379,7 +379,7 @@ describe('Live chat realtime', () => {
     });
 
     await expect.poll(() => opens, {timeout: 4000}).toBeGreaterThanOrEqual(2);
-    expect(events.filter(e => e.type === 'ready').length).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => events.filter(e => e.type === 'ready').length, {timeout: 4000}).toBeGreaterThanOrEqual(2);
 
     await request(app)
       .post(`/conversations/${conversationId}/messages`)
