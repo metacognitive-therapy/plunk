@@ -1,4 +1,5 @@
 import {
+  type ChatImportSchemas,
   MESSENGER_DEFAULT_ACCENT,
   MESSENGER_EMAIL_DELAY_DEFAULT_MINUTES,
   MESSENGER_EMAIL_DELAY_MAX_MINUTES,
@@ -16,6 +17,7 @@ import {
   normalizeOrigin,
 } from '@plunk/shared';
 import type {
+  ChatImportRun,
   MemberWithEmail,
   MessengerIdentitySecret,
   MessengerLauncherPositionValue,
@@ -760,6 +762,8 @@ export function MessengerSettings({canEdit}: MessengerSettingsProps) {
         canEdit={canEdit}
         onChange={() => void mutate()}
       />
+
+      {canEdit && <IntercomImportCard projectId={activeProject.id} />}
     </div>
   );
 }
@@ -892,6 +896,117 @@ function IdentityCard({projectId, publicKey, enabled, canEdit, onChange}: Identi
       />
     </Card>
   );
+}
+
+const IMPORT_POLL_MS = 3000;
+
+function IntercomImportCard({projectId}: {projectId: string}) {
+  const path = `/projects/${projectId}/messenger/intercom-import`;
+  const [polling, setPolling] = useState(false);
+  const {data, mutate} = useSWR<{success: boolean; data: ChatImportRun | null}>(path, {
+    revalidateOnFocus: false,
+    refreshInterval: polling ? IMPORT_POLL_MS : 0,
+  });
+  const [token, setToken] = useState('');
+  const [starting, setStarting] = useState(false);
+  const run = data?.data ?? null;
+  const running = run?.status === 'RUNNING';
+
+  useEffect(() => setPolling(running), [running]);
+
+  const start = async () => {
+    setStarting(true);
+    try {
+      const result = await network.fetch<{success: boolean; data: ChatImportRun}, typeof ChatImportSchemas.intercom>(
+        'POST',
+        path,
+        {accessToken: token},
+      );
+      void mutate({success: true, data: result.data}, {revalidate: false});
+      toast.success('Import started');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Couldn’t start the import. Try again.');
+    } finally {
+      setToken('');
+      setStarting(false);
+    }
+  };
+
+  const reasons = Object.entries(run?.skipReasons ?? {}).sort((a, b) => b[1] - a[1]);
+  const processed = run ? run.imported + run.skipped + run.failed : 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Import from Intercom</CardTitle>
+        <CardDescription>
+          Copies your Intercom conversations into the Inbox as closed, read-only history, linked to the matching
+          contacts. Nothing is sent to anyone. Running it again only adds what is new.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {run && (
+          <div className="space-y-2 rounded-md border border-neutral-200 p-3 text-sm">
+            <p className="font-medium text-neutral-900">
+              {run.status === 'RUNNING'
+                ? `Importing… ${processed.toLocaleString()}${run.totalConversations !== null ? ` of ${run.totalConversations.toLocaleString()}` : ''} conversations`
+                : run.status === 'COMPLETED'
+                  ? `Finished ${formatImportDate(run.finishedAt ?? run.startedAt)}`
+                  : run.status === 'INTERRUPTED'
+                    ? 'Stopped before it finished. Start it again to carry on.'
+                    : `Failed: ${run.error ?? 'unknown error'}`}
+            </p>
+            <p className="text-neutral-700">
+              {run.imported.toLocaleString()} imported · {run.skipped.toLocaleString()} skipped ·{' '}
+              {run.failed.toLocaleString()} failed
+            </p>
+            {reasons.length > 0 && (
+              <ul className="list-inside list-disc text-neutral-500">
+                {reasons.map(([reason, count]) => (
+                  <li key={reason}>
+                    {count.toLocaleString()} {reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {!running && (
+          <form
+            className="space-y-2"
+            autoComplete="off"
+            onSubmit={event => {
+              event.preventDefault();
+              void start();
+            }}
+          >
+            <Label htmlFor="intercom-access-token">Intercom access token</Label>
+            <div className="flex gap-2">
+              <Input
+                id="intercom-access-token"
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={event => setToken(event.target.value)}
+                placeholder="From Intercom’s Developer Hub"
+              />
+              <Button type="submit" disabled={starting || !token.trim()}>
+                {starting ? 'Checking…' : run ? 'Import again' : 'Import'}
+              </Button>
+            </div>
+            <p className="text-sm text-neutral-500">
+              Used for this import only and never stored. It needs read access to conversations, contacts and
+              admins.
+            </p>
+          </form>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatImportDate(value: string): string {
+  return new Date(value).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'});
 }
 
 function ProfileNameCard({onSaved}: {onSaved: () => void}) {

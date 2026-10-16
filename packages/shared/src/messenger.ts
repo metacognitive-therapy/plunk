@@ -303,3 +303,10 @@ export const NotificationSchemas = {
     endpoint: z.string().max(2048),
   }),
 } as const;
+
+export const ChatImportSchemas = {
+  /* The token is only ever held in memory for the run; nothing here may echo it back. */
+  intercom: z.object({
+    accessToken: z.string().trim().min(1, 'Paste an Intercom access token').max(512, 'That is not an Intercom access token'),
+  }),
+};

@@ -1,10 +1,11 @@
 import {Controller, Delete, Get, Middleware, Patch, Post} from '@overnightjs/core';
 import type {NextFunction, Request, Response} from 'express';
-import {MembershipSchemas, MessengerSettingsSchemas, UtilitySchemas} from '@plunk/shared';
+import {ChatImportSchemas, MembershipSchemas, MessengerSettingsSchemas, UtilitySchemas} from '@plunk/shared';
 
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {requireAuth, requireEmailVerified} from '../middleware/auth.js';
+import {IntercomImportService} from '../services/IntercomImportService.js';
 import {MembershipService} from '../services/MembershipService.js';
 import {MessengerSettingsService} from '../services/MessengerSettingsService.js';
 import {SlackService} from '../services/SlackService.js';
@@ -330,6 +331,42 @@ export class Projects {
     const secret = await MessengerSettingsService.rotateIdentitySecret(id);
 
     return res.json({success: true, data: {secret}});
+  }
+
+  /**
+   * GET /projects/:id/messenger/intercom-import
+   */
+  @Get(':id/messenger/intercom-import')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  private async getIntercomImport(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+
+    await MembershipService.requireAdminAccess(auth.userId!, id);
+    const data = await IntercomImportService.latest(id);
+
+    return res.json({success: true, data});
+  }
+
+  /**
+   * POST /projects/:id/messenger/intercom-import
+   * Answers once the token is checked; the run carries on in the background. The token is only
+   * held in memory for the run, never stored.
+   */
+  @Post(':id/messenger/intercom-import')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  private async startIntercomImport(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = UtilitySchemas.id.parse(req.params);
+    const {accessToken} = ChatImportSchemas.intercom.parse(req.body);
+
+    await MembershipService.requireAdminAccess(auth.userId!, id);
+    const {run, finished} = await IntercomImportService.start(id, auth.userId!, accessToken);
+    void finished;
+
+    return res.status(202).json({success: true, data: run});
   }
 
   /**

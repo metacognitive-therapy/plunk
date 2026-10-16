@@ -130,6 +130,10 @@ export const Keys = {
     appearance(projectId: string): string {
       return `messenger:appearance:${projectId}`;
     },
+    /* Held by the one import allowed to run per project; the value is the run id. */
+    importLock(projectId: string): string {
+      return `messenger:import_lock:${projectId}`;
+    },
   },
   Realtime: {
     project(projectId: string): string {

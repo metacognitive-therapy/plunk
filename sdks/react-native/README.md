@@ -203,6 +203,8 @@ with its APNs key and FCM credentials uploaded. Raw APNs or FCM device tokens ar
 - **English labels by default.** Pass `strings` to translate them.
 - **Push needs a signed-in user.** Anonymous users only see replies the next time they open the
   messenger.
+- **Imported conversations are read-only.** Conversations copied from Intercom (see the wiki's
+  "Moving from Intercom" guide) show as history without a composer.
 
 ## Example app
 

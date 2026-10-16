@@ -119,6 +119,7 @@ model Project {
   conversations     Conversation[]
   conversationTags  ConversationTag[]
   savedReplies      SavedReply[]
+  chatImports       ChatImport[]
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -324,6 +325,10 @@ model Conversation {
 
   channel ConversationChannel @default(WIDGET)
 
+  // "intercom:<id>" on a conversation copied in by an import. Such conversations are read-only, and
+  // the unique key is what makes re-running an import skip what it already copied.
+  importedFrom String?
+
   // The anonymous visitor id that started the conversation. An unverified messenger session only
   // ever sees conversations it originated, so typing an email address never unlocks history.
   originVisitorId String?
@@ -357,7 +362,45 @@ model Conversation {
   @@index([contactId])
   @@index([status, snoozedUntil])
   @@index([status, closedAt])
+  @@unique([projectId, importedFrom])
   @@map("conversations")
+}
+
+// One run of a conversation import from another tool. The access token it used is never stored.
+model ChatImport {
+  id String @id @default(uuid())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  source          String
+  status          ChatImportStatus @default(RUNNING)
+  startedByUserId String?
+
+  // Sizes reported by the source when the run started.
+  totalContacts      Int?
+  totalConversations Int?
+
+  imported Int @default(0)
+  skipped  Int @default(0)
+  failed   Int @default(0)
+  // Counts per reason, e.g. {"already imported": 12, "past retention": 3}.
+  skipReasons Json @default("{}")
+  error       String?
+
+  // Bumped per page; a RUNNING row whose heartbeat is stale was interrupted (a deploy or crash).
+  heartbeatAt DateTime  @default(now())
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  @@index([projectId, startedAt])
+  @@map("chat_imports")
+}
+
+enum ChatImportStatus {
+  RUNNING
+  COMPLETED
+  FAILED
 }
 
 model ConversationMessage {

@@ -1,12 +1,53 @@
 ---
 title: Moving from Intercom
-description: Replace Intercom's user attributes and events in a React Native app with the messenger SDK
+description: Bring your Intercom conversations across, and replace Intercom's user attributes and events in a React Native app
 icon: ArrowRightLeft
 ---
 
-The React Native messenger SDK (`@plunk/react-native`) covers what an app usually calls on Intercom: the messenger itself, signed-in users, push notifications, and the user data that drives segments and workflows. This page covers the user data. The SDK's README covers the messenger calls.
+This page covers two parts of a move from Intercom: copying your past conversations into the Inbox, and the user data an app sends. The React Native messenger SDK (`@plunk/react-native`) covers what an app usually calls on Intercom: the messenger itself, signed-in users, push notifications, and the user data that drives segments and workflows. The SDK's README covers the messenger calls.
 
-## How it works
+## Importing conversations
+
+**Settings > Messenger > Import from Intercom** copies your Intercom conversations into the Inbox, so the history of each person is there when you switch. Only project admins and owners can run it.
+
+1. In Intercom's Developer Hub, create an app for your workspace and copy its access token. It needs read access to conversations, contacts and admins.
+2. Paste the token and select **Import**. The token is checked against Intercom, the workspace is sized, and the import starts.
+3. The card shows progress while it runs and a summary when it finishes: how many conversations were imported, skipped (with the reason for each) and failed.
+
+The token is used for that run only. It is held in memory while the import runs and is never written to the database, the job queue or the logs.
+
+### What is copied
+
+- Each conversation becomes a **closed, read-only** conversation in the Inbox's Closed view, with its original timestamps. Nobody can reply to it, add a note to it or reopen it; tags and assignment still work.
+- Messages keep their author: the person's messages are from the contact, teammates' replies are from the agent with the same email in this project, or from "Team" when there is none. Internal notes stay internal notes.
+- Messages are copied as plain text. Attachments are not copied: the message names the files instead.
+- Signed-in users see their imported conversations in the messenger, read-only, like the Inbox. Anonymous visitors never do.
+
+### Contacts
+
+Each conversation is linked to a contact by the Intercom contact's user id first, then by email:
+
+- An existing contact is used exactly as it is. The import never changes its attributes or subscription.
+- A person with no contact yet gets one, **unsubscribed**, with their name. A support conversation is not consent to marketing.
+- People with neither a user id nor an email (Intercom visitors who never identified) are skipped, and so are their conversations.
+
+### What is skipped
+
+- Conversations already imported. Running the import again only adds conversations that are new since the last run, so it is safe to run more than once, for example once now and once on the day you switch.
+- Conversations whose last activity is older than the messenger's **Delete closed conversations after** setting, since retention would delete them straight away.
+- Conversations whose contact was erased here, or was deleted in Intercom.
+
+Nothing is sent or recorded for an imported conversation: no emails, no pushes, no Slack posts and no events, so no workflow or segment reacts to it.
+
+### Limits
+
+- Intercom returns at most the 500 most recent parts of a conversation, and the Inbox shows the latest 200 messages of a thread.
+- One import runs at a time per project. If the API restarts during an import, the card says it stopped; start it again and it carries on from where it got to.
+- Large workspaces take a while: conversations are read a few at a time to stay well inside Intercom's rate limits.
+
+## The SDK's user data
+
+### How it works
 
 | Intercom                                   | Messenger SDK                                        |
 | ------------------------------------------ | ---------------------------------------------------- |
@@ -28,7 +69,7 @@ await Plunk.logEvent('finished_journey_module', {moduleId: 'm-4'});
 await Plunk.logEvent('purchase_completed', {plan: 'yearly'}, {occurredAt: purchase.date});
 ```
 
-### Attributes must be declared
+#### Attributes must be declared
 
 `updateUser` only sets attributes declared in **Settings > Messenger > App user attributes**, one name per line, up to 50. An update with any undeclared name is refused whole, with the undeclared names in the error, and nothing is written. Until something is declared, every update is refused.
 
@@ -39,11 +80,11 @@ This keeps the contact attribute space finite: segments filter on attributes, an
 - `locale` is read to pick the language of emails, so only declare it for a language code.
 - `email`, `id` and the other [reserved keys](/guides/custom-fields#reserved-keys) can't be declared.
 
-### Events
+#### Events
 
 Events need no declaration. A logged event is recorded on the signed-in user's contact and can start a workflow, resume one waiting for it, or match a segment's event filter.
 
-- Names are up to 100 letters, digits, `_`, `.`, `:` or `-`. Names used by the platform, such as `email.*`, `contact.*` and `conversation.*`, are refused.
+- Names are up to 100 letters, digits, `_`, `.`, `:` or `-`. Names the platform records itself are refused: anything starting with `email.`, `contact.subscribed`, `contact.unsubscribed`, `contact.identified`, `segment.<name>.entry` and `.exit`, `tag.added`, `tag.removed`, `conversation.started`, `conversation.replied`, `conversation.closed` and `chat.email_captured`.
 - `data` holds up to 25 flat values. It is kept on the event for workflows and is never copied onto the contact.
 - `occurredAt` (a `Date`, ISO string or epoch milliseconds) records when it happened, if not now. It can't be in the future.
 

@@ -46,6 +46,8 @@ export interface ConversationSummary {
 export interface Conversation {
   id: string;
   status: ConversationStatus;
+  /** An imported conversation: shown as history, with no composer. */
+  readOnly: boolean;
   messages: Message[];
 }
 
