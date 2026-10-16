@@ -13,7 +13,7 @@ jobs:
     name: Test Suite
     runs-on: ubuntu-latest
 
-    # Service containers for database, Redis, and Minio
+    # Service containers for database and Redis. MinIO starts in a step below.
     services:
       postgres:
         image: postgres:16-alpine
@@ -39,22 +39,24 @@ jobs:
         ports:
           - 6379:6379
 
-      minio:
-        image: minio/minio:edge-cicd
-        env:
-          MINIO_ROOT_USER: plunk
-          MINIO_ROOT_PASSWORD: plunkminiopass
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # MinIO no longer publishes images (minio/minio and minio/mc are gone from Docker Hub and
+      # quay.io), so this runs the community-maintained build. A service container can't pass
+      # `server /data`, hence a step.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=plunk -e MINIO_ROOT_PASSWORD=plunkminiopass \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          docker logs minio
+          exit 1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -130,11 +132,11 @@ jobs:
           DIRECT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/plunk_test
 
       - name: Create MinIO bucket
-        run: |
-          docker run --rm --network host \
-            --entrypoint /bin/sh minio/mc:latest \
-            -c "mc alias set local http://localhost:9000 plunk plunkminiopass && \
-                mc mb local/uploads --ignore-existing"
+        env:
+          AWS_ACCESS_KEY_ID: plunk
+          AWS_SECRET_ACCESS_KEY: plunkminiopass
+          AWS_DEFAULT_REGION: us-east-1
+        run: aws --endpoint-url http://localhost:9000 s3 mb s3://uploads
 
       - name: Run tests
         run: yarn test:run
