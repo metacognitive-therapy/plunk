@@ -207,5 +207,12 @@ jobs:
       - name: Run linter
         run: yarn lint
 
+      - name: Generate wiki API docs
+        working-directory: apps/wiki
+        run: |
+          node scripts/generate-openapi.js
+          npx tsx scripts/generate-docs.mts
+          npx fumadocs-mdx
+
       - name: Type check
         run: yarn build --filter="api" --filter="web" --filter="landing" --filter="wiki"
