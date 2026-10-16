@@ -24,6 +24,7 @@ export const defaultStrings = {
   unavailable: 'The messenger is not available right now.',
   retry: 'Try again',
   closed: 'This conversation is closed. Write again to reopen it.',
+  readOnly: 'This conversation is from our previous support tool. Start a new one to write to us.',
   signInToChat: 'Sign in to start a conversation with us.',
   attach: 'Attach a file',
   attachmentTooLarge: 'Files can be up to 10 MB.',

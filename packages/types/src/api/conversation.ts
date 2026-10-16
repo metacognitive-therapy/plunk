@@ -43,6 +43,8 @@ export interface MessengerConversationSummary {
 export interface MessengerConversation {
   id: string;
   status: ConversationStatusValue;
+  /** An imported conversation: shown as history, with no composer. */
+  readOnly: boolean;
   messages: MessengerMessage[];
 }
 
@@ -206,6 +208,8 @@ export interface SavedReply {
 
 export interface InboxConversation extends InboxConversationSummary {
   channel: string;
+  /** An imported conversation: nobody can reply, note or change its status. */
+  readOnly: boolean;
   contactLastReadAt: string | null;
   createdAt: string;
   messages: InboxMessage[];
@@ -312,3 +316,23 @@ export type InboxStreamEvent =
   | {type: 'read'; conversationId: string; reader: InboxReader}
   /* Tags were renamed or deleted, which can change any conversation in the list. */
   | {type: 'tags'};
+
+/** INTERRUPTED: the run stopped without finishing (a restart or crash), so it can be started again. */
+export type ChatImportStatusValue = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'INTERRUPTED';
+
+/** One conversation import run. The access token it used is never stored or returned. */
+export interface ChatImportRun {
+  id: string;
+  source: string;
+  status: ChatImportStatusValue;
+  totalContacts: number | null;
+  totalConversations: number | null;
+  imported: number;
+  skipped: number;
+  failed: number;
+  /** How many were skipped for each reason, such as "already imported" or "past retention". */
+  skipReasons: Record<string, number>;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}

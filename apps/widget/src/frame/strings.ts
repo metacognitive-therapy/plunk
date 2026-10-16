@@ -26,6 +26,7 @@ const en = {
   humanCheckFailed: "We couldn't confirm you're human. Try again.",
   unavailable: 'The messenger is not available right now.',
   closed: 'This conversation is closed. Write again to reopen it.',
+  readOnly: 'This conversation is from our previous support tool. Start a new one to write to us.',
   emailPrompt: 'Get notified by email',
   emailHint: "We'll email you here if you're away when we reply.",
   emailAwayHint: "We're away right now. Leave your email and we'll reply there too.",

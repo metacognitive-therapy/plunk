@@ -698,72 +698,78 @@ function Thread({
             {strings.emailSaved} <strong>{capturedEmail}</strong>
           </div>
         ) : null}
-        {conversation?.status === 'CLOSED' ? <div class="pm-notice">{strings.closed}</div> : null}
+        {conversation?.readOnly ? (
+          <div class="pm-notice">{strings.readOnly}</div>
+        ) : conversation?.status === 'CLOSED' ? (
+          <div class="pm-notice">{strings.closed}</div>
+        ) : null}
         <div ref={bottom} />
       </div>
-      <form class="pm-composer" onSubmit={submit}>
-        {needsHumanCheck ? <div ref={humanCheckContainer} class="pm-human-check" /> : null}
-        {error ? (
-          <div class="pm-error" role="alert">
-            {error}
-          </div>
-        ) : null}
-        <div class="pm-composer-row">
-          {conversationId ? (
-            <>
-              <input
-                ref={fileInput}
-                type="file"
-                hidden
-                accept={CHAT_ATTACHMENT_ACCEPT}
-                onChange={event => {
-                  const input = event.target as HTMLInputElement;
-                  void attach(input.files?.[0]);
-                  input.value = '';
-                }}
-              />
-              <button
-                class="pm-attach"
-                type="button"
-                disabled={uploading}
-                aria-label={strings.attach}
-                title={strings.attach}
-                onClick={() => fileInput.current?.click()}
-              >
-                {uploading ? (
-                  <span class="pm-spinner" aria-hidden="true" />
-                ) : (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path
-                      d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                )}
-              </button>
-            </>
+      {conversation?.readOnly ? null : (
+        <form class="pm-composer" onSubmit={submit}>
+          {needsHumanCheck ? <div ref={humanCheckContainer} class="pm-human-check" /> : null}
+          {error ? (
+            <div class="pm-error" role="alert">
+              {error}
+            </div>
           ) : null}
-          <textarea
-            value={draft}
-            rows={1}
-            maxLength={5000}
-            placeholder={strings.placeholder}
-            aria-label={strings.placeholder}
-            onInput={event => onDraft((event.target as HTMLTextAreaElement).value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                void submit(event);
-              }
-            }}
-          />
-          <button class="pm-send" type="submit" disabled={sending || !draft.trim()} aria-label={strings.send}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.99.99 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z" />
-            </svg>
-          </button>
-        </div>
-      </form>
+          <div class="pm-composer-row">
+            {conversationId ? (
+              <>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  hidden
+                  accept={CHAT_ATTACHMENT_ACCEPT}
+                  onChange={event => {
+                    const input = event.target as HTMLInputElement;
+                    void attach(input.files?.[0]);
+                    input.value = '';
+                  }}
+                />
+                <button
+                  class="pm-attach"
+                  type="button"
+                  disabled={uploading}
+                  aria-label={strings.attach}
+                  title={strings.attach}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  {uploading ? (
+                    <span class="pm-spinner" aria-hidden="true" />
+                  ) : (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path
+                        d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+              </>
+            ) : null}
+            <textarea
+              value={draft}
+              rows={1}
+              maxLength={5000}
+              placeholder={strings.placeholder}
+              aria-label={strings.placeholder}
+              onInput={event => onDraft((event.target as HTMLTextAreaElement).value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  void submit(event);
+                }
+              }}
+            />
+            <button class="pm-send" type="submit" disabled={sending || !draft.trim()} aria-label={strings.send}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.99.99 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z" />
+              </svg>
+            </button>
+          </div>
+        </form>
+      )}
     </main>
   );
 }

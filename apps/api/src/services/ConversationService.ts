@@ -225,6 +225,7 @@ export class ConversationService {
     return {
       id: conversation.id,
       status: conversation.status,
+      readOnly: this.isImported(conversation),
       messages: messages.map(message => this.toMessengerMessage(message)),
     };
   }
@@ -234,7 +235,7 @@ export class ConversationService {
     conversationId: string,
     body: string,
   ): Promise<MessengerMessage> {
-    const conversation = await this.requireSessionConversation(session, conversationId);
+    const conversation = this.requireWritable(await this.requireSessionConversation(session, conversationId));
     const message = await this.postMessage(conversation, {authorType: 'CONTACT', body, source: 'WIDGET'});
     return this.toMessengerMessage(message);
   }
@@ -245,7 +246,7 @@ export class ConversationService {
     file: IncomingFile,
     body: string,
   ): Promise<MessengerMessage> {
-    const conversation = await this.requireSessionConversation(session, conversationId);
+    const conversation = this.requireWritable(await this.requireSessionConversation(session, conversationId));
     const message = await this.postWithAttachment(conversation, file, {authorType: 'CONTACT', body, source: 'WIDGET'});
     return this.toMessengerMessage(message);
   }
@@ -340,6 +341,7 @@ export class ConversationService {
     return {
       ...this.toInboxSummary(conversation, reads.get(conversation.id), tags.get(conversation.id)),
       channel: conversation.channel,
+      readOnly: this.isImported(conversation),
       contactLastReadAt: conversation.contactLastReadAt?.toISOString() ?? null,
       createdAt: conversation.createdAt.toISOString(),
       messages: messages.map(message => this.toInboxMessage(message, names)),
@@ -352,7 +354,7 @@ export class ConversationService {
     conversationId: string,
     body: string,
   ): Promise<InboxMessage> {
-    const conversation = await this.requireProjectConversation(projectId, conversationId);
+    const conversation = this.requireWritable(await this.requireProjectConversation(projectId, conversationId));
     const message = await this.postMessage(conversation, {
       authorType: 'AGENT',
       authorUserId: userId,
@@ -370,7 +372,7 @@ export class ConversationService {
     file: IncomingFile,
     body: string,
   ): Promise<InboxMessage> {
-    const conversation = await this.requireProjectConversation(projectId, conversationId);
+    const conversation = this.requireWritable(await this.requireProjectConversation(projectId, conversationId));
     const message = await this.postWithAttachment(conversation, file, {
       authorType: 'AGENT',
       authorUserId: userId,
@@ -392,7 +394,7 @@ export class ConversationService {
     conversationId: string,
     input: {body: string; mentionedUserIds: string[]},
   ): Promise<InboxMessage> {
-    const conversation = await this.requireProjectConversation(projectId, conversationId);
+    const conversation = this.requireWritable(await this.requireProjectConversation(projectId, conversationId));
     const mentionedUserIds = [...new Set(input.mentionedUserIds)];
     if (mentionedUserIds.length > 0) {
       const agentIds = new Set((await this.agents(projectId)).map(agent => agent.id));
@@ -460,6 +462,7 @@ export class ConversationService {
     }
 
     const changed = await this.transition(projectId, userId, conversationId, current => {
+      this.requireWritable(current);
       switch (change.status) {
         case 'CLOSED':
           return current.status === 'CLOSED'
@@ -708,6 +711,7 @@ export class ConversationService {
    * side effect (realtime, notifications, email, events) stay in one place.
    */
   public static async postMessage(conversation: Conversation, input: PostMessageInput): Promise<MessageWithAuthor> {
+    this.requireWritable(conversation);
     const kind = input.kind ?? 'COMMENT';
     const now = new Date();
 
@@ -902,6 +906,7 @@ export class ConversationService {
     file: IncomingFile,
     input: Omit<PostMessageInput, 'attachments'>,
   ): Promise<MessageWithAuthor> {
+    this.requireWritable(conversation);
     const attachment = await ChatAttachmentService.store(conversation.projectId, conversation.id, file);
     try {
       return await this.postMessage(conversation, {...input, attachments: [attachment]});
@@ -951,6 +956,19 @@ export class ConversationService {
       throw new NotFound('Conversation', conversationId);
     }
     return conversation;
+  }
+
+  /* An imported conversation is a record of what happened in another tool: nobody can add to it or
+  reopen it, so nothing is ever sent, pushed or evented for it. */
+  private static requireWritable<T extends Pick<Conversation, 'channel'>>(conversation: T): T {
+    if (this.isImported(conversation)) {
+      throw new HttpException(409, 'Imported conversations are read-only', ErrorCode.CONFLICT);
+    }
+    return conversation;
+  }
+
+  private static isImported(conversation: Pick<Conversation, 'channel'>): boolean {
+    return conversation.channel === 'IMPORT';
   }
 
   private static async requireProjectConversation(projectId: string, conversationId: string): Promise<Conversation> {
@@ -1090,7 +1108,9 @@ export class ConversationService {
     tags: InboxTag[] = [],
   ): InboxConversationSummary {
     const unread =
-      conversation.lastContactMessageAt !== null && (!lastReadAt || conversation.lastContactMessageAt > lastReadAt);
+      !this.isImported(conversation) &&
+      conversation.lastContactMessageAt !== null &&
+      (!lastReadAt || conversation.lastContactMessageAt > lastReadAt);
 
     return {
       id: conversation.id,

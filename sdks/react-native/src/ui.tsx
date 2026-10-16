@@ -415,12 +415,16 @@ function Thread({
                 </View>
               </View>
             ) : null}
-            {conversation?.status === 'CLOSED' ? <Text style={styles.notice}>{strings.closed}</Text> : null}
+            {conversation?.readOnly ? (
+              <Text style={styles.notice}>{strings.readOnly}</Text>
+            ) : conversation?.status === 'CLOSED' ? (
+              <Text style={styles.notice}>{strings.closed}</Text>
+            ) : null}
           </View>
         }
       />
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      {!conversationId && !canStart ? (
+      {conversation?.readOnly ? null : !conversationId && !canStart ? (
         <Text style={styles.notice}>{strings.signInToChat}</Text>
       ) : (
         <View style={styles.composer}>

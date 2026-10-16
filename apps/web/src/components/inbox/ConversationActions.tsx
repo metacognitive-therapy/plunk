@@ -132,7 +132,7 @@ export function ConversationActions({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {conversation.status !== 'CLOSED' && (
+      {conversation.status !== 'CLOSED' && !conversation.readOnly && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" disabled={busy}>
@@ -164,7 +164,7 @@ export function ConversationActions({
         </DropdownMenu>
       )}
 
-      {conversation.status === 'OPEN' ? (
+      {conversation.readOnly ? null : conversation.status === 'OPEN' ? (
         <Button size="sm" disabled={busy} onClick={() => void setStatus({status: 'CLOSED'})}>
           <Check className="mr-1.5 h-4 w-4" />
           Close

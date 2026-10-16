@@ -488,7 +488,9 @@ function Thread({
                 ? conversation.snoozedUntil
                   ? `Snoozed until ${formatSnoozeDate(conversation.snoozedUntil)}`
                   : 'Snoozed until the visitor replies'
-                : conversation.status === 'CLOSED'
+                : conversation.readOnly
+                  ? `Imported · last message ${formatRelativeTime(conversation.lastMessageAt)}`
+                  : conversation.status === 'CLOSED'
                   ? 'Closed'
                   : `Started ${formatRelativeTime(conversation.createdAt)}`}
             </div>
@@ -531,14 +533,20 @@ function Thread({
           )}
           <div ref={bottom} />
         </div>
-        <Composer
-          conversationId={conversationId}
-          currentUserId={currentUserId}
-          onSent={async () => {
-            await mutate();
-            onChanged();
-          }}
-        />
+        {conversation.readOnly ? (
+          <div className="border-t border-neutral-200 px-4 py-3 text-sm text-neutral-500">
+            Imported from another tool. This conversation is read-only.
+          </div>
+        ) : (
+          <Composer
+            conversationId={conversationId}
+            currentUserId={currentUserId}
+            onSent={async () => {
+              await mutate();
+              onChanged();
+            }}
+          />
+        )}
       </div>
       <aside className="hidden w-72 shrink-0 overflow-y-auto border-l border-neutral-200 p-4 xl:block">
         <ContactPanel
