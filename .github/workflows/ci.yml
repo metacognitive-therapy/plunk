@@ -208,4 +208,4 @@ jobs:
         run: yarn lint
 
       - name: Type check
-        run: yarn build --filter="api" --filter="web" --filter="landing" --filter="wiki" || true
+        run: yarn build --filter="api" --filter="web" --filter="landing" --filter="wiki"
