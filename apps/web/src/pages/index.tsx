@@ -347,6 +347,20 @@ export default function Index() {
     return base;
   }, [isLoading, totalEmailsSent, totalContacts, openRate, activeProject?.name]);
 
+  // Friendly console message for the developer audience. Once per session.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const w = window as unknown as {__plunkHi?: boolean};
+    if (w.__plunkHi) return;
+    w.__plunkHi = true;
+    // eslint-disable-next-line no-console
+    console.log(
+      '%cPlunk%c  Built for developers who care about email.\nFound a rough edge? support@useplunk.com',
+      'font: 600 14px ui-sans-serif, system-ui; color: #0a0a0a; background: #f5f5f5; padding: 2px 8px; border-radius: 4px;',
+      'color: #525252; font: 12px ui-sans-serif, system-ui;',
+    );
+  }, []);
+
   // totalCampaigns intentionally unused — replaced by Deliverability card below
   void totalCampaigns;
 
@@ -691,7 +705,7 @@ export default function Index() {
           <Card>
             <CardHeader>
               <CardTitle>API keys</CardTitle>
-              <CardDescription>Use these keys to integrate with the API</CardDescription>
+              <CardDescription>Use these keys to integrate with Plunk</CardDescription>
             </CardHeader>
             <CardContent>
               {activeProject ? (

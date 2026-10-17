@@ -11,9 +11,9 @@ export class ProjectService {
     });
   }
 
-  // Uncached on purpose: the project PATCH route doesn't invalidate Keys.Project.id, and a stale brand would go out in emails.
+  // Uncached on purpose: the project PATCH route doesn't invalidate Keys.Project.id, and a stale brand would reach contacts.
   public static async brand(id: string): Promise<Brand> {
-    const project = await prisma.project.findUnique({where: {id}, select: {brandName: true, brandLogoUrl: true}});
+    const project = await prisma.project.findUnique({where: {id}, select: {name: true, brandName: true, brandLogoUrl: true}});
     return resolveBrand(project);
   }
 

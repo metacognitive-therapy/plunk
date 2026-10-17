@@ -21,7 +21,7 @@ const paths: PathOption[] = [
     id: 'developer',
     icon: Code2,
     title: 'Send transactional emails',
-    description: 'Wire the API into your app for password resets, receipts, and notifications.',
+    description: 'Wire Plunk into your app for password resets, receipts, and notifications.',
     meta: '~1 minute',
   },
   {
@@ -55,15 +55,15 @@ export default function OnboardingWelcome() {
 
   return (
     <>
-      <NextSeo title="Welcome" />
+      <NextSeo title="Welcome to Plunk" />
       <OnboardingLayout step={1} maxWidthClass="max-w-5xl">
         <div className="flex flex-col gap-8">
           <header className="flex flex-col gap-2">
             <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-neutral-900">
-              Welcome.
+              Welcome to Plunk.
             </h1>
             <p className="text-base text-neutral-600 max-w-lg leading-relaxed">
-              Two minutes of setup and you&#39;ll be sending. How do you plan to use it?
+              Two minutes of setup and you&#39;ll be sending. How do you plan to use Plunk?
             </p>
           </header>
 

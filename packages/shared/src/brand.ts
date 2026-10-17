@@ -1,21 +1,17 @@
 /*
- * One deployment serves several organizations, each as its own project, so the brand lives on
- * the project. Anything rendered before a project is known uses the neutral brand, which
- * deliberately names neither organization.
+ * How a project presents itself to its contacts: the messenger, chat emails and push. The
+ * dashboard and platform emails are always Plunk. A blank brand falls back to the project name.
  */
-export const NEUTRAL_BRAND_NAME = 'Messaging';
-
 export interface Brand {
   name: string;
   logoUrl: string | null;
 }
 
-export const NEUTRAL_BRAND: Brand = {name: NEUTRAL_BRAND_NAME, logoUrl: null};
-
-// A blank brand falls back to neutral, not to the project name: project names are internal labels.
-export function resolveBrand(project?: {brandName?: string | null; brandLogoUrl?: string | null} | null): Brand {
+export function resolveBrand(
+  project: {name: string; brandName?: string | null; brandLogoUrl?: string | null} | null,
+): Brand {
   return {
-    name: project?.brandName?.trim() || NEUTRAL_BRAND_NAME,
+    name: project?.brandName?.trim() || project?.name || 'Plunk',
     logoUrl: project?.brandLogoUrl || null,
   };
 }

@@ -1,6 +1,6 @@
 {
-  "name": "Messaging",
-  "short_name": "Messaging",
+  "name": "Plunk",
+  "short_name": "Plunk",
   "description": "Answer your website's live chat and manage your email.",
   "start_url": "/inbox",
   "scope": "/",

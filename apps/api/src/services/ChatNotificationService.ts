@@ -229,7 +229,7 @@ export class ChatNotificationService {
       minutes: settings.emailDelayMinutes,
       conversationUrl: `${DASHBOARD_URI}${ConversationService.inboxPath(conversation.projectId, conversation.id)}`,
       assignedToYou: Boolean(assignee),
-      brand,
+      projectName: brand.name,
     });
     await Promise.all(
       recipients.map(recipient => sendPlatformEmail(recipient.email, `${sender} is waiting for a reply · ${brand.name}`, template)),

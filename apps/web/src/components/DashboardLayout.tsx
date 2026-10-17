@@ -1,12 +1,10 @@
 import {useActiveProject} from '../lib/contexts/ActiveProjectProvider';
 import {formatUnread, useInboxUnread, useNotificationPrefs} from '../lib/hooks/useAgentNotifications';
-import {useBrand} from '../lib/hooks/useBrand';
 import {useSupportAccess} from '../lib/hooks/useSupportAccess';
 import {useUser} from '../lib/hooks/useUser';
 import {WIKI_URI} from '../lib/constants';
 import {network} from '../lib/network';
 import {disablePush} from '../lib/push';
-import {BrandMark} from './BrandMark';
 import {OnboardingBanner} from './onboarding/OnboardingBanner';
 import {
   Activity,
@@ -27,6 +25,7 @@ import {
   Users,
   Workflow
 } from 'lucide-react';
+import Image from 'next/image';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
 import {useCallback, useMemo, useState} from 'react';
@@ -102,7 +101,6 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
   const router = useRouter();
   const {data: user} = useUser();
   const {activeProject, availableProjects, setActiveProject} = useActiveProject();
-  const brand = useBrand();
   const hasSupportAccess = useSupportAccess();
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const {data: prefs} = useNotificationPrefs(Boolean(user));
@@ -131,7 +129,10 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
     <>
       {/* Logo */}
       <div className="h-16 flex items-center justify-between px-6 border-b border-neutral-200">
-        <BrandMark brand={brand} />
+        <div className="flex items-center gap-2">
+          <Image src="/assets/logo.png" alt="Plunk" width={28} height={28} className="rounded" />
+          <h1 className="text-xl font-bold text-neutral-900">Plunk</h1>
+        </div>
         <button
           onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', metaKey: true, bubbles: true}))}
           className="hidden lg:flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-neutral-400 bg-neutral-100 border border-neutral-200 rounded hover:bg-neutral-200 hover:text-neutral-600 transition-colors cursor-pointer"
@@ -320,8 +321,9 @@ export function DashboardLayout({children}: DashboardLayoutProps) {
             <Menu className="h-6 w-6 text-neutral-900" />
             {unreadLabel && <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />}
           </button>
-          <div className="ml-4 min-w-0">
-            <BrandMark brand={brand} size="sm" />
+          <div className="flex items-center gap-2 ml-4">
+            <Image src="/assets/logo.png" alt="Plunk" width={24} height={24} className="rounded" />
+            <h1 className="text-lg font-bold text-neutral-900">Plunk</h1>
           </div>
         </div>
 

@@ -8,7 +8,6 @@ import {prisma} from '../database/prisma.js';
 import {redis} from '../database/redis.js';
 import {Keys} from './keys.js';
 import {MembershipService} from './MembershipService.js';
-import {ProjectService} from './ProjectService.js';
 import {NtfyService} from './NtfyService.js';
 import {QueueService} from './QueueService.js';
 import {
@@ -712,7 +711,6 @@ export class SecurityService {
             projectId,
             violations: status.violations,
             dashboardUrl: DASHBOARD_URI,
-            brand: await ProjectService.brand(projectId),
           });
           await Promise.all(
             emails.map(email => sendPlatformEmail(email, 'Project Disabled', template)),
@@ -1001,7 +999,6 @@ ${strippedBody.substring(0, 2000)}`,
             projectId,
             violations: [violation],
             dashboardUrl: DASHBOARD_URI,
-            brand: await ProjectService.brand(projectId),
           });
           await Promise.all(
             emails.map(email => sendPlatformEmail(email, 'Project Disabled', template)),

@@ -1,4 +1,3 @@
-import {type Brand, NEUTRAL_BRAND} from '@plunk/shared';
 import {Heading, Link, Section, Text} from '@react-email/components';
 import * as React from 'react';
 import {EmailLayout} from '../common/EmailLayout';
@@ -11,7 +10,7 @@ interface ChatUnreadEmailProps {
   minutes: number;
   conversationUrl: string;
   assignedToYou: boolean;
-  brand?: Brand;
+  projectName: string;
 }
 
 export function ChatUnreadEmail({
@@ -20,11 +19,11 @@ export function ChatUnreadEmail({
   minutes = 5,
   conversationUrl = 'https://example.com/inbox',
   assignedToYou = false,
-  brand = NEUTRAL_BRAND,
+  projectName = 'Acme',
 }: ChatUnreadEmailProps) {
   return (
     <EmailLayout>
-      <Header brand={brand} />
+      <Header />
 
       <Section className="px-8 pb-10 pt-10">
         <Heading className="mb-2 mt-0 text-2xl font-semibold tracking-tight text-gray-900">
@@ -58,12 +57,12 @@ export function ChatUnreadEmail({
         </Section>
 
         <Text className="mb-0 mt-8 text-xs leading-relaxed text-gray-400">
-          You get this because you answer live chat for {brand.name}. Turn these emails off under Settings → Messenger
+          You get this because you answer live chat for {projectName}. Turn these emails off under Settings → Messenger
           → Your notifications.
         </Text>
       </Section>
 
-      <Footer brand={brand} />
+      <Footer />
     </EmailLayout>
   );
 }
