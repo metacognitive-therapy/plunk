@@ -19,7 +19,6 @@ import {ChatEmailService} from '../services/ChatEmailService.js';
 import {ContactService} from '../services/ContactService.js';
 import {EventService} from '../services/EventService.js';
 import {MembershipService} from '../services/MembershipService.js';
-import {ProjectService} from '../services/ProjectService.js';
 import {MeterService} from '../services/MeterService.js';
 import {NtfyService} from '../services/NtfyService.js';
 import {QueueService} from '../services/QueueService.js';
@@ -670,7 +669,6 @@ export class Webhooks {
                 projectName: project.name,
                 projectId: project.id,
                 dashboardUrl: DASHBOARD_URI,
-                brand: await ProjectService.brand(project.id),
               });
               await Promise.all(
                 emails.map(email => sendPlatformEmail(email, 'Project Disabled - Payment Failed', template)),

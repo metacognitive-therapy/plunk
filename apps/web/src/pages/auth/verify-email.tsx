@@ -1,7 +1,8 @@
-import {AuthenticationSchemas, NEUTRAL_BRAND_NAME} from '@plunk/shared';
+import {AuthenticationSchemas} from '@plunk/shared';
 import {Button, Card, CardContent, IconSpinner} from '@plunk/ui';
 import {AnimatePresence, motion} from 'framer-motion';
 import {NextSeo} from 'next-seo';
+import Image from 'next/image';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
 import React, {useEffect, useRef, useState} from 'react';
@@ -138,7 +139,10 @@ export default function VerifyEmail() {
       <div className="min-h-screen flex items-center justify-center py-12" style={dotGrid}>
         <div className="flex flex-col gap-6 max-w-md w-full px-4">
           <div className="flex items-center justify-center gap-2.5">
-            <span className="text-lg font-bold tracking-tight text-neutral-900">{NEUTRAL_BRAND_NAME}</span>
+            <div className="h-8 w-8 rounded-lg bg-white shadow-sm border border-neutral-200 flex items-center justify-center p-1">
+              <Image src="/assets/logo.svg" alt="" aria-hidden width={24} height={24} />
+            </div>
+            <span className="text-lg font-bold tracking-tight text-neutral-900">Plunk</span>
           </div>
 
           <Card>

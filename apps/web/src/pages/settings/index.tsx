@@ -576,7 +576,7 @@ export default function Settings() {
                   <div className="flex items-center justify-between">
                     <div>
                       <CardTitle>API keys</CardTitle>
-                      <CardDescription>Use these keys to integrate with the API</CardDescription>
+                      <CardDescription>Use these keys to integrate with the Plunk API</CardDescription>
                     </div>
                     <Button type="button" variant="outline" size="sm" onClick={promptRegenerateKeys}>
                       Regenerate keys

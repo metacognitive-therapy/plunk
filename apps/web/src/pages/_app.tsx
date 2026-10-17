@@ -1,17 +1,14 @@
 import '../styles/globals.css';
 import type {AppProps} from 'next/app';
-import Head from 'next/head';
 import {useRouter} from 'next/router';
-import React, {useEffect, useRef} from 'react';
+import React, {useEffect} from 'react';
 import {Toaster} from 'sonner';
 import {SWRConfig} from 'swr';
 import {DefaultSeo} from 'next-seo';
 import {NuqsAdapter} from 'nuqs/adapters/next/pages';
-import {type Brand, NEUTRAL_BRAND} from '@plunk/shared';
 import {Loader} from '@plunk/ui';
 import {ActiveProjectProvider} from '../lib/contexts/ActiveProjectProvider';
 import {formatUnread, useInboxUnread, useNotificationPrefs} from '../lib/hooks/useAgentNotifications';
-import {useBrand} from '../lib/hooks/useBrand';
 import {CommandPalette} from '../components/CommandPalette';
 import {AgentNotifier} from '../components/inbox/AgentNotifier';
 import {useProjects} from '../lib/hooks/useProject';
@@ -126,24 +123,9 @@ export default function WithProviders(props: AppProps) {
   );
 }
 
-/* iOS uses this for the home screen icon and needs a raster image. */
-function touchIcon(brand: Brand): string {
-  return brand.logoUrl && /\.(png|jpe?g)(\?|$)/i.test(brand.logoUrl) ? brand.logoUrl : '/icons/apple-touch-icon.png';
-}
-
-function BrandHead({brand, unread}: {brand: Brand; unread: string | null}) {
+function TitleSeo({unread}: {unread: string | null}) {
   const prefix = unread ? `(${unread}) ` : '';
-  return (
-    <>
-      <DefaultSeo titleTemplate={`${prefix}%s | ${brand.name}`} defaultTitle={`${prefix}${brand.name}`} />
-      <Head>
-        <link key="icon" rel="icon" href={brand.logoUrl ?? '/favicon/neutral.svg'} />
-        <link key="apple-touch-icon" rel="apple-touch-icon" href={touchIcon(brand)} />
-        <meta key="application-name" name="application-name" content={brand.name} />
-        <meta key="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content={brand.name} />
-      </Head>
-    </>
-  );
+  return <DefaultSeo titleTemplate={`${prefix}%s | Plunk`} defaultTitle={`${prefix}Plunk | Email Platform Dashboard`} />;
 }
 
 function Root(props: AppProps) {
@@ -151,18 +133,11 @@ function Root(props: AppProps) {
   const isPublicRoute = PUBLIC_ROUTES.some(
     route => router.pathname === route || router.pathname.startsWith(`${route}/`),
   );
-  const projectBrand = useBrand();
-  // Public routes (auth, contact preference pages) never show a project's brand, even to a signed-in user.
-  const brand = isPublicRoute ? NEUTRAL_BRAND : projectBrand;
   const {data: user} = useUser();
   const signedIn = !isPublicRoute && Boolean(user?.id);
   const {data: unread} = useInboxUnread(signedIn);
   const {data: prefs} = useNotificationPrefs(signedIn);
   const titleCount = signedIn && prefs?.data.inboxTitleCount ? formatUnread(unread?.data) : null;
-  const brandNameRef = useRef(brand.name);
-  useEffect(() => {
-    brandNameRef.current = brand.name;
-  }, [brand.name]);
 
   useEffect(() => {
     const handleRouteChange = () => {
@@ -179,7 +154,7 @@ function Root(props: AppProps) {
       // (e.g. contact email set by NextSeo after the API response arrives).
       setTimeout(() => {
         const titleLabel = document.title.replace(/^\(\d+\+?\) /, '').split(' | ')[0]?.trim();
-        if (titleLabel && titleLabel !== brandNameRef.current && titleLabel !== fallback) {
+        if (titleLabel && titleLabel !== 'Plunk' && titleLabel !== fallback) {
           addRecentPage({label: titleLabel, href: pathname});
         }
       }, 800);
@@ -191,7 +166,7 @@ function Root(props: AppProps) {
 
   return (
     <>
-      <BrandHead brand={brand} unread={titleCount} />
+      <TitleSeo unread={titleCount} />
       <Toaster position={'top-right'} />
 
       <div>

@@ -1,5 +1,4 @@
 import {Heading, Link, Section, Text} from '@react-email/components';
-import {type Brand, NEUTRAL_BRAND} from '@plunk/shared';
 import * as React from 'react';
 import {EmailLayout} from '../common/EmailLayout';
 import {Footer} from '../common/Footer';
@@ -8,17 +7,15 @@ import {Header} from '../common/Header';
 interface PasswordResetEmailProps {
   email: string;
   resetUrl: string;
-  brand?: Brand;
 }
 
 export function PasswordResetEmail({
   email = 'user@example.com',
   resetUrl = 'https://next-app.useplunk.com/auth/reset-password?token=abc123',
-  brand = NEUTRAL_BRAND,
 }: PasswordResetEmailProps) {
   return (
     <EmailLayout>
-      <Header brand={brand} />
+      <Header />
 
       <Section className="px-8 pb-10 pt-10">
         <Heading className="mb-2 mt-0 text-2xl font-semibold tracking-tight text-gray-900">Reset your password</Heading>
@@ -50,7 +47,7 @@ export function PasswordResetEmail({
         </Section>
       </Section>
 
-      <Footer brand={brand} />
+      <Footer />
     </EmailLayout>
   );
 }

@@ -1,20 +1,20 @@
 import {describe, expect, it} from 'vitest';
 
-import {NEUTRAL_BRAND_NAME, resolveBrand} from '../brand.js';
+import {resolveBrand} from '../brand.js';
 import {ProjectSchemas} from '../schemas/index.js';
 
 describe('resolveBrand', () => {
   it('uses the project brand when set', () => {
-    expect(resolveBrand({brandName: 'MKT-Oslo', brandLogoUrl: 'https://cdn.example.com/logo.png'})).toEqual({
+    expect(resolveBrand({name: 'Oslo', brandName: 'MKT-Oslo', brandLogoUrl: 'https://cdn.example.com/logo.png'})).toEqual({
       name: 'MKT-Oslo',
       logoUrl: 'https://cdn.example.com/logo.png',
     });
   });
 
-  it('falls back to the neutral brand, never the project name', () => {
-    expect(resolveBrand({brandName: null, brandLogoUrl: null})).toEqual({name: NEUTRAL_BRAND_NAME, logoUrl: null});
-    expect(resolveBrand({brandName: '   '})).toEqual({name: NEUTRAL_BRAND_NAME, logoUrl: null});
-    expect(resolveBrand(null)).toEqual({name: NEUTRAL_BRAND_NAME, logoUrl: null});
+  it('falls back to the project name', () => {
+    expect(resolveBrand({name: 'Oslo', brandName: null, brandLogoUrl: null})).toEqual({name: 'Oslo', logoUrl: null});
+    expect(resolveBrand({name: 'Oslo', brandName: '   '})).toEqual({name: 'Oslo', logoUrl: null});
+    expect(resolveBrand(null)).toEqual({name: 'Plunk', logoUrl: null});
   });
 });
 

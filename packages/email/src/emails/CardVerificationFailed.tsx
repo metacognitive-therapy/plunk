@@ -1,5 +1,4 @@
 import {Heading, Link, Section, Text} from '@react-email/components';
-import {type Brand, NEUTRAL_BRAND} from '@plunk/shared';
 import * as React from 'react';
 import {EmailLayout} from '../common/EmailLayout';
 import {Footer} from '../common/Footer';
@@ -9,18 +8,16 @@ interface CardVerificationFailedEmailProps {
   projectName: string;
   projectId: string;
   dashboardUrl?: string;
-  brand?: Brand;
 }
 
 export function CardVerificationFailedEmail({
   projectName = 'My Project',
   projectId = 'proj_example123',
   dashboardUrl = 'https://next-app.useplunk.com',
-  brand = NEUTRAL_BRAND,
 }: CardVerificationFailedEmailProps) {
   return (
     <EmailLayout>
-      <Header brand={brand} />
+      <Header />
 
       <Section className="px-8 pb-10 pt-10">
         <Heading className="mb-2 mt-0 text-2xl font-semibold tracking-tight text-gray-900">
@@ -45,7 +42,7 @@ export function CardVerificationFailedEmail({
 
         <Text className="mb-8 mt-0 text-sm leading-relaxed text-gray-600">
           Some cards — most often prepaid, virtual, and single-use cards — allow a payment you approve yourself but
-          refuse recurring charges made later on your behalf. Because usage is billed at the end of each month,
+          refuse recurring charges made later on your behalf. Because Plunk bills for usage at the end of each month,
           we need a card that accepts both.
         </Text>
 
@@ -77,7 +74,7 @@ export function CardVerificationFailedEmail({
         </Section>
       </Section>
 
-      <Footer projectId={projectId} brand={brand} />
+      <Footer projectId={projectId} />
     </EmailLayout>
   );
 }

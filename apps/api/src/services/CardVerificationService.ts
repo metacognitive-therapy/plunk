@@ -25,7 +25,6 @@ import {DASHBOARD_URI, STRIPE_ENABLED} from '../app/constants.js';
 import {stripe} from '../app/stripe.js';
 import {prisma} from '../database/prisma.js';
 import {MembershipService} from './MembershipService.js';
-import {ProjectService} from './ProjectService.js';
 import {NtfyService} from './NtfyService.js';
 
 /** Matches the onboarding fee, so the customer sees two identical lines rather than a surprise. */
@@ -379,7 +378,6 @@ export class CardVerificationService {
         projectName,
         projectId,
         dashboardUrl: DASHBOARD_URI,
-        brand: await ProjectService.brand(projectId),
       });
 
       await Promise.all(

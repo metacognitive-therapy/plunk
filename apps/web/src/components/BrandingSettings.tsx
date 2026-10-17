@@ -1,6 +1,6 @@
 import {zodResolver} from '@hookform/resolvers/zod';
 import type {Project} from '@plunk/db';
-import {NEUTRAL_BRAND_NAME, ProjectSchemas, resolveBrand} from '@plunk/shared';
+import {ProjectSchemas, resolveBrand} from '@plunk/shared';
 import {
   Button,
   Card,
@@ -59,7 +59,7 @@ export function BrandingSettings({canEdit}: BrandingSettingsProps) {
     }
   }, [activeProject, form]);
 
-  const preview = resolveBrand(form.watch());
+  const preview = resolveBrand({name: activeProject?.name ?? '', ...form.watch()});
 
   const handleFile = async (file: File) => {
     setIsUploading(true);
@@ -96,8 +96,8 @@ export function BrandingSettings({canEdit}: BrandingSettingsProps) {
       <CardHeader>
         <CardTitle>Branding</CardTitle>
         <CardDescription>
-          The name and logo shown in the sidebar and in this project&apos;s emails. Leave both empty to use the
-          neutral &ldquo;{NEUTRAL_BRAND_NAME}&rdquo; brand.
+          How this project appears to your contacts: in the chat widget, chat emails and as the default sender
+          name. Leave the name empty to use the project name.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -110,7 +110,7 @@ export function BrandingSettings({canEdit}: BrandingSettingsProps) {
                 <FormItem>
                   <FormLabel>Brand name</FormLabel>
                   <FormControl>
-                    <Input placeholder={NEUTRAL_BRAND_NAME} disabled={!canEdit} {...field} />
+                    <Input placeholder={activeProject?.name} disabled={!canEdit} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
